@@ -35,13 +35,18 @@ class TwistySphereBuilder
         && (Math.abs(p1.normal.y-p2.normal.y) < this.tolerance)
         && (Math.abs(p1.normal.z-p2.normal.z) < this.tolerance);
   }
+  getBoundingRadius() {
+    if ( !this.shape.boundingSphere )
+      this.shape.computeBoundingSphere();
+    return this.shape.boundingSphere.radius;
+  }
   makeSphericleHelper(plane, radius) {
     const Na = 50;
     if ( !radius ) {
-      if ( !this.shape.boundingSphere )
-        this.shape.computeBoundingSphere();
-      radius = this.shape.boundingSphere.radius;
+      let RR = this.getBoundingRadius()+1;
+      radius = Math.sqrt(RR*RR - plane.constant*plane.constant);
     }
+
     var circle = new THREE.CircleGeometry(radius, Math.ceil(Na*radius/this.R));
     circle.vertices.shift();
     circle.faces.length = 0;
@@ -52,22 +57,35 @@ class TwistySphereBuilder
     var material = new THREE.LineDashedMaterial({color:color, linewidth:3});
     return new THREE.LineSegments(circle, material);
   }
-  makeDiskHelper(plane, opacity=1, radius) {
-    const Na = 50;
+  makeCutPlaneHelper(plane, radius) {
+    const Na = 360;
     if ( !radius ) {
-      if ( !this.shape.boundingSphere )
-        this.shape.computeBoundingSphere();
-      radius = this.shape.boundingSphere.radius;
+      let RR = this.getBoundingRadius()+1;
+      radius = Math.sqrt(RR*RR - plane.constant*plane.constant);
     }
+
     var disk = new THREE.CircleGeometry(radius, Math.ceil(Na*radius/this.R));
     disk.translate(0, 0, -plane.constant);
     disk.lookAt(plane.normal);
 
     var color = new THREE.Color(`hsl(${Math.abs(this.sphidius(plane)-1)*300}, 100%, 50%)`);
-    var material = new THREE.MeshBasicMaterial({
-      color:color, transparent:true, opacity:opacity
-    });
+    var material = new THREE.MeshBasicMaterial({ color:color });
     return new THREE.Mesh(disk, material);
+  }
+  makeTwistHelper(plane, angle, radius, dr=1) {
+    const Na = 360;
+    if ( !radius ) {
+      let RR = this.getBoundingRadius()+1;
+      radius = Math.sqrt(RR*RR - plane.constant*plane.constant);
+    }
+
+    var ring = new THREE.RingGeometry(radius, radius+dr, Math.ceil(Na*radius/this.R*angle/4), 1, 0, angle*Math.PI/2);
+    ring.translate(0, 0, -plane.constant);
+    ring.lookAt(plane.normal);
+
+    var color = new THREE.Color(`hsl(${Math.abs(this.sphidius(plane)-1)*300 + angle*90}, 100%, 50%)`);
+    var material = new THREE.MeshBasicMaterial({ color:color });
+    return new THREE.Mesh(ring, material);
   }
 
   make() {
@@ -252,25 +270,11 @@ class TwistySphereBuilder
     }
     return puzzle;
   }
-  twist(puzzle, x, q, display, callback=function(){}) {
+  twist(puzzle, x, q, display, onfinish=function(){}) {
     var targets = puzzle.userData.sides[x].map((b, i) => b && puzzle.children[i]).filter(b => b);
     var axis = puzzle.userData.planes[x].normal;
-    var angle = puzzle.userData.angles[x][q];
-    var rot = new THREE.Quaternion().setFromAxisAngle(axis, angle*Math.PI/2);
-
-    var startQuaternions = targets.map(e => e.quaternion.clone());
-    var endQuaternions = startQuaternions.map(q => rot.clone().multiply(q));
-    var span = 0;
-    display.animations.push(() => {
-      for ( let i in targets )
-        THREE.Quaternion.slerp(startQuaternions[i], endQuaternions[i], targets[i].quaternion, span/angle);
-      if ( span === angle ) {
-        callback();
-        return true;
-      }
-      span += this.twisting_rate;
-      if ( span > angle ) span = angle;
-    });
+    var angle = puzzle.userData.angles[x][q] || 0;
+    display.animatedRotate(targets, axis, angle, this.twisting_rate, onfinish);
   }
 
   highlight(element) {
@@ -307,38 +311,85 @@ class TwistySphereBuilder
     }
   }
   selectCutPlane(puzzle, display, callback=function(){}, filter=function(){return true;}) {
-    var sphericles = puzzle.userData.planes.filter(filter)
-      .map(p => this.makeDiskHelper(p, 0.3));
+    var planes = puzzle.userData.planes.filter(filter).map(p => this.makeCutPlaneHelper(p));
     var inds = [...puzzle.userData.planes.keys()].filter(filter);
+    for ( let p of planes ) {
+      p.material.transparent = true;
+      p.material.opacity = 0.3;
+    }
 
     var enter_handler = event => {
       event.target.material.opacity = 0.7;
-      var x = inds[sphericles.indexOf(event.target)];
+      var x = inds[planes.indexOf(event.target)];
       for ( let i in puzzle.userData.sides[x] )
         if ( puzzle.userData.sides[x][i] )
           this.highlight(puzzle.children[i]);
     };
     var leave_handler = event => {
       event.target.material.opacity = 0.3;
-      var x = inds[sphericles.indexOf(event.target)];
+      var x = inds[planes.indexOf(event.target)];
       for ( let i in puzzle.userData.sides[x] )
         if ( puzzle.userData.sides[x][i] )
           this.unhighlight(puzzle.children[i]);
     };
     var click_handler = event => {
-      var x = inds[sphericles.indexOf(event.target)];
+      var x = inds[planes.indexOf(event.target)];
       var plane = puzzle.userData.planes[x];
       callback(plane, x);
 
-      display.remove(...sphericles);
+      display.remove(...planes);
     };
 
-    display.add(...sphericles);
-    for ( let sphericle of sphericles ) {
-      sphericle.userData.hoverable = true;
-      sphericle.addEventListener("mouseenter", enter_handler);
-      sphericle.addEventListener("mouseleave", leave_handler);
-      sphericle.addEventListener("click", click_handler);
+    display.add(...planes);
+    for ( let p of planes ) {
+      p.userData.hoverable = true;
+      p.addEventListener("mouseenter", enter_handler);
+      p.addEventListener("mouseleave", leave_handler);
+      p.addEventListener("click", click_handler);
+    }
+  }
+  selectTwist(puzzle, display, x, callback=function(){}, filter=function(){return true;}) {
+    var plane = puzzle.userData.planes[x];
+    var angles = puzzle.userData.angles[x].filter(filter);
+    angles.push(4);
+    angles.reverse();
+    var inds = [...puzzle.userData.angles[x].keys()].filter(filter);
+    inds.push(-1);
+    inds.reverse();
+
+    var RR = this.getBoundingRadius()+1;
+    var radius = Math.sqrt(RR*RR - plane.constant*plane.constant) - 0.8;
+    var rings = angles.map(angle => this.makeTwistHelper(plane, angle, (radius++), 0.8));
+
+    for ( let r of rings ) {
+      r.material.transparent = true;
+      r.material.opacity = 0.3;
+    }
+    for ( let i in puzzle.userData.sides[x] )
+      if ( puzzle.userData.sides[x][i] )
+        this.highlight(puzzle.children[i]);
+
+    var enter_handler = event => {
+      event.target.material.opacity = 0.7;
+    };
+    var leave_handler = event => {
+      event.target.material.opacity = 0.3;
+    };
+    var click_handler = event => {
+      var i = inds[rings.indexOf(event.target)];
+
+      var angle = i!==-1 ? puzzle.userData.angles[x][i] : 0;
+      callback(plane, angle, i);
+
+      display.remove(...rings);
+    };
+
+    display.add(...rings);
+    for ( let r of rings ) {
+      r.userData.hoverable = true;
+      r.addEventListener("mouseenter", enter_handler);
+      r.addEventListener("mouseleave", leave_handler);
+      r.addEventListener("click", click_handler);
     }
   }
 }
@@ -437,7 +488,7 @@ class Display
     this.dom.addEventListener("mouseup", event => {
       if ( click_flag ) {
         click_flag = false;
-        target.dispatchEvent(Object.assign({type:"click"}, ray_event));
+        if ( target ) target.dispatchEvent(Object.assign({type:"click"}, ray_event));
       }
     }, false);
 
@@ -450,6 +501,14 @@ class Display
     };
     animate();
   }
+
+  add(...objs) {
+    this.scene.add(...objs);
+  }
+  remove(...objs) {
+    this.scene.remove(...objs);
+  }
+
   setCamera(x, y, z, dis) {
   	var vec = new THREE.Vector3(x, y, z);
     if ( !dis )
@@ -460,11 +519,21 @@ class Display
     this.camera.position.z = dis;
     this.trackball.lookAt(vec.normalize());
   }
-  add(...objs) {
-    this.scene.add(...objs);
-  }
-  remove(...objs) {
-    this.scene.remove(...objs);
+  animatedRotate(targets, axis, angle, speed, onfinish=function(){}) {
+    var start_quaternions = targets.map(target => target.quaternion.clone());
+
+    var curr = 0;
+    this.animations.push(() => {
+      var rot = new THREE.Quaternion().setFromAxisAngle(axis, curr*Math.PI/2);
+      for ( let i in targets )
+        targets[i].quaternion.multiplyQuaternions(rot, start_quaternions[i]);
+      if ( curr === angle ) {
+        onfinish();
+        return true;
+      }
+      curr += speed;
+      if ( curr > angle ) curr = angle;
+    });
   }
 }
 

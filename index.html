@@ -61,12 +61,12 @@ builder.split(puzzle,
   builder.plane(-1,-1, 0,1/2)
 );
 
-function loop() {
-  setTimeout(() => {
-    builder.selectElement(puzzle, obj=>{console.log(obj); loop();});
-  }, 100);
-}
-loop();
+// function loop() {
+//   setTimeout(() => {
+//     builder.selectElement(puzzle, obj=>{console.log(obj); loop();});
+//   }, 100);
+// }
+// loop();
 
 // function loop() {
 //   setTimeout(() => {
@@ -78,6 +78,18 @@ loop();
 //   }, 100);
 // }
 // loop();
+
+function loop() {
+  setTimeout(() => {
+    builder.analyze(puzzle);
+    builder.selectCutPlane(puzzle, display,
+      (_, x) => builder.selectTwist(puzzle, display, x,
+        (_, __, i) => builder.twist(puzzle, x, i, display, loop)),
+      (_, x) => puzzle.userData.angles[x]
+    );
+  }, 100);
+}
+loop();
 
 </script>
 </body>
