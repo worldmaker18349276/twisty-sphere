@@ -223,12 +223,6 @@ class TwistySphereBuilder
     }
     return puzzle;
   }
-  twist(puzzle, x, q, display, onfinish=function(){}) {
-    var targets = puzzle.userData.sides[x].map((b, i) => b && puzzle.children[i]).filter(b => b);
-    var axis = puzzle.userData.planes[x].normal;
-    var angle = puzzle.userData.angles[x][q] || 0;
-    display.animatedRotate(targets, axis, angle, this.twisting_rate, onfinish);
-  }
 
   highlight(element) {
     element.children[0].material.color.setHex(0xffff88);
@@ -236,7 +230,6 @@ class TwistySphereBuilder
   unhighlight(element) {
     element.children[0].material.color.setHex(element.userData.color);
   }
-
 
   makeSphericleHelper(plane, radius) {
     const Na = 50;
@@ -291,26 +284,31 @@ class TwistySphereBuilder
       var elements = puzzle.children.filter(filter);
       var inds = [...puzzle.children.keys()].filter(filter);
 
+      var esc_handler = event => { if ( event.which === 27 ) { remove(); reject("esc"); } };
       var enter_handler = event => { this.highlight(event.target); };
       var leave_handler = event => { this.unhighlight(event.target); };
       var click_handler = event => {
+        remove();
+        var i = inds[elements.indexOf(event.target)];
+        resolve([event.target, i]);
+      };
+
+      var remove = () => {
         for ( let elem of elements )
           this.unhighlight(elem);
-
         for ( let elem of elements ) {
           elem.removeEventListener("mouseenter", enter_handler);
           elem.removeEventListener("mouseleave", leave_handler);
           elem.removeEventListener("click", click_handler);
+          document.removeEventListener("keydown", esc_handler);
         }
-
-        var i = inds[elements.indexOf(event.target)];
-        resolve([event.target, i]);
-      };
+      }
 
       for ( let elem of elements ) {
         elem.addEventListener("mouseenter", enter_handler);
         elem.addEventListener("mouseleave", leave_handler);
         elem.addEventListener("click", click_handler);
+        document.addEventListener("keydown", esc_handler);
       }
     });
   }
@@ -323,6 +321,7 @@ class TwistySphereBuilder
         p.material.opacity = 0.3;
       }
 
+      var esc_handler = event => { if ( event.which === 27 ) { remove(); reject("esc"); } };
       var enter_handler = event => {
         event.target.material.opacity = 0.7;
         var x = inds[planes.indexOf(event.target)];
@@ -338,12 +337,18 @@ class TwistySphereBuilder
             this.unhighlight(puzzle.children[i]);
       };
       var click_handler = event => {
-        display.remove(...planes);
-
+        remove();
         var x = inds[planes.indexOf(event.target)];
         var plane = puzzle.userData.planes[x];
         resolve([plane, x]);
       };
+
+      var remove = () => {
+        for ( let elem of puzzle.children )
+          this.unhighlight(elem);
+        display.remove(...planes);
+        document.removeEventListener("keydown", esc_handler);
+      }
 
       display.add(...planes);
       for ( let p of planes ) {
@@ -351,6 +356,7 @@ class TwistySphereBuilder
         p.addEventListener("mouseenter", enter_handler);
         p.addEventListener("mouseleave", leave_handler);
         p.addEventListener("click", click_handler);
+        document.addEventListener("keydown", esc_handler);
       }
     });
   }
@@ -376,19 +382,20 @@ class TwistySphereBuilder
         if ( puzzle.userData.sides[x][i] )
           this.highlight(puzzle.children[i]);
 
-      var enter_handler = event => {
-        event.target.material.opacity = 0.7;
-      };
-      var leave_handler = event => {
-        event.target.material.opacity = 0.3;
-      };
+      var esc_handler = event => { if ( event.which === 27 ) { remove(); reject("esc"); } };
+      var enter_handler = event => { event.target.material.opacity = 0.7; };
+      var leave_handler = event => { event.target.material.opacity = 0.3; };
       var click_handler = event => {
-        display.remove(...rings);
-
+        remove();
         var i = inds[rings.indexOf(event.target)];
         var angle = i!==-1 ? puzzle.userData.angles[x][i] : 0;
         resolve([plane, angle, x, i]);
       };
+
+      var remove = () => {
+        display.remove(...rings);
+        document.removeEventListener("keydown", esc_handler);
+      }
 
       display.add(...rings);
       for ( let r of rings ) {
@@ -396,9 +403,19 @@ class TwistySphereBuilder
         r.addEventListener("mouseenter", enter_handler);
         r.addEventListener("mouseleave", leave_handler);
         r.addEventListener("click", click_handler);
+        document.addEventListener("keydown", esc_handler);
       }
     });
   }
+  animatedTwist(puzzle, x, q, display) {
+    return new Promise((resolve, reject) => {
+      var targets = puzzle.userData.sides[x].map((b, i) => b && puzzle.children[i]).filter(b => b);
+      var axis = puzzle.userData.planes[x].normal;
+      var angle = puzzle.userData.angles[x][q] || 0;
+      return display.animatedRotate(targets, axis, angle, this.twisting_rate);
+    });
+  }
+
 }
 
 class Display
@@ -526,20 +543,22 @@ class Display
     this.camera.position.z = dis;
     this.trackball.lookAt(vec.normalize());
   }
-  animatedRotate(targets, axis, angle, speed, onfinish=function(){}) {
-    var start_quaternions = targets.map(target => target.quaternion.clone());
+  animatedRotate(targets, axis, angle, speed) {
+    return new Promise((resolve, reject) => {
+      var start_quaternions = targets.map(target => target.quaternion.clone());
 
-    var curr = 0;
-    this.animations.push(() => {
-      var rot = new THREE.Quaternion().setFromAxisAngle(axis, curr*Math.PI/2);
-      for ( let i in targets )
-        targets[i].quaternion.multiplyQuaternions(rot, start_quaternions[i]);
-      if ( curr === angle ) {
-        onfinish();
-        return true;
-      }
-      curr += speed;
-      if ( curr > angle ) curr = angle;
+      var curr = 0;
+      this.animations.push(() => {
+        var rot = new THREE.Quaternion().setFromAxisAngle(axis, curr*Math.PI/2);
+        for ( let i in targets )
+          targets[i].quaternion.multiplyQuaternions(rot, start_quaternions[i]);
+        if ( curr === angle ) {
+          resolve();
+          return true;
+        }
+        curr += speed;
+        if ( curr > angle ) curr = angle;
+      });
     });
   }
 }
