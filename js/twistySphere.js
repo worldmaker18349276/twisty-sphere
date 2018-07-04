@@ -40,53 +40,6 @@ class TwistySphereBuilder
       this.shape.computeBoundingSphere();
     return this.shape.boundingSphere.radius;
   }
-  makeSphericleHelper(plane, radius) {
-    const Na = 50;
-    if ( !radius ) {
-      let RR = this.getBoundingRadius()+1;
-      radius = Math.sqrt(RR*RR - plane.constant*plane.constant);
-    }
-
-    var circle = new THREE.CircleGeometry(radius, Math.ceil(Na*radius/this.R));
-    circle.vertices.shift();
-    circle.faces.length = 0;
-    circle.translate(0, 0, -plane.constant);
-    circle.lookAt(plane.normal);
-
-    var color = new THREE.Color(`hsl(${Math.abs(this.sphidius(plane)-1)*300}, 100%, 50%)`);
-    var material = new THREE.LineDashedMaterial({color:color, linewidth:3});
-    return new THREE.LineSegments(circle, material);
-  }
-  makeCutPlaneHelper(plane, radius) {
-    const Na = 360;
-    if ( !radius ) {
-      let RR = this.getBoundingRadius()+1;
-      radius = Math.sqrt(RR*RR - plane.constant*plane.constant);
-    }
-
-    var disk = new THREE.CircleGeometry(radius, Math.ceil(Na*radius/this.R));
-    disk.translate(0, 0, -plane.constant);
-    disk.lookAt(plane.normal);
-
-    var color = new THREE.Color(`hsl(${Math.abs(this.sphidius(plane)-1)*300}, 100%, 50%)`);
-    var material = new THREE.MeshBasicMaterial({ color:color });
-    return new THREE.Mesh(disk, material);
-  }
-  makeTwistHelper(plane, angle, radius, dr=1) {
-    const Na = 360;
-    if ( !radius ) {
-      let RR = this.getBoundingRadius()+1;
-      radius = Math.sqrt(RR*RR - plane.constant*plane.constant);
-    }
-
-    var ring = new THREE.RingGeometry(radius, radius+dr, Math.ceil(Na*radius/this.R*angle/4), 1, 0, angle*Math.PI/2);
-    ring.translate(0, 0, -plane.constant);
-    ring.lookAt(plane.normal);
-
-    var color = new THREE.Color(`hsl(${Math.abs(this.sphidius(plane)-1)*300 + angle*90}, 100%, 50%)`);
-    var material = new THREE.MeshBasicMaterial({ color:color });
-    return new THREE.Mesh(ring, material);
-  }
 
   make() {
     var elem_data = {
@@ -284,113 +237,167 @@ class TwistySphereBuilder
     element.children[0].material.color.setHex(element.userData.color);
   }
 
-  selectElement(puzzle, callback=console.log, filter=function(){return true;}) {
-    var elements = puzzle.children.filter(filter);
-    var inds = [...puzzle.children.keys()].filter(filter);
 
-    var enter_handler = event => { this.highlight(event.target); };
-    var leave_handler = event => { this.unhighlight(event.target); };
-    var click_handler = event => {
-      for ( let elem of elements )
-        this.unhighlight(elem);
+  makeSphericleHelper(plane, radius) {
+    const Na = 50;
+    if ( !radius ) {
+      let RR = this.getBoundingRadius()+1;
+      radius = Math.sqrt(RR*RR - plane.constant*plane.constant);
+    }
 
-      var i = inds[elements.indexOf(event.target)];
-      callback(event.target, i);
+    var circle = new THREE.CircleGeometry(radius, Math.ceil(Na*radius/this.R));
+    circle.vertices.shift();
+    circle.faces.length = 0;
+    circle.translate(0, 0, -plane.constant);
+    circle.lookAt(plane.normal);
+
+    var color = new THREE.Color(`hsl(${Math.abs(this.sphidius(plane)-1)*300}, 100%, 50%)`);
+    var material = new THREE.LineDashedMaterial({color:color, linewidth:3});
+    return new THREE.LineSegments(circle, material);
+  }
+  makeCutPlaneHelper(plane, radius) {
+    const Na = 360;
+    if ( !radius ) {
+      let RR = this.getBoundingRadius()+1;
+      radius = Math.sqrt(RR*RR - plane.constant*plane.constant);
+    }
+
+    var disk = new THREE.CircleGeometry(radius, Math.ceil(Na*radius/this.R));
+    disk.translate(0, 0, -plane.constant);
+    disk.lookAt(plane.normal);
+
+    var color = new THREE.Color(`hsl(${Math.abs(this.sphidius(plane)-1)*300}, 100%, 50%)`);
+    var material = new THREE.MeshBasicMaterial({ color:color });
+    return new THREE.Mesh(disk, material);
+  }
+  makeTwistHelper(plane, angle, radius, dr=1) {
+    const Na = 360;
+    if ( !radius ) {
+      let RR = this.getBoundingRadius()+1;
+      radius = Math.sqrt(RR*RR - plane.constant*plane.constant);
+    }
+
+    var ring = new THREE.RingGeometry(radius, radius+dr, Math.ceil(Na*radius/this.R*angle/4), 1, 0, angle*Math.PI/2);
+    ring.translate(0, 0, -plane.constant);
+    ring.lookAt(plane.normal);
+
+    var color = new THREE.Color(`hsl(${Math.abs(this.sphidius(plane)-1)*300 + angle*90}, 100%, 50%)`);
+    var material = new THREE.MeshBasicMaterial({ color:color });
+    return new THREE.Mesh(ring, material);
+  }
+
+  selectElement(puzzle, filter=function(){return true;}) {
+    return new Promise((resolve, reject) => {
+      var elements = puzzle.children.filter(filter);
+      var inds = [...puzzle.children.keys()].filter(filter);
+
+      var enter_handler = event => { this.highlight(event.target); };
+      var leave_handler = event => { this.unhighlight(event.target); };
+      var click_handler = event => {
+        for ( let elem of elements )
+          this.unhighlight(elem);
+
+        for ( let elem of elements ) {
+          elem.removeEventListener("mouseenter", enter_handler);
+          elem.removeEventListener("mouseleave", leave_handler);
+          elem.removeEventListener("click", click_handler);
+        }
+
+        var i = inds[elements.indexOf(event.target)];
+        resolve([event.target, i]);
+      };
 
       for ( let elem of elements ) {
-        elem.removeEventListener("mouseenter", enter_handler);
-        elem.removeEventListener("mouseleave", leave_handler);
-        elem.removeEventListener("click", click_handler);
+        elem.addEventListener("mouseenter", enter_handler);
+        elem.addEventListener("mouseleave", leave_handler);
+        elem.addEventListener("click", click_handler);
       }
-    };
-
-    for ( let elem of elements ) {
-      elem.addEventListener("mouseenter", enter_handler);
-      elem.addEventListener("mouseleave", leave_handler);
-      elem.addEventListener("click", click_handler);
-    }
+    });
   }
-  selectCutPlane(puzzle, display, callback=function(){}, filter=function(){return true;}) {
-    var planes = puzzle.userData.planes.filter(filter).map(p => this.makeCutPlaneHelper(p));
-    var inds = [...puzzle.userData.planes.keys()].filter(filter);
-    for ( let p of planes ) {
-      p.material.transparent = true;
-      p.material.opacity = 0.3;
-    }
+  selectCutPlane(puzzle, display, filter=function(){return true;}) {
+    return new Promise((resolve, reject) => {
+      var planes = puzzle.userData.planes.filter(filter).map(p => this.makeCutPlaneHelper(p));
+      var inds = [...puzzle.userData.planes.keys()].filter(filter);
+      for ( let p of planes ) {
+        p.material.transparent = true;
+        p.material.opacity = 0.3;
+      }
 
-    var enter_handler = event => {
-      event.target.material.opacity = 0.7;
-      var x = inds[planes.indexOf(event.target)];
+      var enter_handler = event => {
+        event.target.material.opacity = 0.7;
+        var x = inds[planes.indexOf(event.target)];
+        for ( let i in puzzle.userData.sides[x] )
+          if ( puzzle.userData.sides[x][i] )
+            this.highlight(puzzle.children[i]);
+      };
+      var leave_handler = event => {
+        event.target.material.opacity = 0.3;
+        var x = inds[planes.indexOf(event.target)];
+        for ( let i in puzzle.userData.sides[x] )
+          if ( puzzle.userData.sides[x][i] )
+            this.unhighlight(puzzle.children[i]);
+      };
+      var click_handler = event => {
+        display.remove(...planes);
+
+        var x = inds[planes.indexOf(event.target)];
+        var plane = puzzle.userData.planes[x];
+        resolve([plane, x]);
+      };
+
+      display.add(...planes);
+      for ( let p of planes ) {
+        p.userData.hoverable = true;
+        p.addEventListener("mouseenter", enter_handler);
+        p.addEventListener("mouseleave", leave_handler);
+        p.addEventListener("click", click_handler);
+      }
+    });
+  }
+  selectTwist(puzzle, display, x, filter=function(){return true;}) {
+    return new Promise((resolve, reject) => {
+      var plane = puzzle.userData.planes[x];
+      var angles = puzzle.userData.angles[x].filter(filter);
+      angles.push(4);
+      angles.reverse();
+      var inds = [...puzzle.userData.angles[x].keys()].filter(filter);
+      inds.push(-1);
+      inds.reverse();
+
+      var RR = this.getBoundingRadius()+1;
+      var radius = Math.sqrt(RR*RR - plane.constant*plane.constant) - 0.8;
+      var rings = angles.map(angle => this.makeTwistHelper(plane, angle, (radius++), 0.8));
+
+      for ( let r of rings ) {
+        r.material.transparent = true;
+        r.material.opacity = 0.3;
+      }
       for ( let i in puzzle.userData.sides[x] )
         if ( puzzle.userData.sides[x][i] )
           this.highlight(puzzle.children[i]);
-    };
-    var leave_handler = event => {
-      event.target.material.opacity = 0.3;
-      var x = inds[planes.indexOf(event.target)];
-      for ( let i in puzzle.userData.sides[x] )
-        if ( puzzle.userData.sides[x][i] )
-          this.unhighlight(puzzle.children[i]);
-    };
-    var click_handler = event => {
-      var x = inds[planes.indexOf(event.target)];
-      var plane = puzzle.userData.planes[x];
-      callback(plane, x);
 
-      display.remove(...planes);
-    };
+      var enter_handler = event => {
+        event.target.material.opacity = 0.7;
+      };
+      var leave_handler = event => {
+        event.target.material.opacity = 0.3;
+      };
+      var click_handler = event => {
+        display.remove(...rings);
 
-    display.add(...planes);
-    for ( let p of planes ) {
-      p.userData.hoverable = true;
-      p.addEventListener("mouseenter", enter_handler);
-      p.addEventListener("mouseleave", leave_handler);
-      p.addEventListener("click", click_handler);
-    }
-  }
-  selectTwist(puzzle, display, x, callback=function(){}, filter=function(){return true;}) {
-    var plane = puzzle.userData.planes[x];
-    var angles = puzzle.userData.angles[x].filter(filter);
-    angles.push(4);
-    angles.reverse();
-    var inds = [...puzzle.userData.angles[x].keys()].filter(filter);
-    inds.push(-1);
-    inds.reverse();
+        var i = inds[rings.indexOf(event.target)];
+        var angle = i!==-1 ? puzzle.userData.angles[x][i] : 0;
+        resolve([plane, angle, x, i]);
+      };
 
-    var RR = this.getBoundingRadius()+1;
-    var radius = Math.sqrt(RR*RR - plane.constant*plane.constant) - 0.8;
-    var rings = angles.map(angle => this.makeTwistHelper(plane, angle, (radius++), 0.8));
-
-    for ( let r of rings ) {
-      r.material.transparent = true;
-      r.material.opacity = 0.3;
-    }
-    for ( let i in puzzle.userData.sides[x] )
-      if ( puzzle.userData.sides[x][i] )
-        this.highlight(puzzle.children[i]);
-
-    var enter_handler = event => {
-      event.target.material.opacity = 0.7;
-    };
-    var leave_handler = event => {
-      event.target.material.opacity = 0.3;
-    };
-    var click_handler = event => {
-      var i = inds[rings.indexOf(event.target)];
-
-      var angle = i!==-1 ? puzzle.userData.angles[x][i] : 0;
-      callback(plane, angle, i);
-
-      display.remove(...rings);
-    };
-
-    display.add(...rings);
-    for ( let r of rings ) {
-      r.userData.hoverable = true;
-      r.addEventListener("mouseenter", enter_handler);
-      r.addEventListener("mouseleave", leave_handler);
-      r.addEventListener("click", click_handler);
-    }
+      display.add(...rings);
+      for ( let r of rings ) {
+        r.userData.hoverable = true;
+        r.addEventListener("mouseenter", enter_handler);
+        r.addEventListener("mouseleave", leave_handler);
+        r.addEventListener("click", click_handler);
+      }
+    });
   }
 }
 

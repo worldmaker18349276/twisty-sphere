@@ -61,33 +61,31 @@ builder.split(puzzle,
   builder.plane(-1,-1, 0,1/2)
 );
 
+
 // function loop() {
-//   setTimeout(() => {
-//     builder.selectElement(puzzle, obj=>{console.log(obj); loop();});
-//   }, 100);
+//   builder.selectElement(puzzle).then(console.log).then(loop);
 // }
 // loop();
 
 // function loop() {
-//   setTimeout(() => {
-//     builder.analyze(puzzle);
-//     builder.selectCutPlane(puzzle, display,
-//       (_, x) => builder.twist(puzzle, x, 0, display, loop),
-//       (_, x) => puzzle.userData.angles[x]
-//     );
-//   }, 100);
+//   builder.analyze(puzzle);
+//   builder.selectCutPlane(puzzle, display).then(console.log).then(loop);
+// }
+// loop();
+
+
+// function loop() {
+//   builder.analyze(puzzle);
+//   builder.selectCutPlane(puzzle, display, (_, x) => puzzle.userData.angles[x])
+//     .then(([_, x]) => builder.twist(puzzle, x, 0, display, loop));
 // }
 // loop();
 
 function loop() {
-  setTimeout(() => {
-    builder.analyze(puzzle);
-    builder.selectCutPlane(puzzle, display,
-      (_, x) => builder.selectTwist(puzzle, display, x,
-        (_, __, i) => builder.twist(puzzle, x, i, display, loop)),
-      (_, x) => puzzle.userData.angles[x]
-    );
-  }, 100);
+  builder.analyze(puzzle);
+  builder.selectCutPlane(puzzle, display, (_, x) => puzzle.userData.angles[x])
+    .then(([_, x]) => builder.selectTwist(puzzle, display, x))
+    .then(([_, __, x, i]) => builder.twist(puzzle, x, i, display, loop))
 }
 loop();
 
