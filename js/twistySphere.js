@@ -140,9 +140,11 @@ class TwistySphereBuilder
   }
   analyze(puzzle) {
     // find all possible cut planes
+    var ind_elem = [...puzzle.children.keys()];
+
   	var planes = puzzle.userData.planes = [];
     var sides = puzzle.userData.sides = [];
-    for ( let i in puzzle.children ) for ( let plane of puzzle.children[i].userData.planes ) {
+    for ( let i of ind_elem ) for ( let plane of puzzle.children[i].userData.planes ) {
     	plane = this.planeToWorld(puzzle.children[i], plane);
     	let side = plane.constant < 0;
     	if ( !side ) plane = plane.negate();
@@ -156,9 +158,10 @@ class TwistySphereBuilder
     }
     
     // find sides of elements respect to cut planes
-    for ( let x in sides ) for ( let i in puzzle.children ) if ( !(i in sides[x]) ) {
-      let planex = this.planeToLocal(puzzle.children[i], planes[x]);
-    	let dis = puzzle.children[i].children[0].geometry.vertices.map(v => planex.distanceToPoint(v));
+    var ind_cut = [...planes.keys()];
+    for ( let x of ind_cut ) for ( let i of ind_elem ) if ( sides[x][i] === undefined ) {
+      let xplane = this.planeToLocal(puzzle.children[i], planes[x]);
+    	let dis = puzzle.children[i].children[0].geometry.vertices.map(v => xplane.distanceToPoint(v));
       if ( dis.every(d => d>-this.tolerance) )
       	sides[x][i] = true;
       else if ( dis.every(d => d<this.tolerance) )
@@ -168,25 +171,24 @@ class TwistySphereBuilder
     }
     
     // find all possible twisting angles for each cut planes
-    var angles = puzzle.userData.angles = new Array(sides.length);
-    var matches = puzzle.userData.matches = new Array(sides.length);
-    for ( let x in sides ) if ( !sides[x].includes(null) ) {
-      let sidesx = sides[x];
-
+    var angles = puzzle.userData.angles = new Array(ind_cut.length);
+    var matches = puzzle.userData.matches = new Array(ind_cut.length);
+    for ( let x of ind_cut ) if ( !sides[x].includes(null) ) {
       // find non-trivial cut planes for matching respect to twisting cut planes `planes[x]`
-    	let intercuts1 = [];
-    	let intercuts2 = [];
-    	for ( let sidesy of sides ) {
-      	let sidesy_inner = sidesy.filter((_, i) =>  sidesx[i]);
-      	let sidesy_outer = sidesy.filter((_, i) => !sidesx[i]);
-        let cuttable1 = !sidesy_inner.includes(null);
-        let cuttable2 = !sidesy_outer.includes(null);
-        
-        let innercut = sidesy.every((b, i) =>  b ?  sidesx[i] : true);
-        let outercut = sidesy.every((b, i) =>  b ? !sidesx[i] : true);
-        let ultracut = sidesy.every((b, i) => !b ? !sidesx[i] : true);
-        intercuts1.push(cuttable1 && !innercut && !outercut && !ultracut);
-        intercuts2.push(cuttable2 && !innercut && !outercut && !ultracut);
+    	let innercutables = new Array(ind_cut.length);
+    	let outercutables = new Array(ind_cut.length);
+    	let intercuts = new Array(ind_cut.length);
+    	for ( let y of ind_cut ) {
+      	let ycut_inner = sides[y].filter((_, i) =>  sides[x][i]);
+      	let ycut_outer = sides[y].filter((_, i) => !sides[x][i]);
+
+        innercutables[y] = !ycut_inner.includes(null);
+        outercutables[y] = !ycut_outer.includes(null);
+
+        let meet_inner = innercutables[y] ? ycut_inner.some(b => b) : true;
+        let meet_outer = outercutables[y] ? ycut_outer.some(b => b) : true;
+
+        intercuts[y] = meet_inner && meet_outer;
       }
 
       // align axes of cut planes to +y
@@ -199,11 +201,11 @@ class TwistySphereBuilder
       // match intercuts
       angles[x] = [];
       matches[x] = [];
-      for ( let y1 in intercuts1 ) if ( intercuts1[y1] )
-        for ( let y2 in intercuts2 ) if ( intercuts2[y2] )
+      for ( let y1 of ind_cut ) if ( intercuts[y1] && innercutables[y1] )
+        for ( let y2 of ind_cut ) if ( intercuts[y2] && outercutables[y2] )
         	if ( y1 !== y2 )
       {
-        if ( Math.abs(planes[y2].constant - planes[y1].constant) > this.tolerance )
+        if ( Math.abs(this.sphidius(planes[y2]) - this.sphidius(planes[y1])) > this.tolerance )
           break;
         if ( Math.abs(normals[y2].phi - normals[y1].phi) > this.tolerance )
           break;
