@@ -65,8 +65,7 @@ class TwistySphereBuilder
 
     var color = new THREE.Color(`hsl(${Math.abs(this.sphidius(plane)-1)*300}, 100%, 50%)`);
     var material = new THREE.MeshBasicMaterial({
-      color:color, transparent:true, opacity:opacity,
-      side: THREE.DoubleSide
+      color:color, transparent:true, opacity:opacity
     });
     return new THREE.Mesh(disk, material);
   }
@@ -76,7 +75,8 @@ class TwistySphereBuilder
     	type: "element",
       color: this.color,
       edge_color: this.edge_color,
-      planes: []
+      planes: [],
+      hoverable: true
     };
 
     var material = new THREE.MeshLambertMaterial({color:elem_data.color});
@@ -280,73 +280,65 @@ class TwistySphereBuilder
     element.children[0].material.color.setHex(element.userData.color);
   }
 
-  selectElement(puzzle, display, callback=function(){}) {
-    var targets = puzzle.children.map(e => e.children[0]);
+  selectElement(puzzle, callback=console.log, filter=function(){return true;}) {
+    var elements = puzzle.children.filter(filter);
+    var inds = [...puzzle.children.keys()].filter(filter);
 
-    var enter_handler = event => { this.highlight(event.object.parent); };
-    var leave_handler = event => { this.unhighlight(event.object.parent); };
+    var enter_handler = event => { this.highlight(event.target); };
+    var leave_handler = event => { this.unhighlight(event.target); };
     var click_handler = event => {
-      for ( let target of targets )
-        this.unhighlight(target.parent);
-      callback(event.object.parent);
+      for ( let elem of elements )
+        this.unhighlight(elem);
 
-      for ( let target of targets ) {
-        display.removeRaycasterListener("enter", target, enter_handler);
-        display.removeRaycasterListener("leave", target, leave_handler);
-        display.removeRaycasterListener("click", target, click_handler);
+      var i = inds[elements.indexOf(event.target)];
+      callback(event.target, i);
+
+      for ( let elem of elements ) {
+        elem.removeEventListener("mouseenter", enter_handler);
+        elem.removeEventListener("mouseleave", leave_handler);
+        elem.removeEventListener("click", click_handler);
       }
-      display.hoverable = display.hoverable.filter(obj => !targets.includes(obj));
     };
 
-    display.hoverable.push(...targets);
-    for ( let target of targets ) {
-      display.addRaycasterListener("enter", target, enter_handler);
-      display.addRaycasterListener("leave", target, leave_handler);
-      display.addRaycasterListener("click", target, click_handler);
+    for ( let elem of elements ) {
+      elem.addEventListener("mouseenter", enter_handler);
+      elem.addEventListener("mouseleave", leave_handler);
+      elem.addEventListener("click", click_handler);
     }
   }
-  selectCutPlane(puzzle, display, filter=function(){return true;}, callback=function(){}) {
+  selectCutPlane(puzzle, display, callback=function(){}, filter=function(){return true;}) {
     var sphericles = puzzle.userData.planes.filter(filter)
       .map(p => this.makeDiskHelper(p, 0.3));
-    var xs = [...puzzle.userData.planes.keys()].filter(filter);
-    for ( let sphericle of sphericles ) {
-      display.scene.add(sphericle);
-    }
+    var inds = [...puzzle.userData.planes.keys()].filter(filter);
 
     var enter_handler = event => {
-      event.object.material.opacity = 0.7;
-      var x = xs[sphericles.indexOf(event.object)];
+      event.target.material.opacity = 0.7;
+      var x = inds[sphericles.indexOf(event.target)];
       for ( let i in puzzle.userData.sides[x] )
         if ( puzzle.userData.sides[x][i] )
           this.highlight(puzzle.children[i]);
     };
     var leave_handler = event => {
-      event.object.material.opacity = 0.3;
-      var x = xs[sphericles.indexOf(event.object)];
+      event.target.material.opacity = 0.3;
+      var x = inds[sphericles.indexOf(event.target)];
       for ( let i in puzzle.userData.sides[x] )
         if ( puzzle.userData.sides[x][i] )
           this.unhighlight(puzzle.children[i]);
     };
     var click_handler = event => {
-      for ( let sphericle of sphericles )
-        display.scene.remove(sphericle);
-      var x = xs[sphericles.indexOf(event.object)];
+      var x = inds[sphericles.indexOf(event.target)];
       var plane = puzzle.userData.planes[x];
       callback(plane, x);
 
-      for ( let sphericle of sphericles ) {
-        display.removeRaycasterListener("enter", sphericle, enter_handler);
-        display.removeRaycasterListener("leave", sphericle, leave_handler);
-        display.removeRaycasterListener("click", sphericle, click_handler);
-      }
-      display.hoverable = display.hoverable.filter(obj => !sphericles.includes(obj));
+      display.remove(...sphericles);
     };
 
-    display.hoverable.push(...sphericles);
+    display.add(...sphericles);
     for ( let sphericle of sphericles ) {
-      display.addRaycasterListener("enter", sphericle, enter_handler);
-      display.addRaycasterListener("leave", sphericle, leave_handler);
-      display.addRaycasterListener("click", sphericle, click_handler);
+      sphericle.userData.hoverable = true;
+      sphericle.addEventListener("mouseenter", enter_handler);
+      sphericle.addEventListener("mouseleave", leave_handler);
+      sphericle.addEventListener("click", click_handler);
     }
   }
 }
@@ -411,36 +403,32 @@ class Display
     }, false);
 
     // raycaster
-    this.hoverable = [];
-
-    this.onenter = {};
-    this.onover = {};
-    this.onleave = {};
-    this.onclick = {};
-
-    var mouse = new THREE.Vector2();
-    var ray_event = {};
     this.raycaster = new THREE.Raycaster();
-    this.dom.addEventListener("mousemove", event => {
-      click_flag = false;
+    this.raycaster.linePrecision = 0;
+    var mouse = new THREE.Vector2();
+    var target = null, ray_event = {};
 
+    this.dom.addEventListener("mousemove", event => {
       mouse.set((event.clientX/window.innerWidth)*2 - 1,
                 - (event.clientY/window.innerHeight)*2 + 1);
       this.raycaster.setFromCamera(mouse, this.camera);
-      var pre_event = ray_event;
-      [ray_event = {}] = this.raycaster.intersectObjects(this.hoverable);
+      
+      var hoverable_objects = [];
+      this.scene.traverse(e => { if ( e.userData.hoverable ) hoverable_objects.push(e); });
+      [ray_event = {}] = this.raycaster.intersectObjects(hoverable_objects, true);
 
-      if ( pre_event !== ray_event ) {
-        if ( pre_event.object )
-          for ( let handler of (this.onleave[pre_event.object.id] || []) )
-            handler(pre_event);
-        if ( ray_event.object )
-          for ( let handler of (this.onenter[ray_event.object.id] || []) )
-            handler(ray_event);
+      var pre_target = target;
+      target = ray_event.object;
+      while ( target && !target.userData.hoverable ) target = target.parent;
+
+      if ( pre_target !== target ) {
+        if ( pre_target )
+          pre_target.dispatchEvent(Object.assign({type:"mouseleave"}, ray_event));
+        if ( target )
+          target.dispatchEvent(Object.assign({type:"mouseenter"}, ray_event));
       }
-      if ( ray_event.object )
-        for ( let handler of (this.onover[ray_event.object.id] || []) )
-          handler(ray_event);
+      if ( target )
+        target.dispatchEvent(Object.assign({type:"mouseover"}, ray_event));
     }, false);
 
     var click_flag = false;
@@ -449,8 +437,7 @@ class Display
     this.dom.addEventListener("mouseup", event => {
       if ( click_flag ) {
         click_flag = false;
-        for ( let handler of (this.onclick[ray_event.object.id] || []) )
-          handler(ray_event);
+        target.dispatchEvent(Object.assign({type:"click"}, ray_event));
       }
     }, false);
 
@@ -458,7 +445,7 @@ class Display
     this.animations = [];
     var animate = () => {
       requestAnimationFrame(animate);
-      this.animations = this.animations.filter(ani => !ani());
+      filterInPlace(this.animations, ani => !ani());
       this.renderer.render(this.scene, this.camera);
     };
     animate();
@@ -473,35 +460,11 @@ class Display
     this.camera.position.z = dis;
     this.trackball.lookAt(vec.normalize());
   }
-  addRaycasterListener(event, target, handler) {
-    var handlers;
-    if ( event == "enter" )
-      handlers = this.onenter;
-    else if ( event == "over" )
-      handlers = this.onover;
-    else if ( event == "leave" )
-      handlers = this.onleave;
-    else if ( event == "click" )
-      handlers = this.onclick;
-
-    (handlers[target.id] = handlers[target.id] || []).push(handler);
+  add(...objs) {
+    this.scene.add(...objs);
   }
-  removeRaycasterListener(event, target, handler) {
-    var handlers;
-    if ( event == "enter" )
-      handlers = this.onenter;
-    else if ( event == "over" )
-      handlers = this.onover;
-    else if ( event == "leave" )
-      handlers = this.onleave;
-    else if ( event == "click" )
-      handlers = this.onclick;
-
-    var i = (handlers[target.id] || []).indexOf(handler);
-    if ( i !== -1 )
-      handlers[target.id].slice(i, 1);
-    if ( handlers[target.id].length === 0 )
-      delete handlers[target.id];
+  remove(...objs) {
+    this.scene.remove(...objs);
   }
 }
 

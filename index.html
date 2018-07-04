@@ -37,7 +37,7 @@ var builder = new TwistySphereBuilder({
   // inner_part: true
 });
 var puzzle = builder.make();
-display.scene.add(puzzle);
+display.add(puzzle);
 
 // builder.split(puzzle,
 //   builder.plane( 1, 1, 1,1),
@@ -61,18 +61,24 @@ builder.split(puzzle,
   builder.plane(-1,-1, 0,1/2)
 );
 
-// builder.selectElement(puzzle, display, obj=>console.log(obj));
-
 function loop() {
   setTimeout(() => {
-    builder.analyze(puzzle);
-    builder.selectCutPlane(puzzle, display,
-      (_, x) => puzzle.userData.angles[x],
-      (_, x) => builder.twist(puzzle, x, 0, display, loop)
-    );
+    builder.selectElement(puzzle, obj=>{console.log(obj); loop();});
   }, 100);
 }
 loop();
+
+// function loop() {
+//   setTimeout(() => {
+//     builder.analyze(puzzle);
+//     builder.selectCutPlane(puzzle, display,
+//       (_, x) => builder.twist(puzzle, x, 0, display, loop),
+//       (_, x) => puzzle.userData.angles[x]
+//     );
+//   }, 100);
+// }
+// loop();
+
 </script>
 </body>
 </html>

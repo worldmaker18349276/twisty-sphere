@@ -2,6 +2,16 @@ const Vec = (x,y,z) => new THREE.Vector3(x,y,z);
 const pi = Math.PI;
 const tolerance = 1e-5;
 
+// in-place filter array, return false if nothing change
+function filterInPlace(arr, condition) {
+  var j = 0;
+  for ( var i = 0; i < arr.length; i++ )
+    if ( condition(arr[i], i, arr) ) arr[j++] = arr[i];
+  if ( arr.length === j )
+    return true;
+  arr.length = j;
+  return false;
+}
 class Digraph
 {
   constructor() {
@@ -171,7 +181,7 @@ function cutConvexPolyhedron(geometry, plane, closeHoles) {
   // remove useless vertices
   var j = 0;
   var ind_map = geometry.vertices.map((_, i) => (sgn[i] !== -1) ? j++ : -1);
-  geometry.vertices = geometry.vertices.filter((_, i) => (sgn[i] !== -1));
+  filterInPlace(geometry.vertices, (_, i) => (sgn[i] !== -1));
   for ( let face of geometry.faces ) {
     face.a = ind_map[face.a];
     face.b = ind_map[face.b];
