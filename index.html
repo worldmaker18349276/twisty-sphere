@@ -62,27 +62,33 @@ builder.split(puzzle,
 );
 
 function element() {
-  return builder.selectElement(puzzle).then(console.log, console.log);
+  return builder.selectElement(puzzle)
+    .then(([e, i]) => console.log(e)).then(element)
+    .catch(console.log);
 }
 
 function plane() {
-  return builder.selectCutPlane(puzzle, display).then(console.log, console.log);
+  return builder.selectCutPlane(puzzle, display)
+    .then(([p, i]) => console.log(p)).then(plane)
+    .catch(console.log);
 }
 
 function twist() {
   return builder.selectCutPlane(puzzle, display, (_, x) => puzzle.userData.angles[x])
-    .then(([_, x]) => builder.selectTwist(puzzle, display, x).catch(e => {if ( e == "esc" ) twist(); throw e;}))
+    .catch(e => {if ( e == "esc" ) { throw "cancel twist"; } throw e; })
+    .then(([_, x]) => builder.selectTwist(puzzle, display, x))
+    .catch(e => {if ( e == "esc" ) { twist(); throw "re-select twist"; } throw e; })
     .then(([_, __, x, i]) => builder.animatedTwist(puzzle, x, i, display))
+    .then(() => { builder.analyze(puzzle); return twist(); })
     .catch(console.log);
 }
 
 </script>
 
   <div style="position:fixed;bottom:10px;left:10px;">
-    <button onclick="builder.analyze(puzzle)"> analyze </button>
     <button onclick="element()"> select element </button>
-    <button onclick="plane()"> select cut plane </button>
-    <button onclick="twist();"> twist </button>
+    <button onclick="builder.analyze(puzzle); plane()"> select cut plane </button>
+    <button onclick="builder.analyze(puzzle); twist();"> twist </button>
   </div>
 </body>
 </html>

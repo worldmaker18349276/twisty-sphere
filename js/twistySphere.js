@@ -414,7 +414,7 @@ class TwistySphereBuilder
       var targets = puzzle.userData.sides[x].map((b, i) => b && puzzle.children[i]).filter(b => b);
       var axis = puzzle.userData.planes[x].normal;
       var angle = puzzle.userData.angles[x][q] || 0;
-      return display.animatedRotate(targets, axis, angle, this.twisting_rate);
+      resolve(display.animatedRotate(targets, axis, angle, this.twisting_rate));
     });
   }
 
