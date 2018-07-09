@@ -286,3 +286,50 @@ function makeCrossSection_(geometry, plane) {
   return res;
 }
 
+class SphereUtil
+{
+  static sphidius(plane) {
+    return 2 - Math.acos(plane.constant)*2/Math.PI;
+  }
+  static plane(x, y, z, sphr) {
+    var normal = new THREE.Vector3(x,y,z).normalize();
+    var constant = Math.cos((2-sphr)*Math.PI/2);
+    return new THREE.Plane(normal, constant);
+  }
+  static planeToLocal(obj, plane) {
+    plane = new THREE.Plane().copy(plane);
+    plane.normal.applyQuaternion(obj.quaternion.clone().conjugate());
+    return plane;
+  }
+  static planeToWorld(obj, plane) {
+    plane = new THREE.Plane().copy(plane);
+    plane.normal.applyQuaternion(obj.quaternion);
+    return plane;
+  }
+}
+
+class FuzzyTool
+{
+  constructor(param) {
+    param = Object.assign({
+      tolerance: 1e-5
+    }, param);
+    this.tolerance = param.tolerance;
+  }
+  greater_than(v1, v2) {
+    return (v1-v2 > -this.tolerance);
+  }
+  equals(v1, v2) {
+    if ( v1.x !== undefined && v1.y !== undefined && v1.z !== undefined )
+      return (Math.abs(v1.x-v2.x) < this.tolerance)
+          && (Math.abs(v1.y-v2.y) < this.tolerance)
+          && (Math.abs(v1.z-v2.z) < this.tolerance);
+    else if ( v1.constant !== undefined && v1.normal !== undefined )
+      return this.equals(v1.constant, v2.constant)
+          && this.equals(v1.normal, v2.normal);
+    else
+      return Math.abs(v1-v2) < this.tolerance;
+  }
+}
+var defaultFuzzyTool = new FuzzyTool();
+
