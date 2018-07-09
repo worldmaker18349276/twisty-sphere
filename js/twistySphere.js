@@ -12,13 +12,9 @@ class TwistySphereBuilder
       tolerance: 1e-5,
       color: 0xffffff,
       edge_color: 0xff0000,
-      twisting_rate: 0.03,
+      twisting_rate: 1.5,
       inner_part: false
     }, param);
-    if ( param.shape === undefined ) {
-      param.shape = new THREE.IcosahedronGeometry(1, 3);
-      param.shape.computeFlatVertexNormals();
-    }
   	this.shape = param.shape;
     this.tolerance = param.tolerance;
     this.color = param.color;
@@ -245,6 +241,100 @@ class TwistySphereBuilder
   }
 }
 
+class TwistyBallBuilder extends TwistySphereBuilder
+{
+  constructor(param) {
+    param.shape = new THREE.IcosahedronGeometry(1, 3);
+    TwistyBallBuilder.computeVertexNormals(param.shape);
+    super(param);
+  }
+  static computeVertexNormals(geometry) {
+    const ind = ['a', 'b', 'c'];
+    for ( let f of geometry.faces )
+      for ( let i=0; i<3; i++ )
+        f.vertexNormals[i].copy(geometry.vertices[f[ind[i]]]).normalize();
+  }
+  static sphericle(plane) {
+    var radius = Math.sqrt(1 - plane.constant*plane.constant);
+
+    var circle = new THREE.CircleGeometry(radius, Math.ceil(360*radius));
+    circle.vertices.shift();
+    circle.faces.length = 0;
+    circle.translate(0, 0, -plane.constant);
+    circle.lookAt(plane.normal);
+    return circle;
+  }
+
+  split(puzzle, ...planes) {
+    if ( planes.length !== 1 )
+      return planes.reduce((puzzle, plane) => this.split(puzzle, plane), puzzle);
+    var plane = planes[0];
+  
+    var new_elements = [];
+  	for ( let elem of puzzle.children ) {
+    	let plane_ = this.planeToLocal(elem, plane);
+  
+      // check sides of element respect to cut plane `plane_`
+      let dis = elem.children[0].geometry.vertices.map(v => plane_.distanceToPoint(v));
+      let setups;
+      if ( dis.every(d => d > -this.tolerance) ) {
+        setups = [[elem, plane_, false]];
+  
+      } else if ( dis.every(d => d < this.tolerance) ) {
+        setups = [[elem, plane_.negate(), false]];
+  
+      } else {
+        let new_elem = elem.clone();
+        for ( let subelem of new_elem.children ) {
+          subelem.material = subelem.material.clone();
+          subelem.geometry = subelem.geometry.clone();
+        }
+        new_elements.push(new_elem);
+        setups = [[elem, plane_, true], [new_elem, plane_.clone().negate(), true]];
+      }
+  
+      // cut elements `elem` by plane `new_plane`
+      for ( let [elem, new_plane, cuttable] of setups ) {
+        let shell = elem.children[0];
+        let edges = elem.children.slice(1);
+  
+        // shell part
+        if ( cuttable )
+          cutConvexPolyhedron(shell.geometry, new_plane, this.inner_part);
+          TwistyBallBuilder.computeVertexNormals(shell.geometry);
+  
+        // edges part
+        if ( this.inner_part ? cuttable : true ) {
+          // original edges
+          for ( let edge of edges )
+            cutPolygon(edge.geometry, new_plane);
+  
+          // new edge induced by cut plane `new_plane`
+          let new_edge = TwistyBallBuilder.sphericle(new_plane);
+          if ( new_edge )
+            for ( let plane of elem.userData.planes )
+              cutPolygon(new_edge, plane);
+          else
+            new_edge = new THREE.Geometry();
+  
+          let material;
+          if ( edges.length === 0 )
+            material = new THREE.LineBasicMaterial({color:elem.userData.edge_color, linewidth:3});
+          else
+            material = edges[0].material;
+          elem.add(new THREE.LineLoop(new_edge, material));
+          elem.userData.planes.push(new_plane);
+        }
+      }
+  
+    }
+  
+    for ( let new_element of new_elements )
+      puzzle.add(new_element);
+    return puzzle;
+  }
+}
+
 class TwistController
 {
   constructor(param) {
@@ -258,19 +348,6 @@ class TwistController
     this.tolerance = param.tolerance;
     this.builder = param.builder;
     this.display = param.display;
-  }
-  makeSphericleHelper(plane) {
-    var radius = Math.sqrt(this.R*this.R - plane.constant*plane.constant);
-
-    var circle = new THREE.CircleGeometry(radius, Math.ceil(this.Na*radius));
-    circle.vertices.shift();
-    circle.faces.length = 0;
-    circle.translate(0, 0, -plane.constant);
-    circle.lookAt(plane.normal);
-
-    var color = new THREE.Color(`hsl(${Math.abs(sphidius(plane)-1)*300}, 100%, 50%)`);
-    var material = new THREE.LineDashedMaterial({color:color, linewidth:3});
-    return new THREE.LineSegments(circle, material);
   }
   makeCutPlaneHelper(plane) {
     var radius = Math.sqrt(this.R*this.R - plane.constant*plane.constant);
@@ -374,11 +451,9 @@ class TwistController
     return new Promise((resolve, reject) => {
       var plane = puzzle.userData.planes[x];
       var angles = puzzle.userData.angles[x].map((a, i) => filter(a, i) ? a : null);
-      angles.push(4);
-      angles.reverse();
 
-      var r = - 0.8;
-      var rings = angles.map(angle => angle && this.makeTwistHelper(plane, angle, (r++)/10, 0.08));
+      var r = angles.filter(a => a).length - 0.8;
+      var rings = angles.map(angle => angle && this.makeTwistHelper(plane, angle, (r--)/10, 0.08));
 
       for ( let r of rings ) {
         r.material.transparent = true;
@@ -515,9 +590,9 @@ class Display
 
     // animation
     this.animations = [];
-    var animate = () => {
+    var animate = (t) => {
       requestAnimationFrame(animate);
-      filterInPlace(this.animations, ani => !ani());
+      filterInPlace(this.animations, ani => !ani(t));
       this.renderer.render(this.scene, this.camera);
     };
     animate();
@@ -544,12 +619,18 @@ class Display
     this.camera.position.z = dis;
     this.trackball.lookAt(vec.normalize());
   }
+
   animatedRotate(targets, axis, angle, speed) {
     return new Promise((resolve, reject) => {
       var start_quaternions = targets.map(target => target.quaternion.clone());
 
       var curr = 0;
-      this.animations.push(() => {
+      var t0;
+      this.animations.push((t) => {
+        if ( !t0 ) t0 = t;
+        var dt = (t - t0)/1000;
+        t0 = t;
+
         var rot = new THREE.Quaternion().setFromAxisAngle(axis, curr*Math.PI/2);
         for ( let i in targets )
           targets[i].quaternion.multiplyQuaternions(rot, start_quaternions[i]);
@@ -557,7 +638,7 @@ class Display
           resolve();
           return true;
         }
-        curr += speed;
+        curr += speed*dt;
         if ( curr > angle ) curr = angle;
       });
     });

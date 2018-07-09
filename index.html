@@ -32,10 +32,11 @@ function rot(axis, angle) {
 }
 
 var display = new Display();
-var builder = new TwistySphereBuilder({
-  // shape: new THREE.BoxGeometry(20,20,20),
-  // inner_part: true
-});
+// var builder = new TwistySphereBuilder({
+//   shape: new THREE.BoxGeometry(20,20,20),
+//   inner_part: true
+// });
+var builder = new TwistyBallBuilder({});
 var controller = new TwistController({builder, display, R:1.1});
 var puzzle = builder.make();
 display.add(puzzle);
