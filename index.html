@@ -36,6 +36,7 @@ var builder = new TwistySphereBuilder({
   // shape: new THREE.BoxGeometry(20,20,20),
   // inner_part: true
 });
+var controller = new TwistController({builder, display, R:1.1});
 var puzzle = builder.make();
 display.add(puzzle);
 
@@ -62,21 +63,21 @@ builder.split(puzzle,
 );
 
 function element() {
-  return builder.selectElement(puzzle)
+  return controller.selectElement(puzzle)
     .then(([e, i]) => console.log(e)).then(element)
     .catch(console.log);
 }
 
 function plane() {
-  return builder.selectCutPlane(puzzle, display)
+  return controller.selectCutPlane(puzzle)
     .then(([p, i]) => console.log(p)).then(plane)
     .catch(console.log);
 }
 
 function twist() {
-  return builder.selectCutPlane(puzzle, display, (_, x) => puzzle.userData.angles[x])
+  return controller.selectCutPlane(puzzle, (_, x) => puzzle.userData.angles[x])
     .catch(e => {if ( e == "esc" ) { throw "cancel twist"; } throw e; })
-    .then(([_, x]) => builder.selectTwist(puzzle, display, x))
+    .then(([_, x]) => controller.selectTwist(puzzle, x))
     .catch(e => {if ( e == "esc" ) { twist(); throw "re-select twist"; } throw e; })
     .then(([_, __, x, i]) => builder.animatedTwist(puzzle, x, i, display))
     .then(() => { builder.analyze(puzzle); return twist(); })
