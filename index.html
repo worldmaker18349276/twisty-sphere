@@ -63,34 +63,12 @@ builder.split(puzzle,
   SphereUtil.plane(-1,-1, 0,1/2)
 );
 
-function sel_elem() {
-  return controller.selectElement(puzzle)
-    .then(([e, i]) => console.log(e)).then(sel_elem)
-    .catch(e => {if ( typeof e == "string" ) console.log(e); else throw e; });
-}
-
-function sel_cut() {
-  return controller.selectCut(puzzle)
-    .then(([p, i]) => console.log(p)).then(sel_cut)
-    .catch(e => {if ( typeof e == "string" ) console.log(e); else throw e; });
-}
-
-function sel_twist() {
-  return controller.selectCut(puzzle, (_, x) => puzzle.userData.angles[x])
-    .catch(e => {if ( e == "esc" ) { throw "cancel twist"; } throw e; })
-    .then(([_, x]) => controller.selectTwist(puzzle, x))
-    .catch(e => {if ( e == "esc" ) { sel_twist(); throw "re-select twist"; } throw e; })
-    .then(([_, __, x, i]) => controller.animatedTwist(puzzle, x, i))
-    .then(() => { builder.analyze(puzzle); return sel_twist(); })
-    .catch(e => {if ( typeof e == "string" ) console.log(e); else throw e; });
-}
-
 </script>
 
   <div style="position:fixed;bottom:10px;left:10px;">
-    <button onclick="sel_elem()"> select element </button>
-    <button onclick="builder.analyze(puzzle); sel_cut()"> select cut plane </button>
-    <button onclick="builder.analyze(puzzle); sel_twist();"> twist </button>
+    <button onclick="controller.selectElementLoopHandler(puzzle)"> select element </button>
+    <button onclick="controller.selectCutLoopHandler(puzzle)"> select cut plane </button>
+    <button onclick="controller.twistLoopHandler(puzzle);"> twist </button>
   </div>
 </body>
 </html>

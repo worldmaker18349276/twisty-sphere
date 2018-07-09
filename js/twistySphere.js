@@ -462,6 +462,34 @@ class TwistController
     var angle = puzzle.userData.angles[x][q] || 0;
     return this.display.animatedRotate(targets, axis, angle, 1.5);
   }
+
+  selectElementLoopHandler(puzzle) {
+    this.selectElement(puzzle)
+      .then(([e, i]) => console.log(e)).then(() => this.selectElementLoopHandler(puzzle))
+      .catch(e => {if ( typeof e == "string" ) console.log(e); else throw e; });
+  }
+  selectCutLoopHandler(puzzle) {
+    this.builder.analyze(puzzle);
+    var sel_cut_loop_ = () => {
+      this.selectCut(puzzle)
+        .then(([p, i]) => console.log(p)).then(sel_cut_loop_)
+        .catch(e => {if ( typeof e == "string" ) console.log(e); else throw e; });
+    };
+    sel_cut_loop_();
+  }
+  twistLoopHandler() {
+    this.builder.analyze(puzzle);
+    var sel_twist_loop_ = () => {
+      this.selectCut(puzzle, (_, x) => puzzle.userData.angles[x])
+        .catch(e => {if ( e == "esc" ) { throw "cancel twist"; } throw e; })
+        .then(([_, x]) => this.selectTwist(puzzle, x))
+        .catch(e => {if ( e == "esc" ) { sel_twist_loop_(); throw "re-select twist"; } throw e; })
+        .then(([_, __, x, i]) => this.animatedTwist(puzzle, x, i))
+        .then(() => { this.builder.analyze(puzzle); return sel_twist_loop_(); })
+        .catch(e => {if ( typeof e == "string" ) console.log(e); else throw e; });
+    }
+    sel_twist_loop_();
+  }
 }
 
 class Display
