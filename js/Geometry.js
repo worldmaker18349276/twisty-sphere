@@ -179,9 +179,13 @@ function cutConvexPolyhedron(geometry, plane, closeHoles) {
   }
 
   // remove useless vertices
-  var j = 0;
-  var ind_map = geometry.vertices.map((_, i) => (sgn[i] !== -1) ? j++ : -1);
-  filterInPlace(geometry.vertices, (_, i) => (sgn[i] !== -1));
+  var new_vertices = [];
+  var ind_map = {};
+  for ( let face of geometry.faces )
+    for ( let i of [face.a, face.b, face.c] )
+      if ( ind_map[i] === undefined )
+        ind_map[i] = new_vertices.push(geometry.vertices[i])-1;
+  geometry.vertices = new_vertices;
   for ( let face of geometry.faces ) {
     face.a = ind_map[face.a];
     face.b = ind_map[face.b];
