@@ -10,7 +10,6 @@ function zip(...lists) {
   };
   return zipped;
 }
-
 // in-place filter array, return false if nothing change
 function filterInPlace(arr, condition) {
   var j = 0;
@@ -60,7 +59,7 @@ function toDirectedCycles(dg, has_bidirected_edges=true, check=false) {
   if ( has_bidirected_edges ) {
     for ( let i of dg.data.keys() ) {
       let set = dg.data.get(i);
-      if ( set ) for ( let j of set )
+      if ( set ) for ( let j of [...set] )
         if ( dg.remove(j, i) ) dg.remove(i, j);
     }
   }
@@ -234,10 +233,11 @@ function cutConvexPolyhedron_(geometry, plane, closeHoles) {
 function findOpenEdge(geometry, check=false) {
   var edges = new Digraph();
   for ( let {a, b, c} of geometry.faces ) for ( let [i, j] of [[c,a], [a,b], [b,c]] ) {
-    if ( i === j )
+    if ( i === j ) {
       if ( check ) return console.log("trivial edge", i);
-    else if ( !edges.add(i, j) )
+    } else if ( !edges.add(i, j) ) {
       if ( check ) return console.log("wing edge", i, j);
+    }
   }
 
   return toDirectedCycles(edges, true, check);
@@ -316,13 +316,6 @@ function makeCrossSection_(geometry, plane) {
   return res;
 }
 
-function planeWorldToLocal(obj, plane) {
-  return new THREE.Plane().copy(plane).applyMatrix4(new THREE.Matrix4().getInverse(obj.matrixWorld));
-}
-function planeLocalToWorld(obj, plane) {
-  return new THREE.Plane().copy(plane).applyMatrix4(obj.matrixWorld);
-}
-
 function sphidius(plane) {
   return 2 - Math.acos(plane.constant)*2/Math.PI;
 }
@@ -341,6 +334,9 @@ class FuzzyTool
   }
   greater_than(v1, v2) {
     return (v1-v2 > -this.tolerance);
+  }
+  less_than(v1, v2) {
+    return (v1-v2 < this.tolerance);
   }
   equals(v1, v2) {
     if ( v1.x !== undefined && v1.y !== undefined && v1.z !== undefined )

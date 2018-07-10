@@ -14,12 +14,12 @@
 <body>
 <script>
 var texture = new THREE.TextureLoader().load("crate.gif");
+var material = new THREE.MeshLambertMaterial({color:0xffffff, map:texture});
+var geometry = new THREE.BoxGeometry(2,2,2);
+var shape = new THREE.Mesh(geometry, material);
+
 var display = new Display();
-var builder = new TwistySphereBuilder({
-  shape: new THREE.BoxGeometry(2,2,2),
-  texture: texture,
-  inner_part: true
-});
+var builder = new TwistySphereBuilder(shape);
 var controller = new TwistController({builder, display, R:1.5});
 var puzzle = builder.make();
 display.add(puzzle);

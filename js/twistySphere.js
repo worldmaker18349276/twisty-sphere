@@ -2,47 +2,48 @@ function always() {
   return true;
 }
 
+// side
+const FRONT = 1;
+const BACK = 2;
+const NONE = 3;
+
+function cloneObject3D(obj) {
+  var copied = obj.clone();
+  copied.geometry = obj.geometry.clone();
+  copied.material = obj.material.clone();
+  while ( copied.children.length ) copied.remove(copied.children[0]);
+  for ( let elem of obj.children )
+    copied.add(cloneObject3D(elem));
+  return copied;
+}
+
 class TwistySphereBuilder
 {
-  constructor(param={}) {
-    param = Object.assign({
-      color: 0xffffff,
-      edge_color: 0xff0000,
-      inner_part: false,
-      fuzzyTool: defaultFuzzyTool,
-    }, param);
-  	this.shape = param.shape;
-    this.color = param.color;
-    this.edge_color = param.edge_color;
-    this.inner_part = param.inner_part;
-    this.fuzzyTool = param.fuzzyTool;
-    this.texture = param.texture;
+  constructor(shape, config={}) {
+    config = Object.assign({
+      fuzzyTool: defaultFuzzyTool
+    }, config);
+  	this.shape = shape;
+    this.fuzzyTool = config.fuzzyTool;
   }
   getBoundingRadius() {
-    if ( !this.shape.boundingSphere )
-      this.shape.computeBoundingSphere();
-    return this.shape.boundingSphere.radius;
+    if ( !this.shape.geometry.boundingSphere )
+      this.shape.geometry.computeBoundingSphere();
+    return this.shape.geometry.boundingSphere.radius;
   }
 
   make() {
-    var elem_data = {
+    var elem = cloneObject3D(this.shape);
+    elem.userData = {
     	type: "element",
-      color: this.color,
-      edge_color: this.edge_color,
-      planes: [],
+      cuts: [],
       hoverable: true
     };
-
-    var material = new THREE.MeshLambertMaterial({color:elem_data.color, map:this.texture});
-    var shell = new THREE.Mesh(this.shape.clone(), material);
-
-    var elem = new THREE.Object3D();
-    elem.add(shell);
-    elem.userData = elem_data;
     
     var puzzle = new THREE.Group();
     puzzle.add(elem);
     puzzle.userData = {
+      type: "twistySphere",
       builder: `${this.constructor.name}`
     };
     return puzzle;
@@ -52,125 +53,104 @@ class TwistySphereBuilder
       return planes.reduce((puzzle, plane) => this.split(puzzle, plane), puzzle);
     var plane = planes[0];
 
-    var new_elements = [];
-  	for ( let elem of puzzle.children ) {
-    	let plane_ = planeWorldToLocal(elem, plane);
+  	for ( let elem of puzzle.children.slice(0) ) {
+    	// worldToLocal
+      let plane_ = new THREE.Plane().copy(plane);
+      plane_.applyMatrix4(new THREE.Matrix4().getInverse(elem.matrixWorld));
 
-      // check sides of element respect to cut plane `plane_`
-      let dis = elem.children[0].geometry.vertices.map(v => plane_.distanceToPoint(v));
-      let setups;
+      // check sides of element respect to cut `plane_`
+      let dis = elem.geometry.vertices.map(v => plane_.distanceToPoint(v));
       if ( dis.every(d => this.fuzzyTool.greater_than(d, 0)) ) {
-        setups = [[elem, plane_, false]];
+        elem.userData.cuts.push(plane_);
 
       } else if ( dis.every(d => this.fuzzyTool.greater_than(-d, 0)) ) {
-        setups = [[elem, plane_.negate(), false]];
+        elem.userData.cuts.push(plane_.negate());
 
       } else {
-        let new_elem = elem.clone();
-        for ( let subelem of new_elem.children ) {
-          subelem.material = subelem.material.clone();
-          subelem.geometry = subelem.geometry.clone();
-        }
-        new_elements.push(new_elem);
-        setups = [[elem, plane_, true], [new_elem, plane_.clone().negate(), true]];
-      }
+        let new_elem = cloneObject3D(elem);
+        puzzle.add(new_elem);
 
-      // cut elements `elem` by plane `new_plane`
-      for ( let [elem, new_plane, cuttable] of setups ) {
-        let shell = elem.children[0];
-        let edges = elem.children.slice(1);
+        // cut elements `elem` by plane `plane_`
+        cutConvexPolyhedron(elem.geometry, plane_, true);
+        elem.userData.cuts.push(plane_);
 
-        // shell part
-        if ( cuttable )
-          cutConvexPolyhedron(shell.geometry, new_plane, this.inner_part);
-
-        // edges part
-        if ( this.inner_part ? cuttable : true ) {
-          // original edges
-          for ( let edge of edges )
-            cutConvexPolygon(edge.geometry, new_plane);
-
-          // new edge induced by cut plane `new_plane`
-          let [new_edge=null] = makeCrossSection(this.shape, new_plane);
-          if ( new_edge )
-            for ( let plane of elem.userData.planes )
-              cutConvexPolygon(new_edge, plane);
-          else
-            new_edge = new THREE.Geometry();
-
-          let material;
-          if ( edges.length === 0 )
-            material = new THREE.LineBasicMaterial({color:elem.userData.edge_color, linewidth:3});
-          else
-            material = edges[0].material;
-          elem.add(new THREE.LineLoop(new_edge, material));
-          elem.userData.planes.push(new_plane);
-        }
+        // cut elements `elem` by plane `antiplane_`
+        let antiplane_ = plane_.clone().negate();
+        cutConvexPolyhedron(new_elem.geometry, antiplane_, true);
+        new_elem.userData.cuts.push(antiplane_);
       }
 
     }
     
-    for ( let new_element of new_elements )
-      puzzle.add(new_element);
     return puzzle;
   }
   analyze(puzzle) {
-    // find all possible cut planes
     var ind_elem = [...puzzle.children.keys()];
 
-  	var planes = puzzle.userData.planes = [];
+    // find all possible cuts
+  	var cuts = puzzle.userData.cuts = [];
     var sides = puzzle.userData.sides = [];
-    for ( let i of ind_elem ) for ( let plane of puzzle.children[i].userData.planes ) {
-    	plane = planeLocalToWorld(puzzle.children[i], plane);
-    	let side = plane.constant < 0;
-    	if ( !side ) plane = plane.negate();
+    for ( let i of ind_elem ) for ( let cut of puzzle.children[i].userData.cuts ) {
+      // localToWorld
+    	cut = new THREE.Plane().copy(cut)
+        .applyMatrix4(puzzle.children[i].matrixWorld);
+
+      let side = FRONT;
+    	if ( cut.constant > 0 ) {
+        cut = cut.negate();
+        side = BACK;
+      }
       
-    	var x = planes.findIndex(plane_ => this.fuzzyTool.equals(plane_, plane));
+    	let x = cuts.findIndex(cut_ => this.fuzzyTool.equals(cut_, cut));
       if ( x === -1 ) {
-        planes.push(plane);
+        cuts.push(cut);
         x = sides.push(new Array(puzzle.children.length))-1;
       }
       sides[x][i] = side;
     }
     
-    // find sides of elements respect to cut planes
-    var ind_cut = [...planes.keys()];
+    // find sides of elements respect to cuts
+    var ind_cut = [...cuts.keys()];
     for ( let x of ind_cut ) for ( let i of ind_elem ) if ( sides[x][i] === undefined ) {
-      let xplane = planeWorldToLocal(puzzle.children[i], planes[x]);
-    	let dis = puzzle.children[i].children[0].geometry.vertices.map(v => xplane.distanceToPoint(v));
+      // worldToLocal
+      let elemi = puzzle.children[i];
+      let cutx = new THREE.Plane().copy(cuts[x])
+        .applyMatrix4(new THREE.Matrix4().getInverse(elemi.matrixWorld));
+
+    	let dis = elemi.geometry.vertices.map(v => cutx.distanceToPoint(v));
       if ( dis.every(d => this.fuzzyTool.greater_than(d, 0)) )
-      	sides[x][i] = true;
-      else if ( dis.every(d => this.fuzzyTool.greater_than(-d, 0)) )
-      	sides[x][i] = false;
+      	sides[x][i] = FRONT;
+      else if ( dis.every(d => this.fuzzyTool.less_than(d, 0)) )
+      	sides[x][i] = BACK;
       else
-      	sides[x][i] = null;
+      	sides[x][i] = NONE;
     }
     
-    // find all possible twisting angles for each cut planes
+    // find all possible twisting angles for each cut
     var angles = puzzle.userData.angles = new Array(ind_cut.length);
     var matches = puzzle.userData.matches = new Array(ind_cut.length);
-    for ( let x of ind_cut ) if ( !sides[x].includes(null) ) {
-      // find non-trivial cut planes for matching respect to twisting cut planes `planes[x]`
+    for ( let x of ind_cut ) if ( !sides[x].includes(NONE) ) {
+      // find non-trivial cut for matching respect to twisting cut `cuts[x]`
     	let innercutables = new Array(ind_cut.length);
     	let outercutables = new Array(ind_cut.length);
     	let intercuts = new Array(ind_cut.length);
     	for ( let y of ind_cut ) {
-      	let ycut_inner = sides[y].filter((_, i) =>  sides[x][i]);
-      	let ycut_outer = sides[y].filter((_, i) => !sides[x][i]);
+      	let cuty_inner = sides[y].filter((_, i) => sides[x][i] === FRONT);
+      	let cuty_outer = sides[y].filter((_, i) => sides[x][i] === BACK);
 
-        innercutables[y] = !ycut_inner.includes(null);
-        outercutables[y] = !ycut_outer.includes(null);
+        innercutables[y] = !cuty_inner.includes(NONE);
+        outercutables[y] = !cuty_outer.includes(NONE);
 
-        let meet_inner = innercutables[y] ? ycut_inner.some(b => b) : true;
-        let meet_outer = outercutables[y] ? ycut_outer.some(b => b) : true;
+        let meet_inner = innercutables[y] ? cuty_inner.includes(FRONT) : true;
+        let meet_outer = outercutables[y] ? cuty_outer.includes(FRONT) : true;
 
         intercuts[y] = meet_inner && meet_outer;
       }
 
-      // align axes of cut planes to +y
-      let {phi, theta} = new THREE.Spherical().setFromVector3(planes[x].normal);
+      // align axes of twisting cut to +y
+      let {phi, theta} = new THREE.Spherical().setFromVector3(cuts[x].normal);
       let rot = new THREE.Quaternion().setFromAxisAngle({x:-Math.cos(theta), y:0, z:Math.sin(theta)}, phi);
-      let normals = planes.map(p => p.normal)
+      let axes = cuts.map(p => p.normal)
       	.map(n => n.clone().applyQuaternion(rot))
         .map(n => new THREE.Spherical().setFromVector3(n));
 
@@ -181,12 +161,12 @@ class TwistySphereBuilder
         for ( let y2 of ind_cut ) if ( intercuts[y2] && outercutables[y2] )
         	if ( y1 !== y2 )
       {
-        if ( !this.fuzzyTool.equals(sphidius(planes[y2]), sphidius(planes[y1])) )
+        if ( !this.fuzzyTool.equals(sphidius(cuts[y1]), sphidius(cuts[y2])) )
           break;
-        if ( !this.fuzzyTool.equals(normals[y2].phi, normals[y1].phi) )
+        if ( !this.fuzzyTool.equals(axes[y1].phi, axes[y2].phi) )
           break;
         
-        let theta = (normals[y2].theta - normals[y1].theta)*2/Math.PI;
+        let theta = (axes[y2].theta - axes[y1].theta)*2/Math.PI;
         theta = ((theta % 4) + 4) % 4;
 
         let q = angles[x].findIndex(a => this.fuzzyTool.equals(a, theta));
@@ -203,103 +183,86 @@ class TwistySphereBuilder
   }
 
   highlight(element) {
-    element.children[0].material.color.setHex(0xffff88);
+    if ( element.userData.origin_color === undefined ) {
+      element.userData.origin_color = element.material.color.getHex();
+      element.material.color.setHex(0xffff88);
+    }
   }
   unhighlight(element) {
-    element.children[0].material.color.setHex(element.userData.color);
+    if ( element.userData.origin_color !== undefined ) {
+      element.material.color.setHex(element.userData.origin_color);
+      delete element.userData.origin_color;
+    }
   }
 }
 
 class TwistyBallBuilder extends TwistySphereBuilder
 {
-  constructor(param={}) {
-    param.shape = new THREE.IcosahedronGeometry(1, 3);
-    TwistyBallBuilder.computeVertexNormals(param.shape);
-    super(param);
-  }
-  static computeVertexNormals(geometry) {
-    const ind = ['a', 'b', 'c'];
-    for ( let f of geometry.faces )
-      for ( let i=0; i<3; i++ )
-        f.vertexNormals[i].copy(geometry.vertices[f[ind[i]]]).normalize();
-  }
-  static makeCircle(plane) {
-    var radius = Math.sqrt(1 - plane.constant*plane.constant);
+  constructor(config={}) {
+    var color = config.color || 0xffffff;
+    var edgeColor = config.edgeColor || 0xff0000;
+    var N = config.N || 3;
 
-    var circle = new THREE.CircleGeometry(radius, Math.ceil(360*radius));
-    circle.vertices.shift();
-    circle.faces = [];
-    circle.translate(0, 0, -plane.constant);
-    circle.lookAt(plane.normal);
-    return circle;
-  }
+  	var shell_geometry = new THREE.IcosahedronGeometry(1, N);
+    var shell_material = new THREE.MeshLambertMaterial({color:color});
+    var shape = new THREE.Mesh(shell_geometry, shell_material);
+    
+  	var edge_geometry = new THREE.Geometry();
+    var edge_material = new THREE.LineBasicMaterial({color:edgeColor, linewidth:3});
+    var edge = new THREE.LineLoop(edge_geometry, edge_material);
+    shape.add(edge);
 
+    super(shape, config);
+  }
+  make() {
+    var puzzle = super.make();
+    puzzle.userData.type = "twistyBall";
+    return puzzle;
+  }
   split(puzzle, ...planes) {
     if ( planes.length !== 1 )
       return planes.reduce((puzzle, plane) => this.split(puzzle, plane), puzzle);
     var plane = planes[0];
-  
-    var new_elements = [];
-  	for ( let elem of puzzle.children ) {
-    	let plane_ = planeWorldToLocal(elem, plane);
-  
-      // check sides of element respect to cut plane `plane_`
-      let dis = elem.children[0].geometry.vertices.map(v => plane_.distanceToPoint(v));
-      let setups;
+
+  	for ( let elem of puzzle.children.slice(0) ) {
+    	// worldToLocal
+      let plane_ = new THREE.Plane().copy(plane);
+      plane_.applyMatrix4(new THREE.Matrix4().getInverse(elem.matrixWorld));
+
+      // check sides of element respect to cut `plane_`
+      let dis = elem.geometry.vertices.map(v => plane_.distanceToPoint(v));
       if ( dis.every(d => this.fuzzyTool.greater_than(d, 0)) ) {
-        setups = [[elem, plane_, false]];
-  
+        elem.userData.cuts.push(plane_);
+
       } else if ( dis.every(d => this.fuzzyTool.greater_than(-d, 0)) ) {
-        setups = [[elem, plane_.negate(), false]];
-  
+        elem.userData.cuts.push(plane_.negate());
+
       } else {
-        let new_elem = elem.clone();
-        for ( let subelem of new_elem.children ) {
-          subelem.material = subelem.material.clone();
-          subelem.geometry = subelem.geometry.clone();
-        }
-        new_elements.push(new_elem);
-        setups = [[elem, plane_, true], [new_elem, plane_.clone().negate(), true]];
+        let new_elem = cloneObject3D(elem);
+        puzzle.add(new_elem);
+
+        // cut elements `elem` by plane `plane_`
+        cutConvexPolyhedron(elem.geometry, plane_, false);
+        let edge = findOpenEdge(elem.geometry)[0];
+        if ( edge )
+          elem.children[0].geometry.vertices = edge.map(i => elem.geometry.vertices[i]);
+        else 
+          elem.children[0].geometry.vertices = [];
+        elem.userData.cuts.push(plane_);
+
+        // cut elements `elem` by plane `antiplane_`
+        let antiplane_ = plane_.clone().negate();
+        cutConvexPolyhedron(new_elem.geometry, antiplane_, false);
+        edge = findOpenEdge(new_elem.geometry)[0];
+        if ( edge )
+          new_elem.children[0].geometry.vertices = edge.map(i => new_elem.geometry.vertices[i]);
+        else 
+          new_elem.children[0].geometry.vertices = [];
+        new_elem.userData.cuts.push(antiplane_);
       }
-  
-      // cut elements `elem` by plane `new_plane`
-      for ( let [elem, new_plane, cuttable] of setups ) {
-        let shell = elem.children[0];
-        let edges = elem.children.slice(1);
-  
-        // shell part
-        if ( cuttable )
-          cutConvexPolyhedron(shell.geometry, new_plane, this.inner_part);
-          TwistyBallBuilder.computeVertexNormals(shell.geometry);
-  
-        // edges part
-        if ( this.inner_part ? cuttable : true ) {
-          // original edges
-          for ( let edge of edges )
-            cutConvexPolygon(edge.geometry, new_plane);
-  
-          // new edge induced by cut plane `new_plane`
-          let new_edge = TwistyBallBuilder.makeCircle(new_plane);
-          if ( new_edge )
-            for ( let plane of elem.userData.planes )
-              cutConvexPolygon(new_edge, plane);
-          else
-            new_edge = new THREE.Geometry();
-  
-          let material;
-          if ( edges.length === 0 )
-            material = new THREE.LineBasicMaterial({color:elem.userData.edge_color, linewidth:3});
-          else
-            material = edges[0].material;
-          elem.add(new THREE.LineLoop(new_edge, material));
-          elem.userData.planes.push(new_plane);
-        }
-      }
-  
+
     }
-  
-    for ( let new_element of new_elements )
-      puzzle.add(new_element);
+    
     return puzzle;
   }
 }
@@ -371,7 +334,7 @@ class TwistController
   }
   selectCut(puzzle, filter=always) {
     return new Promise((resolve, reject) => {
-      var cuts = puzzle.userData.planes.map((p, i) => filter(p, i) ? this.makeCutHelper(p) : null);
+      var cuts = puzzle.userData.cuts.map((c, i) => filter(c, i) ? this.makeCutHelper(c) : null);
       for ( let c of cuts ) if ( c ) {
         c.material.transparent = true;
         c.material.opacity = 0.3;
@@ -381,21 +344,21 @@ class TwistController
         event.target.material.opacity = 0.7;
         var x = cuts.indexOf(event.target);
         for ( let i in puzzle.userData.sides[x] )
-          if ( puzzle.userData.sides[x][i] )
+          if ( puzzle.userData.sides[x][i] === FRONT )
             this.builder.highlight(puzzle.children[i]);
       };
       var leave_handler = event => {
         event.target.material.opacity = 0.3;
         var x = cuts.indexOf(event.target);
         for ( let i in puzzle.userData.sides[x] )
-          if ( puzzle.userData.sides[x][i] )
+          if ( puzzle.userData.sides[x][i] === FRONT )
             this.builder.unhighlight(puzzle.children[i]);
       };
       var click_handler = event => {
         remove();
         var x = cuts.indexOf(event.target);
-        var plane = puzzle.userData.planes[x];
-        resolve([plane, x]);
+        var cutx = puzzle.userData.cuts[x];
+        resolve([cutx, x]);
       };
       var esc_handler = event => { if ( event.which === 27 ) { remove(); reject("esc"); } };
 
@@ -418,18 +381,18 @@ class TwistController
   }
   selectTwist(puzzle, x, filter=always) {
     return new Promise((resolve, reject) => {
-      var plane = puzzle.userData.planes[x];
+      var cut = puzzle.userData.cuts[x];
       var angles = puzzle.userData.angles[x].map((a, i) => filter(a, i) ? a : null);
 
       var r = angles.filter(a => a).length - 0.8;
-      var rings = angles.map(angle => angle && this.makeTwistHelper(plane, angle, (r--)/10, 0.08));
+      var rings = angles.map(angle => angle && this.makeTwistHelper(cut, angle, (r--)/10, 0.08));
 
       for ( let r of rings ) {
         r.material.transparent = true;
         r.material.opacity = 0.3;
       }
       for ( let i in puzzle.userData.sides[x] )
-        if ( puzzle.userData.sides[x][i] )
+        if ( puzzle.userData.sides[x][i] === FRONT )
           this.builder.highlight(puzzle.children[i]);
 
       var enter_handler = event => { event.target.material.opacity = 0.7; };
@@ -438,7 +401,7 @@ class TwistController
         remove();
         var i = rings.indexOf(event.target);
         var angle = i!==-1 ? puzzle.userData.angles[x][i] : 0;
-        resolve([plane, angle, x, i]);
+        resolve([cut, angle, x, i]);
       };
       var esc_handler = event => { if ( event.which === 27 ) { remove(); reject("esc"); } };
 
@@ -458,8 +421,8 @@ class TwistController
     });
   }
   animatedTwist(puzzle, x, q) {
-    var targets = puzzle.userData.sides[x].map((b, i) => b && puzzle.children[i]).filter(b => b);
-    var axis = puzzle.userData.planes[x].normal;
+    var targets = puzzle.userData.sides[x].map((b, i) => b === FRONT && puzzle.children[i]).filter(b => b);
+    var axis = puzzle.userData.cuts[x].normal;
     var angle = puzzle.userData.angles[x][q] || 0;
     return this.display.animatedRotate(targets, axis, angle, 1.5);
   }
