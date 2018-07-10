@@ -4,7 +4,7 @@ function always() {
 
 class TwistySphereBuilder
 {
-  constructor(param) {
+  constructor(param={}) {
     param = Object.assign({
       color: 0xffffff,
       edge_color: 0xff0000,
@@ -42,7 +42,7 @@ class TwistySphereBuilder
     var puzzle = new THREE.Group();
     puzzle.add(elem);
     puzzle.userData = {
-      builder: `this.constructor.name`
+      builder: `${this.constructor.name}`
     };
     return puzzle;
   }
@@ -53,7 +53,7 @@ class TwistySphereBuilder
 
     var new_elements = [];
   	for ( let elem of puzzle.children ) {
-    	let plane_ = SphereUtil.planeToLocal(elem, plane);
+    	let plane_ = planeWorldToLocal(elem, plane);
 
       // check sides of element respect to cut plane `plane_`
       let dis = elem.children[0].geometry.vertices.map(v => plane_.distanceToPoint(v));
@@ -120,7 +120,7 @@ class TwistySphereBuilder
   	var planes = puzzle.userData.planes = [];
     var sides = puzzle.userData.sides = [];
     for ( let i of ind_elem ) for ( let plane of puzzle.children[i].userData.planes ) {
-    	plane = SphereUtil.planeToWorld(puzzle.children[i], plane);
+    	plane = planeLocalToWorld(puzzle.children[i], plane);
     	let side = plane.constant < 0;
     	if ( !side ) plane = plane.negate();
       
@@ -135,7 +135,7 @@ class TwistySphereBuilder
     // find sides of elements respect to cut planes
     var ind_cut = [...planes.keys()];
     for ( let x of ind_cut ) for ( let i of ind_elem ) if ( sides[x][i] === undefined ) {
-      let xplane = SphereUtil.planeToLocal(puzzle.children[i], planes[x]);
+      let xplane = planeWorldToLocal(puzzle.children[i], planes[x]);
     	let dis = puzzle.children[i].children[0].geometry.vertices.map(v => xplane.distanceToPoint(v));
       if ( dis.every(d => this.fuzzyTool.greater_than(d, 0)) )
       	sides[x][i] = true;
@@ -180,7 +180,7 @@ class TwistySphereBuilder
         for ( let y2 of ind_cut ) if ( intercuts[y2] && outercutables[y2] )
         	if ( y1 !== y2 )
       {
-        if ( !this.fuzzyTool.equals(SphereUtil.sphidius(planes[y2]), SphereUtil.sphidius(planes[y1])) )
+        if ( !this.fuzzyTool.equals(sphidius(planes[y2]), sphidius(planes[y1])) )
           break;
         if ( !this.fuzzyTool.equals(normals[y2].phi, normals[y1].phi) )
           break;
@@ -211,7 +211,7 @@ class TwistySphereBuilder
 
 class TwistyBallBuilder extends TwistySphereBuilder
 {
-  constructor(param) {
+  constructor(param={}) {
     param.shape = new THREE.IcosahedronGeometry(1, 3);
     TwistyBallBuilder.computeVertexNormals(param.shape);
     super(param);
@@ -240,7 +240,7 @@ class TwistyBallBuilder extends TwistySphereBuilder
   
     var new_elements = [];
   	for ( let elem of puzzle.children ) {
-    	let plane_ = SphereUtil.planeToLocal(elem, plane);
+    	let plane_ = planeWorldToLocal(elem, plane);
   
       // check sides of element respect to cut plane `plane_`
       let dis = elem.children[0].geometry.vertices.map(v => plane_.distanceToPoint(v));
@@ -305,7 +305,7 @@ class TwistyBallBuilder extends TwistySphereBuilder
 
 class TwistController
 {
-  constructor(param) {
+  constructor(param={}) {
     param = Object.assign({
       Na: 360,
       R: 1,
@@ -324,7 +324,7 @@ class TwistController
     disk.translate(0, 0, -plane.constant);
     disk.lookAt(plane.normal);
 
-    var color = new THREE.Color(`hsl(${Math.abs(SphereUtil.sphidius(plane)-1)*300}, 100%, 50%)`);
+    var color = new THREE.Color(`hsl(${Math.abs(sphidius(plane)-1)*300}, 100%, 50%)`);
     var material = new THREE.MeshBasicMaterial({color:color});
     return new THREE.Mesh(disk, material);
   }
@@ -335,7 +335,7 @@ class TwistController
     ring.translate(0, 0, -plane.constant);
     ring.lookAt(plane.normal);
 
-    var color = new THREE.Color(`hsl(${Math.abs(SphereUtil.sphidius(plane)-1)*300 + angle*90}, 100%, 50%)`);
+    var color = new THREE.Color(`hsl(${Math.abs(sphidius(plane)-1)*300 + angle*90}, 100%, 50%)`);
     var material = new THREE.MeshBasicMaterial({color:color});
     return new THREE.Mesh(ring, material);
   }

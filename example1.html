@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <title>twisty sphere</title>
+  <title>twisty sphere - example 1</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
   <script src="js/three.min.js"></script>
@@ -13,40 +13,11 @@
 </head>
 <body>
 <script>
-var t0 = 0;
-function tic(info) {
-  t0 = new Date().getTime()/1000;
-  if ( info )
-    console.log(info);
-}
-function toc(info) {
-  var dt = (t0 - new Date().getTime()/1000);
-  if ( info )
-    console.log(info, dt);
-  else
-    console.log(dt);
-}
-
-function rot(axis, angle) {
-  return new THREE.Quaternion().setFromAxisAngle(axis.clone().normalize(), angle);
-}
-
 var display = new Display();
-// var builder = new TwistySphereBuilder({
-//   shape: new THREE.BoxGeometry(20,20,20),
-//   inner_part: true
-// });
-var builder = new TwistyBallBuilder({});
+var builder = new TwistyBallBuilder();
 var controller = new TwistController({builder, display, R:1.1});
 var puzzle = builder.make();
 display.add(puzzle);
-
-// builder.split(puzzle,
-//   plane( 1, 1, 1,1),
-//   plane(-1,-1, 1,1),
-//   plane(-1, 1,-1,1),
-//   plane( 1,-1,-1,1)
-// );
 
 builder.split(puzzle,
   plane( 0, 1, 1,1/2),

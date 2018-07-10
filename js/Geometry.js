@@ -286,28 +286,21 @@ function makeCrossSection_(geometry, plane) {
   return res;
 }
 
-class SphereUtil
-{
-  static sphidius(plane) {
-    return 2 - Math.acos(plane.constant)*2/Math.PI;
-  }
-  static plane(x, y, z, sphr) {
-    var normal = new THREE.Vector3(x,y,z).normalize();
-    var constant = Math.cos((2-sphr)*Math.PI/2);
-    return new THREE.Plane(normal, constant);
-  }
-  static planeToLocal(obj, plane) {
-    plane = new THREE.Plane().copy(plane);
-    plane.normal.applyQuaternion(obj.quaternion.clone().conjugate());
-    return plane;
-  }
-  static planeToWorld(obj, plane) {
-    plane = new THREE.Plane().copy(plane);
-    plane.normal.applyQuaternion(obj.quaternion);
-    return plane;
-  }
+function planeWorldToLocal(obj, plane) {
+  return new THREE.Plane().copy(plane).applyMatrix4(new THREE.Matrix4().getInverse(obj.matrixWorld));
+}
+function planeLocalToWorld(obj, plane) {
+  return new THREE.Plane().copy(plane).applyMatrix4(obj.matrixWorld);
 }
 
+function sphidius(plane) {
+  return 2 - Math.acos(plane.constant)*2/Math.PI;
+}
+function plane(x, y, z, sphr) {
+  var normal = new THREE.Vector3(x,y,z).normalize();
+  var constant = Math.cos((2-sphr)*Math.PI/2);
+  return new THREE.Plane(normal, constant);
+}
 class FuzzyTool
 {
   constructor(param) {
