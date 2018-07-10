@@ -195,10 +195,13 @@ function cutConvexPolyhedron(geometry, plane, closeHoles=false) {
   // make new side cutted by plane
   if ( closeHoles ) {
     let new_normals = new Array(3).fill(plane.normal.clone().negate());
+    let new_uvs = new Array(3).fill(new THREE.Vector2());
     let cycles = toDirectedCycles(edges, false, false);
     for ( let bd of cycles )
-      for ( let x=2; x<bd.length; x++ )
+      for ( let x=2; x<bd.length; x++ ) {
         geometry.faces.push(new THREE.Face3(bd[0], bd[x], bd[x-1], new_normals));
+        geometry.faceVertexUvs[0].push(new_uvs);
+      }
   }
 
   // remove useless vertices
