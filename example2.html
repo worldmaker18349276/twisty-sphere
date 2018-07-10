@@ -13,9 +13,11 @@
 </head>
 <body>
 <script>
+var texture = new THREE.TextureLoader().load("crate.gif");
 var display = new Display();
 var builder = new TwistySphereBuilder({
   shape: new THREE.BoxGeometry(2,2,2),
+  texture: texture,
   inner_part: true
 });
 var controller = new TwistController({builder, display, R:1.5});

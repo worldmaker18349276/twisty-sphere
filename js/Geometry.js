@@ -1,6 +1,15 @@
-const Vec = (x,y,z) => new THREE.Vector3(x,y,z);
-const pi = Math.PI;
 const tolerance = 1e-5;
+
+// zip lists, where `undefined` is interpreted as infinite list of undefined
+function zip(...lists) {
+  const length = Math.min(...lists.filter(list => list !== undefined).map(list => list.length));
+  var zipped = {lists};
+  zipped[Symbol.iterator] = function* () {
+    for ( let i=0; i<length; i++ )
+      yield lists.map(list => list ? list[i] : undefined);
+  };
+  return zipped;
+}
 
 // in-place filter array, return false if nothing change
 function filterInPlace(arr, condition) {
@@ -80,7 +89,7 @@ function toDirectedCycles(dg, has_bidirected_edges=true, check=false) {
   return res;
 }
 
-function cutPolygon(geometry, plane) {
+function cutConvexPolygon(geometry, plane) {
   if ( geometry.vertices.length === 0 ) return geometry;
 
   plane = new THREE.Plane().copy(plane);
@@ -108,12 +117,14 @@ function cutPolygon(geometry, plane) {
   
   return geometry;
 }
-function cutConvexPolyhedron(geometry, plane, closeHoles) {
+function cutConvexPolyhedron(geometry, plane, closeHoles=false) {
   if ( geometry.vertices.length === 0 ) return geometry;
 
   plane = new THREE.Plane().copy(plane);
   var faces = geometry.faces;
+  var faceVertexUvs = geometry.faceVertexUvs;
   geometry.faces = [];
+  geometry.faceVertexUvs = [[]];
 
   var dis = geometry.vertices.map(v => plane.distanceToPoint(v))
                              .map(d => Math.abs(d) < tolerance ? 0 : d);
@@ -137,26 +148,38 @@ function cutConvexPolyhedron(geometry, plane, closeHoles) {
 
   // cut face by plane
   var edges = new Digraph();
-  for ( let face of faces ) {
+  for ( let [face, uvs] of zip(faces, faceVertexUvs[0]) ) {
     let {a, b, c} = face;
-    let sliced_face = [];
+    let [na, nb, nc] = face.vertexNormals;
+    let [uva, uvb, uvc] = uvs;
 
-    for ( let [i, j] of [[c,a], [a,b], [b,c]] ) {
-      if ( sgn[i] * sgn[j] < 0 )
+    let sliced_face = [];
+    let sliced_normals = [];
+    let sliced_uvs = [];
+
+    for ( let [i, j, ni, nj, uvi, uvj] of [[c,a,nc,na,uvc,uva], [a,b,na,nb,uva,uvb], [b,c,nb,nc,uvb,uvc]] ) {
+      if ( sgn[i] * sgn[j] < 0 ) {
         sliced_face.push(interpolate(i,j));
-      if ( sgn[j] !== -1 )
+        sliced_normals.push(ni.clone().lerp(nj, dis[i]/(dis[i]-dis[j])));
+        sliced_uvs.push(uvi.clone().lerp(uvj, dis[i]/(dis[i]-dis[j])));
+      }
+      if ( sgn[j] !== -1 ) {
         sliced_face.push(j);
+        sliced_normals.push(nj.clone());
+        sliced_uvs.push(uvj.clone());
+      }
     }
 
     if ( sliced_face.length < 3 )
       continue;
 
     for ( let x=2; x<sliced_face.length; x++ ) {
-      if ( x > 2 ) face = face.clone();
-      face.a = sliced_face[0];
-      face.b = sliced_face[x-1];
-      face.c = sliced_face[x];
+      face = face.clone();
+      [face.a, face.b, face.c] = [sliced_face[0], sliced_face[x-1], sliced_face[x]];
+      face.vertexNormals = [sliced_normals[0], sliced_normals[x-1], sliced_normals[x]];
       geometry.faces.push(face);
+      uvs = [sliced_uvs[0], sliced_uvs[x-1], sliced_uvs[x]];
+      geometry.faceVertexUvs[0].push(uvs);
     }
 
     // find edge touching the plane

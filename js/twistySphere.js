@@ -16,6 +16,7 @@ class TwistySphereBuilder
     this.edge_color = param.edge_color;
     this.inner_part = param.inner_part;
     this.fuzzyTool = param.fuzzyTool;
+    this.texture = param.texture;
   }
   getBoundingRadius() {
     if ( !this.shape.boundingSphere )
@@ -32,7 +33,7 @@ class TwistySphereBuilder
       hoverable: true
     };
 
-    var material = new THREE.MeshLambertMaterial({color:elem_data.color});
+    var material = new THREE.MeshLambertMaterial({color:elem_data.color, map:this.texture});
     var shell = new THREE.Mesh(this.shape.clone(), material);
 
     var elem = new THREE.Object3D();
@@ -87,13 +88,13 @@ class TwistySphereBuilder
         if ( this.inner_part ? cuttable : true ) {
           // original edges
           for ( let edge of edges )
-            cutPolygon(edge.geometry, new_plane);
+            cutConvexPolygon(edge.geometry, new_plane);
 
           // new edge induced by cut plane `new_plane`
           let [new_edge=null] = makeCrossSection(this.shape, new_plane);
           if ( new_edge )
             for ( let plane of elem.userData.planes )
-              cutPolygon(new_edge, plane);
+              cutConvexPolygon(new_edge, plane);
           else
             new_edge = new THREE.Geometry();
 
@@ -185,7 +186,7 @@ class TwistySphereBuilder
         if ( !this.fuzzyTool.equals(normals[y2].phi, normals[y1].phi) )
           break;
         
-        let theta = (normals[y2].theta - normals[y1].theta)*2/pi;
+        let theta = (normals[y2].theta - normals[y1].theta)*2/Math.PI;
         theta = ((theta % 4) + 4) % 4;
 
         let q = angles[x].findIndex(a => this.fuzzyTool.equals(a, theta));
@@ -227,7 +228,7 @@ class TwistyBallBuilder extends TwistySphereBuilder
 
     var circle = new THREE.CircleGeometry(radius, Math.ceil(360*radius));
     circle.vertices.shift();
-    circle.faces.length = 0;
+    circle.faces = [];
     circle.translate(0, 0, -plane.constant);
     circle.lookAt(plane.normal);
     return circle;
@@ -275,13 +276,13 @@ class TwistyBallBuilder extends TwistySphereBuilder
         if ( this.inner_part ? cuttable : true ) {
           // original edges
           for ( let edge of edges )
-            cutPolygon(edge.geometry, new_plane);
+            cutConvexPolygon(edge.geometry, new_plane);
   
           // new edge induced by cut plane `new_plane`
           let new_edge = TwistyBallBuilder.makeCircle(new_plane);
           if ( new_edge )
             for ( let plane of elem.userData.planes )
-              cutPolygon(new_edge, plane);
+              cutConvexPolygon(new_edge, plane);
           else
             new_edge = new THREE.Geometry();
   
@@ -518,7 +519,7 @@ class Display
     }, false);
 
     // controls
-    this.rotateSpeed = pi/500;
+    this.rotateSpeed = Math.PI/500;
     this.zoomSpeed = 1/100;
     this.distanceRange = [2, 8];
 
