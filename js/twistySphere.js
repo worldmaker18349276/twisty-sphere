@@ -1,6 +1,4 @@
-function always() {
-  return true;
-}
+function always() { return true; }
 
 // side
 const FRONT = 1;
@@ -64,10 +62,10 @@ class TwistySphereBuilder
       // check sides of element respect to cut `plane_`
       let dis = elem.geometry.vertices.map(v => plane_.distanceToPoint(v));
       if ( dis.every(d => this.fuzzyTool.greater_than(d, 0)) ) {
-        elem.userData.cuts.push(plane_);
+        // elem.userData.cuts.push(plane_); // hidden cut
 
       } else if ( dis.every(d => this.fuzzyTool.greater_than(-d, 0)) ) {
-        elem.userData.cuts.push(plane_.negate());
+        // elem.userData.cuts.push(plane_.negate()); // hidden cut
 
       } else {
         let new_elem = cloneObject3D(elem);
@@ -87,12 +85,20 @@ class TwistySphereBuilder
     
     return puzzle;
   }
-  analyze(puzzle) {
-    var ind_elem = [...puzzle.children.keys()];
+  twist(puzzle, x, q) {
+    var targets = puzzle.userData.sides[x].map((b, i) => b === FRONT && puzzle.children[i]).filter(b => b);
+    var axis = puzzle.userData.cuts[x].normal;
+    var angle = puzzle.userData.angles[x][q] || 0;
+    var rot = new THREE.Quaternion().setFromAxisAngle(axis, angle*Math.PI/2);
+    for ( let target of targets )
+      target.quaternion.premultiply(rot);
+  }
 
-    // find all possible cuts
+  findCuts(puzzle) {
+    var ind_elem = [...puzzle.children.keys()];
   	var cuts = puzzle.userData.cuts = [];
     var sides = puzzle.userData.sides = [];
+
     for ( let i of ind_elem ) for ( let cut of puzzle.children[i].userData.cuts ) {
       // localToWorld
     	cut = new THREE.Plane().copy(cut)
@@ -112,8 +118,14 @@ class TwistySphereBuilder
       sides[x][i] = side;
     }
     
-    // find sides of elements respect to cuts
+    return puzzle;
+  }
+  determineSides(puzzle) {
+  	var cuts = puzzle.userData.cuts;
+    var sides = puzzle.userData.sides;
+    var ind_elem = [...puzzle.children.keys()];
     var ind_cut = [...cuts.keys()];
+
     for ( let x of ind_cut ) for ( let i of ind_elem ) if ( sides[x][i] === undefined ) {
       // worldToLocal
       let elemi = puzzle.children[i];
@@ -129,6 +141,13 @@ class TwistySphereBuilder
       	sides[x][i] = NONE;
     }
     
+    return puzzle;
+  }
+  computeAnglesMatches(puzzle) {
+  	var cuts = puzzle.userData.cuts;
+    var sides = puzzle.userData.sides;
+    var ind_cut = [...cuts.keys()];
+
     // find all possible twisting angles for each cut
     var angles = puzzle.userData.angles = new Array(ind_cut.length);
     var matches = puzzle.userData.matches = new Array(ind_cut.length);
@@ -182,6 +201,49 @@ class TwistySphereBuilder
         matches[x][q].push([y1,y2]);
       }
     }
+    return puzzle;
+  }
+  analyze(puzzle) {
+    this.findCuts(puzzle);
+    this.determineSides(puzzle);
+    this.computeAnglesMatches(puzzle);
+    return puzzle;
+  }
+  analyzeAfterTwist(puzzle, x, q) {
+    var elem_twisted = puzzle.userData.sides[x].map(s => s === FRONT);
+    var axis = puzzle.userData.cuts[x].normal;
+    var angle = puzzle.userData.angles[x][q] || 0;
+    var rot = new THREE.Matrix4().makeRotationAxis(axis, angle*Math.PI/2);
+
+    var old_sides = puzzle.userData.sides;
+    var old_cuts_fixed = puzzle.userData.cuts;
+    var old_cuts_twisted = puzzle.userData.cuts
+      .map(c => new THREE.Plane().copy(c).applyMatrix4(rot));
+
+    this.findCuts(puzzle);
+
+    var sides = puzzle.userData.sides;
+    var cuts = puzzle.userData.cuts;
+    var ind_elem = [...puzzle.children.keys()];
+
+    // determine sides according to the analyzation before twist
+    for ( let [cut, sidesy] of zip(cuts, sides) ) {
+      let old_y;
+      old_y =   old_cuts_fixed.findIndex(old_cut => this.fuzzyTool.equals(old_cut, cut));
+      if ( old_y !== -1 ) {
+        for ( let i of ind_elem ) if ( !elem_twisted[i] )
+          sidesy[i] = old_sides[old_y][i];
+      }
+
+      old_y = old_cuts_twisted.findIndex(old_cut => this.fuzzyTool.equals(old_cut, cut));
+      if ( old_y !== -1 ) {
+        for ( let i of ind_elem ) if (  elem_twisted[i] )
+          sidesy[i] = old_sides[old_y][i];
+      }
+    }
+
+    this.determineSides(puzzle);
+    this.computeAnglesMatches(puzzle);
     return puzzle;
   }
 }
@@ -411,8 +473,9 @@ class BasicController
         .catch(e => {if ( e == "esc" ) { throw "cancel twist"; } throw e; })
         .then(([_, x]) => this.selectTwist(puzzle, x))
         .catch(e => {if ( e == "esc" ) { sel_twist_loop_(); throw "re-select twist"; } throw e; })
-        .then(([_, __, x, i]) => this.animatedTwist(puzzle, x, i))
-        .then(() => { this.builder.analyze(puzzle); return sel_twist_loop_(); })
+        .then(([_, __, x, q]) => this.animatedTwist(puzzle, x, q)
+          .then(() => { this.builder.analyzeAfterTwist(puzzle, x, q); }))
+        .then(sel_twist_loop_)
         .catch(e => {if ( typeof e == "string" ) console.log(e); else throw e; });
     }
     sel_twist_loop_();
