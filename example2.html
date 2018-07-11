@@ -5,8 +5,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
   <script src="js/three.min.js"></script>
-  <script src="js/QuickHull.js"></script>
-  <script src="js/ConvexGeometry.js"></script>
 
   <script src="js/Geometry.js"></script>
   <script src="js/twistySphere.js"></script>
@@ -20,7 +18,7 @@ var shape = new THREE.Mesh(geometry, material);
 
 var display = new Display();
 var builder = new TwistySphereBuilder(shape);
-var controller = new TwistController({builder, display, R:1.5});
+var controller = new BasicController({builder, display, R:1.5});
 var puzzle = builder.make();
 display.add(puzzle);
 
@@ -34,6 +32,7 @@ builder.split(puzzle,
 </script>
 
   <div style="position:fixed;bottom:10px;left:10px;">
+    <button onclick="controller.explodeHandler(puzzle)"> explode </button>
     <button onclick="controller.selectElementLoopHandler(puzzle)"> select element </button>
     <button onclick="controller.selectCutLoopHandler(puzzle)"> select cut plane </button>
     <button onclick="controller.twistLoopHandler(puzzle);"> twist </button>

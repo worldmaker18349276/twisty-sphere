@@ -48,6 +48,9 @@ class TwistySphereBuilder
     };
     return puzzle;
   }
+  cutElement(elem, cut) {
+    return cutConvexPolyhedron(elem.geometry, cut, true);
+  }
   split(puzzle, ...planes) {
     if ( planes.length !== 1 )
       return planes.reduce((puzzle, plane) => this.split(puzzle, plane), puzzle);
@@ -71,12 +74,12 @@ class TwistySphereBuilder
         puzzle.add(new_elem);
 
         // cut elements `elem` by plane `plane_`
-        cutConvexPolyhedron(elem.geometry, plane_, true);
+        this.cutElement(elem, plane_);
         elem.userData.cuts.push(plane_);
 
         // cut elements `elem` by plane `antiplane_`
         let antiplane_ = plane_.clone().negate();
-        cutConvexPolyhedron(new_elem.geometry, antiplane_, true);
+        this.cutElement(new_elem, antiplane_);
         new_elem.userData.cuts.push(antiplane_);
       }
 
@@ -181,19 +184,15 @@ class TwistySphereBuilder
     }
     return puzzle;
   }
+}
 
-  highlight(element) {
-    if ( element.userData.origin_color === undefined ) {
-      element.userData.origin_color = element.material.color.getHex();
-      element.material.color.setHex(0xffff88);
-    }
+function colorBall(shape) {
+  shape.geometry.computeFlatVertexNormals();
+  for ( let face of shape.geometry.faces ) {
+    let {phi, theta} = new THREE.Spherical().setFromVector3(face.normal);
+    face.color = new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
   }
-  unhighlight(element) {
-    if ( element.userData.origin_color !== undefined ) {
-      element.material.color.setHex(element.userData.origin_color);
-      delete element.userData.origin_color;
-    }
-  }
+  shape.material.vertexColors = THREE.FaceColors;
 }
 
 class TwistyBallBuilder extends TwistySphereBuilder
@@ -201,9 +200,10 @@ class TwistyBallBuilder extends TwistySphereBuilder
   constructor(config={}) {
     var color = config.color || 0xffffff;
     var edgeColor = config.edgeColor || 0xff0000;
-    var N = config.N || 3;
+    var N = config.N || 4;
 
-  	var shell_geometry = new THREE.IcosahedronGeometry(1, N);
+  	// var shell_geometry = new THREE.IcosahedronGeometry(1, N);
+  	var shell_geometry = new THREE.OctahedronGeometry(1, N);
     var shell_material = new THREE.MeshLambertMaterial({color:color});
     var shape = new THREE.Mesh(shell_geometry, shell_material);
     
@@ -219,55 +219,18 @@ class TwistyBallBuilder extends TwistySphereBuilder
     puzzle.userData.type = "twistyBall";
     return puzzle;
   }
-  split(puzzle, ...planes) {
-    if ( planes.length !== 1 )
-      return planes.reduce((puzzle, plane) => this.split(puzzle, plane), puzzle);
-    var plane = planes[0];
-
-  	for ( let elem of puzzle.children.slice(0) ) {
-    	// worldToLocal
-      let plane_ = new THREE.Plane().copy(plane);
-      plane_.applyMatrix4(new THREE.Matrix4().getInverse(elem.matrixWorld));
-
-      // check sides of element respect to cut `plane_`
-      let dis = elem.geometry.vertices.map(v => plane_.distanceToPoint(v));
-      if ( dis.every(d => this.fuzzyTool.greater_than(d, 0)) ) {
-        elem.userData.cuts.push(plane_);
-
-      } else if ( dis.every(d => this.fuzzyTool.greater_than(-d, 0)) ) {
-        elem.userData.cuts.push(plane_.negate());
-
-      } else {
-        let new_elem = cloneObject3D(elem);
-        puzzle.add(new_elem);
-
-        // cut elements `elem` by plane `plane_`
-        cutConvexPolyhedron(elem.geometry, plane_, false);
-        let edge = findOpenEdge(elem.geometry)[0];
-        if ( edge )
-          elem.children[0].geometry.vertices = edge.map(i => elem.geometry.vertices[i]);
-        else 
-          elem.children[0].geometry.vertices = [];
-        elem.userData.cuts.push(plane_);
-
-        // cut elements `elem` by plane `antiplane_`
-        let antiplane_ = plane_.clone().negate();
-        cutConvexPolyhedron(new_elem.geometry, antiplane_, false);
-        edge = findOpenEdge(new_elem.geometry)[0];
-        if ( edge )
-          new_elem.children[0].geometry.vertices = edge.map(i => new_elem.geometry.vertices[i]);
-        else 
-          new_elem.children[0].geometry.vertices = [];
-        new_elem.userData.cuts.push(antiplane_);
-      }
-
-    }
-    
-    return puzzle;
+  cutElement(elem, cut) {
+    cutConvexPolyhedron(elem.geometry, cut, false);
+    let edge = findOpenEdge(elem.geometry)[0];
+    if ( edge )
+      elem.children[0].geometry.vertices = edge.map(i => elem.geometry.vertices[i]);
+    else 
+      elem.children[0].geometry.vertices = [];
+    return elem;
   }
 }
 
-class TwistController
+class BasicController
 {
   constructor(param={}) {
     param = Object.assign({
@@ -308,28 +271,28 @@ class TwistController
     return new Promise((resolve, reject) => {
       var elements = puzzle.children.map((elem, i) => filter(elem, i) ? elem : null);
 
-      var enter_handler = event => { this.builder.highlight(event.target); };
-      var leave_handler = event => { this.builder.unhighlight(event.target); };
+      var enter_handler = event => { this.display.highlight(event.target); };
+      var leave_handler = event => { this.display.unhighlight(event.target); };
       var click_handler = event => { remove(); resolve([event.target, elements.indexOf(event.target)]); };
       var esc_handler = event => { if ( event.which === 27 ) { remove(); reject("esc"); } };
 
       var remove = () => {
         for ( let elem of elements ) if ( elem )
-          this.builder.unhighlight(elem);
+          this.display.unhighlight(elem);
         for ( let elem of elements ) if ( elem ) {
           elem.removeEventListener("mouseenter", enter_handler);
           elem.removeEventListener("mouseleave", leave_handler);
           elem.removeEventListener("click", click_handler);
-          document.removeEventListener("keydown", esc_handler);
         }
+        document.removeEventListener("keydown", esc_handler);
       }
 
       for ( let elem of elements ) if ( elem ) {
         elem.addEventListener("mouseenter", enter_handler);
         elem.addEventListener("mouseleave", leave_handler);
         elem.addEventListener("click", click_handler);
-        document.addEventListener("keydown", esc_handler);
       }
+      document.addEventListener("keydown", esc_handler);
     });
   }
   selectCut(puzzle, filter=always) {
@@ -345,14 +308,14 @@ class TwistController
         var x = cuts.indexOf(event.target);
         for ( let i in puzzle.userData.sides[x] )
           if ( puzzle.userData.sides[x][i] === FRONT )
-            this.builder.highlight(puzzle.children[i]);
+            this.display.highlight(puzzle.children[i]);
       };
       var leave_handler = event => {
         event.target.material.opacity = 0.3;
         var x = cuts.indexOf(event.target);
         for ( let i in puzzle.userData.sides[x] )
           if ( puzzle.userData.sides[x][i] === FRONT )
-            this.builder.unhighlight(puzzle.children[i]);
+            this.display.unhighlight(puzzle.children[i]);
       };
       var click_handler = event => {
         remove();
@@ -364,7 +327,7 @@ class TwistController
 
       var remove = () => {
         for ( let elem of puzzle.children )
-          this.builder.unhighlight(elem);
+          this.display.unhighlight(elem);
         this.display.remove(...cuts.filter(c => c));
         document.removeEventListener("keydown", esc_handler);
       }
@@ -375,8 +338,8 @@ class TwistController
         c.addEventListener("mouseenter", enter_handler);
         c.addEventListener("mouseleave", leave_handler);
         c.addEventListener("click", click_handler);
-        document.addEventListener("keydown", esc_handler);
       }
+      document.addEventListener("keydown", esc_handler);
     });
   }
   selectTwist(puzzle, x, filter=always) {
@@ -393,7 +356,7 @@ class TwistController
       }
       for ( let i in puzzle.userData.sides[x] )
         if ( puzzle.userData.sides[x][i] === FRONT )
-          this.builder.highlight(puzzle.children[i]);
+          this.display.highlight(puzzle.children[i]);
 
       var enter_handler = event => { event.target.material.opacity = 0.7; };
       var leave_handler = event => { event.target.material.opacity = 0.3; };
@@ -416,8 +379,8 @@ class TwistController
         r.addEventListener("mouseenter", enter_handler);
         r.addEventListener("mouseleave", leave_handler);
         r.addEventListener("click", click_handler);
-        document.addEventListener("keydown", esc_handler);
       }
+      document.addEventListener("keydown", esc_handler);
     });
   }
   animatedTwist(puzzle, x, q) {
@@ -441,7 +404,7 @@ class TwistController
     };
     sel_cut_loop_();
   }
-  twistLoopHandler() {
+  twistLoopHandler(puzzle) {
     this.builder.analyze(puzzle);
     var sel_twist_loop_ = () => {
       this.selectCut(puzzle, (_, x) => puzzle.userData.angles[x])
@@ -453,6 +416,37 @@ class TwistController
         .catch(e => {if ( typeof e == "string" ) console.log(e); else throw e; });
     }
     sel_twist_loop_();
+  }
+  explodeHandler(puzzle) {
+    var elements = puzzle.children.slice(0);
+
+    for ( let elem of elements ) {
+      if ( elem.geometry.vertices.length ) {
+        let number = elem.geometry.vertices.length;
+        let center = elem.geometry.vertices.reduce((a, v) => a.add(v), new THREE.Vector3()).divideScalar(number);
+        let dis = center.length();
+        elem.userData.center = [center.normalize(), dis];
+        elem.userData.oldPosition = elem.position.clone();
+      }
+    }
+
+    var wheel_handler = event => {
+      for ( let elem of elements )
+        elem.translateOnAxis(elem.userData.center[0], -elem.userData.center[1]*event.deltaY/100);
+    };
+    var esc_handler = event => { if ( event.which === 27 ) remove(); };
+
+    var remove = () => {
+      for ( let elem of elements ) {
+        elem.position.copy(elem.userData.oldPosition);
+        delete elem.userData.oldPosition;
+      }
+      document.removeEventListener("wheel", wheel_handler);
+      document.removeEventListener("keydown", esc_handler);
+    }
+
+    document.addEventListener("wheel", wheel_handler);
+    document.addEventListener("keydown", esc_handler);
   }
 }
 
@@ -515,7 +509,7 @@ class Display
       }
     }, false);
 
-    // raycaster
+    // event system on Object3D, implemented by raycaster
     this.raycaster = new THREE.Raycaster();
     this.raycaster.linePrecision = 0;
     var mouse = new THREE.Vector2();
@@ -544,9 +538,13 @@ class Display
         target.dispatchEvent(Object.assign({type:"mouseover"}, ray_event));
     }, false);
 
+    // click control
     var click_flag = false;
     this.dom.addEventListener("mousedown", event => { click_flag = true; }, false);
-    this.dom.addEventListener("mousemove", event => { click_flag = false; }, false);
+    this.dom.addEventListener("mousemove", event => {
+      if ( Math.abs(event.movementX) > 1 || Math.abs(event.movementY) > 1 )
+        click_flag = false;
+    }, false);
     this.dom.addEventListener("mouseup", event => {
       if ( click_flag ) {
         click_flag = false;
@@ -584,6 +582,23 @@ class Display
 
     this.camera.position.z = dis;
     this.trackball.lookAt(vec.normalize());
+  }
+
+  highlight(...targets) {
+    for ( let target of targets ) {
+      if ( target.userData.oldColor === undefined ) {
+        target.userData.oldColor = target.material.color.getHex();
+        target.material.color.offsetHSL(0,0,-0.5);
+      }
+    }
+  }
+  unhighlight(...targets) {
+    for ( let target of targets ) {
+      if ( target.userData.oldColor !== undefined ) {
+        target.material.color.setHex(target.userData.oldColor);
+        delete target.userData.oldColor;
+      }
+    }
   }
 
   animatedRotate(targets, axis, angle, speed) {
