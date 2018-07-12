@@ -13,12 +13,12 @@
 <script>
 var display = new Display();
 var builder = new TwistyBallBuilder();
+var controller = new BasicController({builder, display, R:1.1});
+
 colorBall(builder.shape);
 // builder.shape.material.map = new THREE.TextureLoader().load("land_ocean_ice_cloud_2048.jpg");
-var controller = new BasicController({builder, display, R:1.1});
-var puzzle = builder.make();
-display.add(puzzle);
 
+var puzzle = builder.make();
 builder.split(puzzle,
   plane( 0, 1, 1,1/2),
   plane( 0, 1,-1,1/2),
@@ -34,11 +34,14 @@ builder.split(puzzle,
   plane(-1,-1, 0,1/2)
 );
 
+display.add(puzzle);
+
 </script>
 
   <div style="position:fixed;bottom:10px;left:10px;">
     <button onclick="controller.explodeHandler(puzzle)"> explode </button>
     <button onclick="controller.selectElementLoopHandler(puzzle)"> select element </button>
+    <button onclick="controller.showCutsLoopHandler(puzzle)"> show cuts </button>
     <button onclick="controller.selectCutLoopHandler(puzzle)"> select cut plane </button>
     <button onclick="controller.twistLoopHandler(puzzle);"> twist </button>
   </div>

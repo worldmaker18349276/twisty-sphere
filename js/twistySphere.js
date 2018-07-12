@@ -313,7 +313,8 @@ class BasicController
     disk.translate(0, 0, -plane.constant);
     disk.lookAt(plane.normal);
 
-    var color = new THREE.Color(`hsl(${Math.abs(sphidius(plane)-1)*300}, 100%, 50%)`);
+    var sphr = sphidius(plane);
+    var color = new THREE.Color(`hsl(${Math.floor(Math.abs(sphr-1)*300)}, 100%, 50%)`);
     var material = new THREE.MeshBasicMaterial({color:color});
     return new THREE.Mesh(disk, material);
   }
@@ -324,7 +325,8 @@ class BasicController
     ring.translate(0, 0, -plane.constant);
     ring.lookAt(plane.normal);
 
-    var color = new THREE.Color(`hsl(${Math.abs(sphidius(plane)-1)*300 + angle*90}, 100%, 50%)`);
+    var sphr = sphidius(plane);
+    var color = new THREE.Color(`hsl(${Math.floor(Math.abs(sphr-1)*300) + angle*90}, 100%, 50%)`);
     var material = new THREE.MeshBasicMaterial({color:color});
     return new THREE.Mesh(ring, material);
   }
@@ -456,6 +458,21 @@ class BasicController
     this.selectElement(puzzle)
       .then(([e, i]) => console.log(e)).then(() => this.selectElementLoopHandler(puzzle))
       .catch(e => {if ( typeof e == "string" ) console.log(e); else throw e; });
+  }
+  showCutsLoopHandler(puzzle, cuts) {
+    cuts = cuts || [];
+    return this.selectElement(puzzle)
+      .then(([e, i]) => {
+        this.display.remove(...cuts);
+        cuts = e.userData.cuts
+          .map(c => new THREE.Plane().copy(c).applyMatrix4(e.matrixWorld))
+          .map((c, i) => this.makeCutHelper(c));
+        cuts.forEach(c => { c.material.transparent = true; c.material.opacity = 0.3; c.material.side=THREE.DoubleSide; });
+        this.display.add(...cuts);
+      })
+      .then(() => this.showCutsLoopHandler(puzzle, cuts))
+      .catch(e => { this.display.remove(...cuts); cuts = []; throw e; })
+      .catch(e => { if ( typeof e == "string" ) console.log(e); else throw e; });
   }
   selectCutLoopHandler(puzzle) {
     this.builder.analyze(puzzle);

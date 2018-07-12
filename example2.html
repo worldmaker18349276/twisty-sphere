@@ -11,17 +11,18 @@
 </head>
 <body>
 <script>
-var texture = new THREE.TextureLoader().load("crate.gif");
-var material = new THREE.MeshLambertMaterial({color:0xffffff, map:texture});
+var material = new THREE.MeshLambertMaterial({color:0xffffff});
 var geometry = new THREE.BoxGeometry(2,2,2);
 var shape = new THREE.Mesh(geometry, material);
+
+material.map = new THREE.TextureLoader().load("crate.gif");
+// colorBall(shape);
 
 var display = new Display();
 var builder = new TwistySphereBuilder(shape);
 var controller = new BasicController({builder, display, R:1.5});
-var puzzle = builder.make();
-display.add(puzzle);
 
+var puzzle = builder.make();
 builder.split(puzzle,
   plane( 1, 1, 1,1),
   plane(-1,-1, 1,1),
@@ -29,11 +30,14 @@ builder.split(puzzle,
   plane( 1,-1,-1,1)
 );
 
+display.add(puzzle);
+
 </script>
 
   <div style="position:fixed;bottom:10px;left:10px;">
     <button onclick="controller.explodeHandler(puzzle)"> explode </button>
     <button onclick="controller.selectElementLoopHandler(puzzle)"> select element </button>
+    <button onclick="controller.showCutsLoopHandler(puzzle)"> show cuts </button>
     <button onclick="controller.selectCutLoopHandler(puzzle)"> select cut plane </button>
     <button onclick="controller.twistLoopHandler(puzzle);"> twist </button>
   </div>
