@@ -159,12 +159,10 @@ const EDGES_NEXT = Object.freeze({ca:"ab", ab:"bc", bc:"ca"});
 const EDGES_PREV = Object.freeze({ca:"bc", ab:"ca", bc:"ab"});
 
 // linking type of `GlueTab`
-const LINK = Object.freeze({
-  BACK: Symbol("LINK.BACK"),
-  EDGE: Symbol("LINK.EDGE"), // flat, convax or concave
-  FLAT: Symbol("LINK.FLAT"),
-  CONVAX: Symbol("LINK.CONVAX"),
-  CONCAVE: Symbol("LINK.CONCAVE"),
+const EDGE_TYPE = Object.freeze({
+  FLAT: Symbol("EDGE_TYPE.FLAT"),
+  CONVAX: Symbol("EDGE_TYPE.CONVAX"),
+  CONCAVE: Symbol("EDGE_TYPE.CONCAVE"),
 });
 
 class GlueTab // 糊地
@@ -184,6 +182,8 @@ class GlueTab // 糊地
 
   // dual glue tab, it always links back to its owner
   get dual() { return this.face[this.edge]; }
+  // back-linking tab
+  get isEdge() { return this.dual ? this.dual !== this : false }
   // get glue tab linking to `face[edge]`
   static to(face, edge) { return (face[edge] || {}).dual; }
   // return if `face1[edge1]` and `face2[edge2]` are adjacent by checking vertices
@@ -202,17 +202,15 @@ class GlueTab // 糊地
 
     this.face = adjFace;
     this.edge = adjEdge;
-    this.type = LINK.EDGE;
 
     dual.face = face;
     dual.edge = edge;
-    dual.type = LINK.EDGE;
 
     return [this, dual];
   }
   // link glue tab and its dual to itself, then return modified tabs
   unglue() {
-    if ( this.type === LINK.BACK )
+    if ( !this.isEdge )
       return [];
 
     var dual = this.dual;
@@ -221,42 +219,28 @@ class GlueTab // 糊地
 
     this.face = face;
     this.edge = edge;
-    this.type = LINK.BACK;
 
     dual.face = adjFace;
     dual.edge = adjEdge;
-    dual.type = LINK.BACK;
 
     return [this, dual];
   }
-  // make glue tab at `face[edge]` and `adjFace[adjEdge]` and gluing each others
-  // if `adjFace`, `adjEdge` are `undefined`, make back-linking tab at `face[edge]`
-  // return new tab at `face[edge]` and `adjFace[adjEdge]`
+  // make glue tab at `face[edge]` and `adjFace[adjEdge]` and gluing each others,
+  //   then return new tab at `face[edge]` and `adjFace[adjEdge]`
+  // if `adjFace`, `adjEdge` are `undefined`, make back-linking tab at `face[edge]`,
+  //   then return new tab at `face[edge]`
   // not in-place modification
   static make(face, edge, adjFace, adjEdge, {type, label}={}) {
-    if ( type === undefined ) {
-      if ( adjFace !== undefined )
-        type = LINK.EDGE;
-      else
-        type = LINK.BACK;
-    }
-
-    if ( type !== LINK.BACK ) {
+    if ( adjFace !== undefined ) {
       face[edge] = new GlueTab(adjFace, adjEdge, type, label);
       adjFace[adjEdge] = new GlueTab(face, edge, type, label);
-
-      return [face[edge], adjFace[adjEdge]];
-
-    } else if ( adjFace !== undefined ) {
-      face[edge] = new GlueTab(face, edge, type, label);
-      adjFace[adjEdge] = new GlueTab(adjFace, adjEdge, type, label);
 
       return [face[edge], adjFace[adjEdge]];
 
     } else {
       face[edge] = new GlueTab(face, edge, type, label);
 
-      return [face[edge]];
+      return face[edge];
     }
   }
   // make and glue each tabs by checking vertices, then return back-linking tabs
@@ -276,7 +260,7 @@ class GlueTab // 糊地
     var boundary = new Set();
     for ( let face of faces ) for ( let edge of EDGES )
       if ( !(edge in face) )
-        boundary.add(this.make(face, edge)[0]);
+        boundary.add(this.make(face, edge));
 
     return boundary;
   }
@@ -286,11 +270,9 @@ class GlueTab // 糊地
     faces = new Set(faces);
     var unglued = [];
 
-    for ( let face of faces ) for ( let edge of EDGES ) {
-      let {face:adjFace, edge:adjEdge} = face[edge];
-      if ( !faces.has(adjFace) )
-        unglued.push(...this.unglue(face, edge));
-    }
+    for ( let face of faces ) for ( let edge of EDGES )
+      if ( !faces.has(face[edge].face) )
+        unglued.push(...face[edge].unglue());
 
     return unglued;
   }
@@ -300,32 +282,31 @@ class GlueTab // 糊地
   
     for ( let face1 of faces1 ) for ( let edge1 of EDGES )
       for ( let face2 of faces2 ) for ( let edge2 of EDGES )
-        if ( face1[edge1].type === LINK.BACK && face2[edge2].type === LINK.BACK )
+        if ( !face1[edge1].isEdge && !face2[edge2].isEdge )
           if ( this.areAdjacent(face1, edge1, face2, edge2) )
-            glued.push(...this.make(face1, edge1, face2, edge2));
+            glued.push(...face1[edge1].glue(face2, edge2));
 
     return glued;
   }
 
   static boundaryOf(faces) {
-    // var boundary = new Set();
-    // for ( let face of faces ) for ( let edge of EDGES )
-    //   if ( face[edge] && face[edge].type === LINK.BACK )
-    //     boundary.add(face[edge]);
-    // return boundary;
-    return new Set(filter(this.tabs(faces), tab => tab.type===LINK.BACK));
+    var boundary = new Set();
+    for ( let face of faces ) for ( let edge of EDGES )
+      if ( face[edge] && !face[edge].isEdge )
+        boundary.add(face[edge]);
+    return boundary;
   }
   next_boundary() {
     var bd = this;
-    if ( bd.type === LINK.BACK ) {
-      while ( (bd = bd.face[EDGES_NEXT[bd.edge]]).type !== LINK.BACK );
+    if ( !bd.isEdge ) {
+      while ( (bd = bd.face[EDGES_NEXT[bd.edge]]).isEdge );
       return bd;
     }
   }
   prev_boundary() {
     var bd = this;
-    if ( bd.type === LINK.BACK ) {
-      while ( (bd = bd.face[EDGES_PREV[bd.edge]]).type !== LINK.BACK );
+    if ( !bd.isEdge ) {
+      while ( (bd = bd.face[EDGES_PREV[bd.edge]]).isEdge );
       return bd;
     }
   }
@@ -404,4 +385,88 @@ class Geometer
     delete geometry.boundary;
   }
 
+  // copy flying face
+  // shallow copy flying data `face.label`, `face.normals`, `face.colors`, `face.uvs`
+  static copyFace(face, copied=new THREE.Face3().copy(face)) {
+    copied.label = face.label;
+
+    if ( face.normals )
+      copied.normals = {
+        a: face.normals.a,
+        b: face.normals.b,
+        c: face.normals.c,
+      };
+
+    if ( face.colors )
+      copied.colors = {
+        a: face.colors.a,
+        b: face.colors.b,
+        c: face.colors.c,
+      };
+
+    copied.uvs = [];
+    if ( face.uvs ) for ( let l in face.uvs ) {
+      copied.uvs[l] = {
+        a: face.uvs[l].a,
+        b: face.uvs[l].b,
+        c: face.uvs[l].c,
+      };
+    }
+
+    return copied;
+  }
+  // copy flying faces with linking relations
+  static copyFaces(faces, copied_faces=faces.map(face=>new THREE.Face3().copy(face))) {
+    for ( let [face, copied_face] of zip(faces, copied_faces) ) {
+      this.copyFace(face, copied_face);
+
+      // transfer link
+      for ( let edge of EDGES ) {
+        let {face:adjFace, edge:adjEdge, type, label} = face[edge];
+        if ( adjFace === face )
+          adjFace = copied_face;
+        else
+          adjFace = copied_faces[faces.indexOf(adjFace)];
+        copied_face[edge] = new GlueTab(adjFace, adjEdge, type, label);
+      }
+    }
+  }
+  // copy flying geometry
+  static copy(geometry, copied=geometry.clone()) {
+    copied.nlayer = geometry.nlayer;
+    this.copyFaces(geometry.faces, copied.faces);
+    copied.boundary = GlueTab.boundaryOf(geometry.faces);
+    return copied;
+  }
+  static computeEdgeType(geometry, only_check_flat=false) {
+    if ( only_check_flat ) {
+      for ( let face of geometry.faces ) for ( let edge of EDGES )
+        if ( face[edge].isEdge && face[edge].type === undefined ) {
+          let adj = face[edge];
+
+          let n_left = face.normal;
+          let n_right = adj.face.normal;
+          let is_flat = defaultFuzzyTool.equals(n_left.angleTo(n_right), 0);
+          if ( is_flat ) adj.setType(EDGE_TYPE.FLAT);
+        }
+
+    } else {
+      var vertices = geometry.vertices;
+      for ( let face of geometry.faces ) for ( let edge of EDGES )
+        if ( face[edge].isEdge && face[edge].type === undefined ) {
+          let adj = face[edge];
+
+          let va = vertices[face[edge[0]]];
+          let vb = vertices[face[edge[1]]];
+          let vab = new THREE.Vector3().subVectors(vb, va).normalize();
+
+          let n_left = face.normal;
+          let n_right = adj.face.normal;
+          let nx = new THREE.Vector3().crossVectors(n_left, n_right);
+
+          let sgn = defaultFuzzyTool.sign(vab.dot(nx));
+          adj.setType({[0]:EDGE_TYPE.FLAT, [1]:EDGE_TYPE.CONVAX, [-1]:EDGE_TYPE.CONCAVE}[sgn]);
+        }
+    }
+  }
 }
