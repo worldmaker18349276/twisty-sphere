@@ -92,7 +92,10 @@ class FuzzyTool
     this.scale = Math.pow(10, this.precision);
   }
   toString(value) {
-    return value.toFixed(this.precision);
+    var val = value.toFixed(this.precision);
+    if ( val === "-"+(0).toFixed(this.precision) )
+      val = (0).toFixed(this.precision);
+    return val;
   }
   round(value) {
     // return parseFloat(value.toFixed(this.precision));
@@ -692,5 +695,114 @@ class Geometer
       delete face[SIDE];
 
     return splited;
+  }
+
+  // merge two geometries
+  static merge(geometry, merged, matrix, materialIndexOffset) {
+    const origin_len = geometry.faces.length;
+    geometry.merge(merged, matrix, materialIndexOffset);
+  
+    var origin_faces = geometry.faces.slice(0, origin_len);
+    var merged_faces = geometry.faces.slice(origin_len);
+    var merged_boundary = this.copyFaces(origin_faces, merged_faces);
+  
+    geometry.boundaries = GlueTab.boundariesOf(geometry.faces);
+  
+    // this.reduceVertices(geometry);
+    // this.reduceFaces(geometry);
+    // this.trimVertices(geometry);
+  }
+  // merge duplicated (or similar) vertices and sew boundaries caused by merging
+  static reduceVertices(geometry, snap=true, sew=true) {
+    var vec_hash = snap
+                 ? v => v.toArray().map(x => defaultFuzzyTool.toString(x)).join()
+                 : v => geometry.vertices.indexOf(v);
+    var vertices_hashmap = {}; // hash of vertex -> index of merged vertex
+    var merged_vertices = [];
+    var merged_vertices_map = {}; // original index of vertex -> index of merged vertex
+    var duplicated = {}; // index of merged vertex -> if vertex is duplicated
+    var sewable = [];
+
+    // merge duplicated vertices
+    for ( let i=0, len=geometry.vertices.length; i<len; i++ ) {
+      let hash = vec_hash(geometry.vertices[i]);
+      let new_index = vertices_hashmap[hash];
+
+      if ( new_index === undefined ) {
+        new_index = merged_vertices.push(geometry.vertices[i])-1;
+        vertices_hashmap[hash] = new_index;
+        merged_vertices_map[i] = new_index;
+  
+      } else {
+        merged_vertices_map[i] = new_index;
+        duplicated[new_index] = true;
+      }
+    }
+
+    // merge vertices of faces
+    for ( let face of geometry.faces ) {
+      face.a = merged_vertices_map[face.a];
+      face.b = merged_vertices_map[face.b];
+      face.c = merged_vertices_map[face.c];
+    }
+
+    // find sewable boundaries, which are non-trivial boundaries containing duplicated vertex
+    // sew edges of duplicated vertices
+    if ( sew ) {
+      for ( let face of geometry.faces )
+        for ( let edge of EDGES ) if ( !face[edge].isEdge )
+          if ( face[edge[0]] !== face[edge[1]] )
+            if ( duplicated[face[edge[0]]] || duplicated[face[edge[1]]] )
+              sewable.push(face[edge]);
+  
+      for ( let [tab1, tab2] of comb2(sewable) )
+        if ( !tab1.isEdge && !tab2.isEdge )
+          if ( GlueTab.areAdjacent(tab1.face, tab1.edge, tab2.face, tab2.edge) ) {
+            geometry.boundaries.delete(tab1);
+            geometry.boundaries.delete(tab2);
+            tab1.glue(tab2);
+          }
+    }
+  
+    geometry.vertices = merged_vertices;
+  }
+  // merge trivial edges and trivial faces
+  static reduceFaces(geometry) {
+    var merged_faces = [];
+  
+    for ( let face of geometry.faces ) {
+      if ( EDGES.every(edge => face[edge[0]] !== face[edge[1]]) ) {
+        // non-trivial face
+        merged_faces.push(face);
+  
+      } else if ( EDGES.every(edge => face[edge[0]] === face[edge[1]]) ) {
+        // trivial face with three trivial edges
+        for ( let edge of EDGES ) {
+          if ( !face[edge].isEdge )
+            geometry.boundaries.delete(face[edge]);
+        }
+  
+      } else {
+        // trivial face with one trivial edge
+        for ( let edge of EDGES ) if ( face[edge[0]] === face[edge[1]] ) { // find trivial edge
+          if ( !face[edge].isEdge )
+            geometry.boundaries.delete(face[edge]);
+          face[EDGES_NEXT[edge]].merge(face[EDGES_PREV[edge]]);
+          break;
+        }
+      }
+    }
+  
+    geometry.faces = merged_faces;
+  }
+
+  static makeEdgeHelper(geometry, tab) {
+    var v1 = geometry.vertices[tab.face[tab.edge[0]]];
+    var v2 = geometry.vertices[tab.face[tab.edge[1]]];
+    var dir = new THREE.Vector3().subVectors(v2, v1);
+    var len = dir.length();
+    var arrow = new THREE.ArrowHelper(dir.normalize(), v1, len);
+    console.log(dir, v1, len);
+    return arrow;
   }
 }
