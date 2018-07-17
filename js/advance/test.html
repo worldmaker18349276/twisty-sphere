@@ -48,7 +48,6 @@ function init() {
   var controls = new THREE.OrbitControls( camera, renderer.domElement );
   controls.minDistance = 2;
   controls.maxDistance = 5;
-  controls.maxPolarAngle = Math.PI / 2;
 
   scene.add( new THREE.AmbientLight( 0x222222 ) );
 
@@ -87,9 +86,9 @@ function init() {
   ];
   geometry.computeFlatVertexNormals();
   Geometer.fly(geometry);
-  var geometry_ = Geometer.copy(geometry);
-  console.log(geometry_.faces);
-  console.log(geometry_.boundary);
+  Geometer.split(geometry, new THREE.Plane(new THREE.Vector3(1,1,1).normalize(), 0));
+  console.log(geometry.faces);
+  console.log(geometry.boundaries);
   // Geometer.land(geometry);
 
   var material = new THREE.MeshLambertMaterial( { color: 0xffffff } );
@@ -121,7 +120,7 @@ function animate() {
 
   requestAnimationFrame( animate );
 
-  group.rotation.y += 0.005;
+  // group.rotation.y += 0.005;
 
   render();
   stats.update();

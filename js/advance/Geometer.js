@@ -177,6 +177,7 @@ class GlueTab // 糊地
     this.type = type;
     this.label = label;
   }
+  clone() { return new GlueTab(this.face, this.edge, this.type, this.label); }
   setType(t)  { this.type  = t; if ( this.dual ) this.dual.type  = t; }
   setLabel(l) { this.label = l; if ( this.dual ) this.dual.label = l; }
 
@@ -192,21 +193,21 @@ class GlueTab // 糊地
     return (face1[edge1[0]] === face2[edge2[1]]) && (face1[edge1[1]] === face2[edge2[0]]);
   }
 
-  // link glue tab and `face[edge]` each others, then return modified tabs
-  glue(adjFace, adjEdge) {
-    if ( this.face === adjFace && this.edge === adjEdge )
+  // link glue this and `tab` each others, then return modified tabs
+  glue(tab) {
+    if ( this.dual === tab )
       return [];
 
-    var dual = adjFace[adjEdge];
-    var {face, edge} = this;
+    var {face, edge} = this.dual;
+    var {face:adjFace, edge:adjEdge} = tab.dual;
 
     this.face = adjFace;
     this.edge = adjEdge;
 
-    dual.face = face;
-    dual.edge = edge;
+    tab.face = face;
+    tab.edge = edge;
 
-    return [this, dual];
+    return [this, tab];
   }
   // link glue tab and its dual to itself, then return modified tabs
   unglue() {
@@ -224,6 +225,38 @@ class GlueTab // 糊地
     dual.edge = adjEdge;
 
     return [this, dual];
+  }
+  // merge tab then return removed tab
+  // TODO: merge label of two tabs
+  merge(merged) {
+    var ret;
+
+    if ( this.isEdge && merged.isEdge ) {
+      ret = [this.dual, merged.dual];
+
+      this.glue(merged);
+
+    } else if ( this.isEdge && !merged.isEdge ) {
+      ret = [this, this.dual];
+
+      let {face, edge} = this.dual;
+      face[edge] = merged;
+      this.face = face;
+      this.edge = edge;
+
+    } else if ( !this.isEdge && merged.isEdge ) {
+      ret = [merged, merged.dual];
+
+      let {face, edge} = merged.dual;
+      face[edge] = this;
+      this.face = face;
+      this.edge = edge;
+
+    } else {
+      ret = [this, merged];
+    }
+
+    return ret;
   }
   // make glue tab at `face[edge]` and `adjFace[adjEdge]` and gluing each others,
   //   then return new tab at `face[edge]` and `adjFace[adjEdge]`
@@ -284,12 +317,12 @@ class GlueTab // 糊地
       for ( let face2 of faces2 ) for ( let edge2 of EDGES )
         if ( !face1[edge1].isEdge && !face2[edge2].isEdge )
           if ( this.areAdjacent(face1, edge1, face2, edge2) )
-            glued.push(...face1[edge1].glue(face2, edge2));
+            glued.push(...face1[edge1].glue(face2[edge2]));
 
     return glued;
   }
 
-  static boundaryOf(faces) {
+  static boundariesOf(faces) {
     var boundary = new Set();
     for ( let face of faces ) for ( let edge of EDGES )
       if ( face[edge] && !face[edge].isEdge )
@@ -356,7 +389,7 @@ class Geometer
       }
     }
 
-    geometry.boundary = GlueTab.assemble(geometry.faces);
+    geometry.boundaries = GlueTab.assemble(geometry.faces);
   }
   static land(geometry) {
     var uvs = geometry.faceVertexUvs = [[]];
@@ -382,7 +415,7 @@ class Geometer
         delete face[edge];
     }
 
-    delete geometry.boundary;
+    delete geometry.boundaries;
   }
 
   // copy flying face
@@ -435,7 +468,7 @@ class Geometer
   static copy(geometry, copied=geometry.clone()) {
     copied.nlayer = geometry.nlayer;
     this.copyFaces(geometry.faces, copied.faces);
-    copied.boundary = GlueTab.boundaryOf(geometry.faces);
+    copied.boundaries = GlueTab.boundariesOf(geometry.faces);
     return copied;
   }
   static computeEdgeType(geometry, only_check_flat=false) {
@@ -468,5 +501,196 @@ class Geometer
           adj.setType({[0]:EDGE_TYPE.FLAT, [1]:EDGE_TYPE.CONVAX, [-1]:EDGE_TYPE.CONCAVE}[sgn]);
         }
     }
+  }
+
+  // trim trivial vertices
+  static trimVertices(geometry) {
+    // find non-trivial vertices, which must be refered by face
+    var nontriviality = []; // index of vertex -> if vertex is non-trivial
+    var nontrivial_vertices = []; // non-trivial vertices
+    var nontrivial_vertices_map = {}; // index of merged vertex -> index of non-trivial vertex
+  
+    for ( let face of geometry.faces ) for ( let a of VERTICES ) {
+      let i = face[a];
+      if ( !nontriviality[i] ) {
+        nontriviality[i] = true;
+        nontrivial_vertices_map[i] = nontrivial_vertices.push(geometry.vertices[i])-1;
+      }
+    }
+  
+    // re-index vertices of faces
+    for ( let face of geometry.faces ) {
+      face.a = nontrivial_vertices_map[face.a];
+      face.b = nontrivial_vertices_map[face.b];
+      face.c = nontrivial_vertices_map[face.c];
+    }
+  
+    geometry.vertices = nontrivial_vertices;
+  }
+
+  // split face at edge with interpolation alpha `t` and vertex index `k`
+  // the splited tab link to same place or itself
+  // return the new face splited out of `face`
+  static _split_face(face, edge, t, k) {
+    // split face
+    const ab = edge;
+    const bc = EDGES_NEXT[ab];
+    const ca = EDGES_PREV[ab];
+
+    var splited_face = this.copyFace(face);
+    face[ab[0]] = splited_face[ab[1]] = k;
+
+    // split tabs
+    splited_face[ca] = face[ca];
+    if ( !face[ca].isEdge )
+      splited_face[ca].face = splited_face;
+
+    splited_face[ab] = face[ab].clone();
+    if ( !face[ab].isEdge )
+      splited_face[ab].face = splited_face;
+
+    GlueTab.make(face, ca, splited_face, bc, {type:EDGE_TYPE.FLAT});
+
+    // interpolate normal
+    if ( face.normals ) {
+      let ni = face.normals[ab[0]];
+      let nj = face.normals[ab[1]];
+      let nk = ni.clone().lerp(nj, t);
+      face.normals[ab[0]] = splited_face.normals[ab[1]] = nk;
+    }
+
+    // interpolate color
+    if ( face.colors ) {
+      let ci = face.colors[ab[0]];
+      let cj = face.colors[ab[1]];
+      let ck = ci.clone().lerp(cj, t);
+      face.colors[ab[0]] = splited_face.colors[ab[1]] = ck;
+    }
+
+    // interpolate uv
+    if ( face.uvs ) for ( let l=0; l<face.uvs.length; l++ ) if ( face.uvs[l] ) {
+      var uvli = face.uvs[l][ab[0]];
+      var uvlj = face.uvs[l][ab[1]];
+      var uvlk = uvli.clone().lerp(uvlj, t);
+      face.uvs[l][ab[0]] = splited_face.uvs[l][ab[1]] = uvlk;
+    }
+
+    return splited_face;
+  }
+  // interpolate geometry at edge `face[edge]`
+  // new face will be insert after splited faces
+  // return the new face splited out of `face` and its dual
+  static interpolateAtEdge(geometry, face, edge, t, k) {
+    var tab = face[edge];
+    var {face:adjFace, edge:adjEdge} = tab;
+
+    // interpolation
+    if ( k === undefined ) {
+      let i = face[edge[0]];
+      let j = face[edge[1]];
+      let vi = geometry.vertices[i];
+      let vj = geometry.vertices[j];
+      let vk = vi.clone().lerp(vj, t);
+      k = geometry.vertices.push(vk)-1;
+    }
+
+    // split face
+    var splited_face = this._split_face(face, edge, t, k);
+    geometry.faces.splice(geometry.faces.indexOf(face)+1, 0, splited_face);
+
+    if ( !tab.isEdge ) {
+      splited_face[edge].face = splited_face;
+      geometry.boundaries.add(splited_face[edge]);
+      return [splited_face];
+    }
+
+    // split adjacent face
+    var splited_adjFace = this._split_face(adjFace, adjEdge, t, k);
+    geometry.faces.splice(geometry.faces.indexOf(adjFace)+1, 0, splited_adjFace);
+
+    face[edge].glue(adjFace[adjEdge]);
+    splited_face[edge].glue(splited_adjFace[adjEdge]);
+
+    return [splited_face, splited_adjFace];
+  }
+  // split geometry by plane into two
+  // in-place modify `geometry` as positive side, and return `splited` as negative side
+  static split(geometry, plane) {
+    plane = new THREE.Plane().copy(plane);
+
+    var vertices = geometry.vertices;
+    var faces = geometry.faces;
+    var boundaries = geometry.boundaries;
+
+    var dis = vertices.map(v => plane.distanceToPoint(v));
+    var sgn = dis.map(d => defaultFuzzyTool.sign(d));
+
+    // split edge
+    // `geometry.faces` increase in method `interpolateAtEdge`
+    for ( let x=0; x<faces.length; x++ ) for ( let edge of EDGES ) {
+      let face = faces[x];
+      let i = face[edge[0]];
+      let j = face[edge[1]];
+
+      if ( sgn[i] * sgn[j] < 0 ) {
+        // interpolation
+        let t = dis[i]/(dis[i]-dis[j]);
+        let vi = vertices[i];
+        let vj = vertices[j];
+        let vk = vi.clone().lerp(vj, t);
+        let k = vertices.push(vk)-1;
+        dis.push(0);
+        sgn.push(0);
+
+        this.interpolateAtEdge(geometry, face, edge, t, k);
+      }
+    }
+
+    // determine side of faces respect to cut plane
+    const SIDE = Symbol("SIDE");
+    const FRONT = Symbol("SIDE.FRONT");
+    const BACK = Symbol("SIDE.BACK");
+
+    for ( let face of faces ) {
+      if ( VERTICES.some(a => sgn[face[a]] !== 0) ) {
+        if ( VERTICES.every(a => sgn[face[a]] >= 0) )
+          face[SIDE] = FRONT;
+        else if ( VERTICES.every(a => sgn[face[a]] <= 0) )
+          face[SIDE] = BACK;
+        else
+          console.assert(false);
+
+      } else {
+        if ( plane.normal.dot(face.normal) < 0 )
+          face[SIDE] = FRONT;
+        else
+          face[SIDE] = BACK;
+      }
+    }
+
+    // split geometry into `geometry` and `splited`
+    geometry.faces = [];
+    geometry.boundaries = new Set();
+    var splited = this.copy(geometry);
+
+    geometry.faces = faces.filter(face => face[SIDE] === FRONT);
+    splited.faces = faces.filter(face => face[SIDE] === BACK);
+
+    // unlink edge between two sides
+    for ( let face of faces ) if ( face[SIDE] === FRONT ) for ( let edge of EDGES ) {
+      if ( face[SIDE] !== face[edge].face[SIDE] )
+        face[edge].unglue();
+    }
+
+    geometry.boundaries = GlueTab.boundariesOf(geometry.faces);
+    splited.boundaries = GlueTab.boundariesOf(splited.faces);
+
+    this.trimVertices(geometry);
+    this.trimVertices(splited);
+
+    for ( let face of faces )
+      delete face[SIDE];
+
+    return splited;
   }
 }
