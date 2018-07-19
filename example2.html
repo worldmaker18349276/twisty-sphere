@@ -6,7 +6,6 @@
   <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
   <script src="js/three.min.js"></script>
 
-  <!-- <script src="js/Geometry.js"></script> -->
   <script src="js/Geometer.js"></script>
   <script src="js/twistySphere.js"></script>
 </head>
@@ -14,6 +13,7 @@
 <script>
 var material = new THREE.MeshLambertMaterial({color:0xffffff});
 var geometry = new THREE.BoxGeometry(2,2,2);
+Geometer.fly(geometry);
 var shape = new THREE.Mesh(geometry, material);
 
 material.map = new THREE.TextureLoader().load("crate.gif");

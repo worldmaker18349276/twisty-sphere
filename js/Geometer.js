@@ -142,6 +142,7 @@ var defaultFuzzyTool = new FuzzyTool();
 
 
 const VERTICES = Object.freeze(["a", "b", "c"]);
+const VERTICES_IND = Object.freeze({a:0,  b:1,  c:2});
 const EDGES = Object.freeze(["ca", "ab", "bc"]);
 const EDGES_DUAL = Object.freeze({ca:"b",  ab:"c",  bc:"a"});
 const EDGES_NEXT = Object.freeze({ca:"ab", ab:"bc", bc:"ca"});
@@ -198,36 +199,18 @@ class Geometer
   // modify structure of Face3 to faster computing
   static fly(geometry) {
     var uvs = geometry.faceVertexUvs;
-    geometry.nlayer = geometry.faceVertexUvs.length;
-    geometry.faceVertexUvs = [[]];
+    const nlayer = geometry.nlayer = geometry.faceVertexUvs.length;
 
-    for ( let x in geometry.faces ) {
+    for ( let x=0,len=geometry.faces.length; x<len; x++ ) {
       let face = geometry.faces[x];
 
-      // face.vertexNormals = [a,b,c]  =>  face.normals = {a,b,c}
-      let ns = face.vertexNormals;
-      if ( ns.length ) {
-        face.normals = {a:ns[0], b:ns[1], c:ns[2]};
-        face.vertexNormals = [];
-      }
-
-      // face.vertexColors = [a,b,c]  =>  face.colors = {a,b,c}
-      let cs = face.vertexColors;
-      if ( cs.length ) {
-        face.colors = {a:cs[0], b:cs[1], c:cs[2]};
-        face.vertexColors = [];
-      }
-
-      // faceVertexUvs[x] = [[a,b,c], ...]  =>  face.uvs = [{a,b,c}, ...]
-      face.uvs = [];
-      for ( let l=0; l<uvs.length; l++ ) {
-        let uv = uvs[l][x];
-        if ( uv && uv.length )
-          face.uvs[l] = {a:uv[0], b:uv[1], c:uv[2]};
+      face.vertexUvs = [];
+      for ( let l=0; l<nlayer; l++ )
+        if ( uvs[l][x] && uvs[l][x].length )
+          face.vertexUvs[l] = uvs[l][x];
 
       // adjacent edges
       face.adj = {};
-      }
     }
 
     // link adjacent faces
@@ -242,27 +225,17 @@ class Geometer
   }
   static land(geometry) {
     var uvs = geometry.faceVertexUvs = [[]];
-    for ( let l=0; l<geometry.nlayer; l++ )
+    const nlayer = geometry.nlayer;
+    for ( let l=0; l<nlayer; l++ )
       uvs[l] = [];
 
     for ( let x in geometry.faces ) {
       let face = geometry.faces[x];
 
-      if ( face.normals )
-        face.vertexNormals = [face.normals.a, face.normals.b, face.normals.c];
-      delete face.normals;
-
-      if ( face.colors )
-        face.vertexColors = [face.colors.a, face.colors.b, face.colors.c];
-      delete face.colors;
-
-      if ( face.uvs ) for ( let l in face.uvs )
-          uvs[l][x] = [face.uvs[l].a, face.uvs[l].b, face.uvs[l].c];
-      delete face.uvs;
-
-      delete face.adj;
-      for ( let edge of EDGES )
-        delete face[edge];
+      if ( face.vertexUvs )
+        for ( let l=0; l<nlayer; l++ )
+          if ( face.vertexUvs[l] &&  face.vertexUvs[l].length )
+            uvs[l][x] = face.vertexUvs[l];
     }
   }
 
@@ -272,28 +245,11 @@ class Geometer
   static copyFace(face, copied=new THREE.Face3().copy(face)) {
     copied.label = face.label;
 
-    if ( face.normals )
-      copied.normals = {
-        a: face.normals.a,
-        b: face.normals.b,
-        c: face.normals.c,
-      };
-
-    if ( face.colors )
-      copied.colors = {
-        a: face.colors.a,
-        b: face.colors.b,
-        c: face.colors.c,
-      };
-
-    copied.uvs = [];
-    if ( face.uvs ) for ( let l in face.uvs ) {
-      copied.uvs[l] = {
-        a: face.uvs[l].a,
-        b: face.uvs[l].b,
-        c: face.uvs[l].c,
-      };
-    }
+    copied.vertexUvs = [];
+    if ( face.vertexUvs )
+      for ( let l in face.vertexUvs )
+        if ( face.vertexUvs[l].length )
+          copied.vertexUvs[l] = face.vertexUvs[l].slice(0);
 
     copied.adj = {};
 
@@ -306,6 +262,8 @@ class Geometer
 
       // transfer link
       for ( let edge of EDGES ) {
+        if ( !face.adj )
+          break;
         let [adjFace, adjEdge] = [face[edge], face.adj[edge]];
         if ( adjFace !== undefined ) {
           adjFace = copied_faces[faces.indexOf(adjFace)];
@@ -318,7 +276,7 @@ class Geometer
   static copy(geometry, copied=geometry.clone()) {
     copied.nlayer = geometry.nlayer;
     this.copyFaces(geometry.faces, copied.faces);
-    copied.boundaries = this.boundariesIn(geometry.faces);
+    copied.boundaries = this.boundariesIn(copied.faces);
     return copied;
   }
 
@@ -374,29 +332,34 @@ class Geometer
     this.connect(splited_face, ca, face[ca], face.adj[ca]);
     this.connect(face, ca, splited_face, bc);
 
+    var a_ind = VERTICES_IND[ab[0]];
+    var b_ind = VERTICES_IND[ab[1]];
+
     // interpolate normal
-    if ( face.normals ) {
-      let ni = face.normals[ab[0]];
-      let nj = face.normals[ab[1]];
+    if ( face.vertexNormals.length ) {
+      let ni = face.vertexNormals[a_ind];
+      let nj = face.vertexNormals[b_ind];
       let nk = ni.clone().lerp(nj, t);
-      face.normals[ab[0]] = splited_face.normals[ab[1]] = nk;
+      face.vertexNormals[a_ind] = splited_face.vertexNormals[b_ind] = nk;
     }
 
     // interpolate color
-    if ( face.colors ) {
-      let ci = face.colors[ab[0]];
-      let cj = face.colors[ab[1]];
+    if ( face.vertexColors.length ) {
+      let ci = face.vertexColors[a_ind];
+      let cj = face.vertexColors[b_ind];
       let ck = ci.clone().lerp(cj, t);
-      face.colors[ab[0]] = splited_face.colors[ab[1]] = ck;
+      face.vertexColors[a_ind] = splited_face.vertexColors[b_ind] = ck;
     }
 
     // interpolate uv
-    if ( face.uvs ) for ( let l=0; l<face.uvs.length; l++ ) if ( face.uvs[l] ) {
-      var uvli = face.uvs[l][ab[0]];
-      var uvlj = face.uvs[l][ab[1]];
-      var uvlk = uvli.clone().lerp(uvlj, t);
-      face.uvs[l][ab[0]] = splited_face.uvs[l][ab[1]] = uvlk;
-    }
+    if ( face.vertexUvs )
+      for ( let l=0; l<face.vertexUvs.length; l++ )
+        if ( face.vertexUvs[l] && face.vertexUvs[l].length ) {
+          let uvli = face.vertexUvs[l][a_ind];
+          let uvlj = face.vertexUvs[l][b_ind];
+          let uvlk = uvli.clone().lerp(uvlj, t);
+          face.vertexUvs[l][a_ind] = splited_face.vertexUvs[l][b_ind] = uvlk;
+        }
 
     return splited_face;
   }
@@ -426,7 +389,7 @@ class Geometer
     }
 
     // split adjacent face
-    var splited_adjFace = this._split_face(adjFace, adjEdge, t, k);
+    var splited_adjFace = this._split_face(adjFace, adjEdge, 1-t, k);
     geometry.faces.splice(geometry.faces.indexOf(adjFace)+1, 0, splited_adjFace);
 
     this.connect(face, edge, splited_adjFace, adjEdge);
@@ -562,7 +525,13 @@ class Geometer
     
     for ( let loop of loops ) {
       // make face to fill the hole
+      let count = 0;
       while ( loop.length >= 3 ) {
+        count++;
+        if ( count >= 10000 ) {
+          // console.log(loop.map(([f,e]) => points[f[e[0]]]));
+          throw "unterminated loop";
+        }
         let [[face_cb, bd_cb], [face_ba, bd_ba], ...remains] = loop;
 
         let i = face_ba[bd_ba[1]];

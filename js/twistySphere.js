@@ -14,7 +14,7 @@ const BACK = Symbol("BACK");
 const NONE = Symbol("NONE");
 
 function cloneObject3D(obj, copied=obj.clone()) {
-  copied.geometry = obj.geometry.clone();
+  copied.geometry = Geometer.copy(obj.geometry);
   copied.material = obj.material.clone();
   for ( let [target, elem] of zip(copied.children, obj.children) )
     cloneObject3D(target, elem);
@@ -53,9 +53,12 @@ class TwistySphereBuilder
     return puzzle;
   }
   sliceElement(elem, sliced_elem, cut) {
-    Geometer.fly(elem.geometry);
     sliced_elem.geometry = Geometer.slice(elem.geometry, cut, true);
-    Geometer.fillHoles(elem.geometry, cut);
+    Geometer.reduceVertices(elem.geometry);
+    Geometer.reduceFaces(elem.geometry);
+    Geometer.reduceVertices(sliced_elem.geometry);
+    Geometer.reduceFaces(sliced_elem.geometry);
+    Geometer.fillHoles(elem.geometry, cut.clone().negate());
     Geometer.fillHoles(sliced_elem.geometry, cut);
     Geometer.land(elem.geometry);
     Geometer.land(sliced_elem.geometry);
@@ -273,6 +276,8 @@ class TwistyBallBuilder extends TwistySphereBuilder
 
   	// var shell_geometry = new THREE.IcosahedronGeometry(1, N);
   	var shell_geometry = new THREE.OctahedronGeometry(1, N);
+    shell_geometry.faceVertexUvs = [[]];
+    Geometer.fly(shell_geometry);
     var shell_material = new THREE.MeshLambertMaterial({color:color});
     var shape = new THREE.Mesh(shell_geometry, shell_material);
     
@@ -289,7 +294,6 @@ class TwistyBallBuilder extends TwistySphereBuilder
     return puzzle;
   }
   sliceElement(elem, sliced_elem, cut) {
-    Geometer.fly(elem.geometry);
     sliced_elem.geometry = Geometer.slice(elem.geometry, cut, true);
     for ( let self of [elem, sliced_elem] ) {
       let loop = Geometer.findLoops(self.geometry.boundaries)[0];
