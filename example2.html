@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
   <script src="js/three.min.js"></script>
 
-  <script src="js/Geometry.js"></script>
+  <!-- <script src="js/Geometry.js"></script> -->
+  <script src="js/Geometer.js"></script>
   <script src="js/twistySphere.js"></script>
 </head>
 <body>
@@ -23,7 +24,7 @@ var builder = new TwistySphereBuilder(shape);
 var controller = new BasicController({builder, display, R:1.5});
 
 var puzzle = builder.make();
-builder.split(puzzle,
+builder.slice(puzzle,
   plane( 1, 1, 1,1),
   plane(-1,-1, 1,1),
   plane(-1, 1,-1,1),

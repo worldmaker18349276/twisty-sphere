@@ -1,17 +1,23 @@
 function always() { return true; }
+function sphidius(plane) {
+  return 2 - Math.acos(plane.constant)*2/Math.PI;
+}
+function plane(x, y, z, sphr) {
+  var normal = new THREE.Vector3(x,y,z).normalize();
+  var constant = Math.cos((2-sphr)*Math.PI/2);
+  return new THREE.Plane(normal, constant);
+}
 
 // side
-const FRONT = 1;
-const BACK = 2;
-const NONE = 3;
+const FRONT = Symbol("FRONT");
+const BACK = Symbol("BACK");
+const NONE = Symbol("NONE");
 
-function cloneObject3D(obj) {
-  var copied = obj.clone();
+function cloneObject3D(obj, copied=obj.clone()) {
   copied.geometry = obj.geometry.clone();
   copied.material = obj.material.clone();
-  while ( copied.children.length ) copied.remove(copied.children[0]);
-  for ( let elem of obj.children )
-    copied.add(cloneObject3D(elem));
+  for ( let [target, elem] of zip(copied.children, obj.children) )
+    cloneObject3D(target, elem);
   return copied;
 }
 
@@ -46,12 +52,17 @@ class TwistySphereBuilder
     };
     return puzzle;
   }
-  cutElement(elem, cut) {
-    return cutConvexPolyhedron(elem.geometry, cut, true);
+  sliceElement(elem, sliced_elem, cut) {
+    Geometer.fly(elem.geometry);
+    sliced_elem.geometry = Geometer.slice(elem.geometry, cut, true);
+    Geometer.fillHoles(elem.geometry, cut);
+    Geometer.fillHoles(sliced_elem.geometry, cut);
+    Geometer.land(elem.geometry);
+    Geometer.land(sliced_elem.geometry);
   }
-  split(puzzle, ...planes) {
+  slice(puzzle, ...planes) {
     if ( planes.length !== 1 )
-      return planes.reduce((puzzle, plane) => this.split(puzzle, plane), puzzle);
+      return planes.reduce((puzzle, plane) => this.slice(puzzle, plane), puzzle);
     var plane = planes[0];
 
   	for ( let elem of puzzle.children.slice(0) ) {
@@ -68,17 +79,13 @@ class TwistySphereBuilder
         // elem.userData.cuts.push(plane_.negate()); // hidden cut
 
       } else {
+        // slice elements `elem` by plane `plane_`
         let new_elem = cloneObject3D(elem);
         puzzle.add(new_elem);
 
-        // cut elements `elem` by plane `plane_`
-        this.cutElement(elem, plane_);
+        this.sliceElement(elem, new_elem, plane_);
         elem.userData.cuts.push(plane_);
-
-        // cut elements `elem` by plane `antiplane_`
-        let antiplane_ = plane_.clone().negate();
-        this.cutElement(new_elem, antiplane_);
-        new_elem.userData.cuts.push(antiplane_);
+        new_elem.userData.cuts.push(plane_.clone().negate());
       }
 
     }
@@ -281,14 +288,18 @@ class TwistyBallBuilder extends TwistySphereBuilder
     puzzle.userData.type = "twistyBall";
     return puzzle;
   }
-  cutElement(elem, cut) {
-    cutConvexPolyhedron(elem.geometry, cut, false);
-    let edge = findOpenEdge(elem.geometry)[0];
-    if ( edge )
-      elem.children[0].geometry.vertices = edge.map(i => elem.geometry.vertices[i]);
-    else 
-      elem.children[0].geometry.vertices = [];
-    return elem;
+  sliceElement(elem, sliced_elem, cut) {
+    Geometer.fly(elem.geometry);
+    sliced_elem.geometry = Geometer.slice(elem.geometry, cut, true);
+    for ( let self of [elem, sliced_elem] ) {
+      let loop = Geometer.findLoops(self.geometry.boundaries)[0];
+      if ( loop )
+        self.children[0].geometry.vertices = loop.map(([face, edge]) => self.geometry.vertices[face[edge[0]]]);
+      else 
+        self.children[0].geometry.vertices = [];
+    }
+    Geometer.land(elem.geometry);
+    Geometer.land(sliced_elem.geometry);
   }
 }
 

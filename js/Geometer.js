@@ -436,7 +436,7 @@ class Geometer
   }
   // slice geometry by plane
   // in-place modify `geometry` as positive side, and return new geometry as negative side
-  static slice(geometry, plane) {
+  static slice(geometry, plane, sliced=false) {
     plane = new THREE.Plane().copy(plane);
 
     var vertices = geometry.vertices;
@@ -488,14 +488,6 @@ class Geometer
       }
     }
     
-    // split geometry into `geometry` and `splited`
-    geometry.faces = [];
-    geometry.boundaries = [];
-    var splited = this.copy(geometry);
-    
-    geometry.faces = faces.filter(face => face[SIDE] === FRONT);
-    splited.faces = faces.filter(face => face[SIDE] === BACK);
-    
     // unlink edge between two sides
     for ( let face of faces ) if ( face[SIDE] === FRONT ) for ( let edge of EDGES ) {
       if ( face[edge] && face[SIDE] !== face[edge][SIDE] ) {
@@ -504,16 +496,47 @@ class Geometer
       }
     }
     
+    // split geometry into `geometry` and `sliced_geometry`
+    geometry.faces = [];
+    geometry.boundaries = [];
+    var sliced_geometry = this.copy(geometry);
+
+    geometry.faces = faces.filter(face => face[SIDE] === FRONT);
     geometry.boundaries = this.boundariesIn(geometry.faces);
-    splited.boundaries = this.boundariesIn(splited.faces);
-    
     this.trimVertices(geometry);
-    this.trimVertices(splited);
+
+    if ( sliced ) {
+      sliced_geometry.faces = [];
+      sliced_geometry.boundaries = [];
+      
+      sliced_geometry.faces = faces.filter(face => face[SIDE] === BACK);
+      sliced_geometry.boundaries = this.boundariesIn(sliced_geometry.faces);
+      this.trimVertices(sliced_geometry);
+    }
     
     for ( let face of faces )
       delete face[SIDE];
-    
-    return splited;
+
+    if ( sliced )
+      return sliced_geometry;
+  }
+  static findLoops(boundaries) {
+    var loops = [];
+    boundaries = boundaries.slice(0);
+
+    while ( boundaries.length > 0 ) {
+      let loop = [];
+
+      let [face, edge] = boundaries[0];
+      while ( this.removeLink(boundaries, face, edge) ) {
+        loop.push([face, edge]);
+        while ( face[EDGES_NEXT[edge]] !== undefined )
+          [face, edge] = [face[EDGES_NEXT[edge]], face.adj[EDGES_NEXT[edge]]];
+        edge = EDGES_NEXT[edge];
+      }
+      loops.push(loop);
+    }
+    return loops;
   }
   static fillHoles(geometry, plane) {
     // offset and rotation to plane
@@ -533,23 +556,8 @@ class Geometer
           points[i] = new THREE.Vector2(v.z, v.x);
         }
 
-    // find loop of edges
-    var loops = [];
-
-    while ( boundaries.length > 0 ) {
-      let loop = [];
-
-      let [face, edge] = boundaries[0];
-      while ( this.removeLink(boundaries, face, edge) ) {
-        loop.push([face, edge]);
-        while ( face[EDGES_NEXT[edge]] !== undefined )
-          [face, edge] = [face[EDGES_NEXT[edge]], face.adj[EDGES_NEXT[edge]]];
-        edge = EDGES_NEXT[edge];
-      }
-      loops.push(loop);
-    }
-
     // fill holes
+    var loops = this.findLoops(boundaries);
     var normal = plane.normal.clone();
     
     for ( let loop of loops ) {
