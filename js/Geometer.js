@@ -525,13 +525,7 @@ class Geometer
     
     for ( let loop of loops ) {
       // make face to fill the hole
-      let count = 0;
-      while ( loop.length >= 3 ) {
-        count++;
-        if ( count >= 10000 ) {
-          // console.log(loop.map(([f,e]) => points[f[e[0]]]));
-          throw "unterminated loop";
-        }
+      for ( let count=loop.length*(loop.length-1)/2; loop.length>=3 && count>0; count-- ) {
         let [[face_cb, bd_cb], [face_ba, bd_ba], ...remains] = loop;
 
         let i = face_ba[bd_ba[1]];
@@ -542,7 +536,7 @@ class Geometer
         let angle_ji = points[i].clone().sub(points[j]).angle()*2/Math.PI;
         let angle_jk = points[k].clone().sub(points[j]).angle()*2/Math.PI;
         let angle_ijk = ((angle_ji - angle_jk) % 4 + 4) % 4;
-        if ( angle_ijk > 2 ) {
+        if ( defaultFuzzyTool.greater_than(angle_ijk, 2) ) {
           loop.push(loop.shift());
           continue;
         }
@@ -558,7 +552,14 @@ class Geometer
         loop = remains;
       }
 
-      this.connect(...loop[0], ...loop[1]);
+      if ( loop.length >= 3 ) {
+        console.log(loop.map(([f,e]) => geometry.vertices[f[e[0]]]));
+        throw "unterminated loop";
+      } else if ( loop.length === 2 ) {
+        this.connect(...loop[0], ...loop[1]);
+      } else {
+        throw "???";
+      }
     }
   }
 

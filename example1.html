@@ -16,7 +16,9 @@ var builder = new TwistyBallBuilder();
 var controller = new BasicController({builder, display, R:1.1});
 
 colorBall(builder.shape);
-// builder.shape.material.map = new THREE.TextureLoader().load("land_ocean_ice_cloud_2048.jpg");
+// var texture = new THREE.TextureLoader().load("land_ocean_ice_cloud_2048.jpg");
+// texture.wrapS = THREE.RepeatWrapping;
+// builder.shape.material.map = texture;
 
 var puzzle = builder.make();
 builder.slice(puzzle,

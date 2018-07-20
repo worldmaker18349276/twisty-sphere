@@ -54,12 +54,17 @@ class TwistySphereBuilder
   }
   sliceElement(elem, sliced_elem, cut) {
     sliced_elem.geometry = Geometer.slice(elem.geometry, cut, true);
-    Geometer.reduceVertices(elem.geometry);
-    Geometer.reduceFaces(elem.geometry);
-    Geometer.reduceVertices(sliced_elem.geometry);
-    Geometer.reduceFaces(sliced_elem.geometry);
+
+    // // slice may produce mergable vertices if there are arealess faces
+    // Geometer.reduceVertices(elem.geometry);
+    // Geometer.reduceFaces(elem.geometry);
+    // Geometer.reduceVertices(sliced_elem.geometry);
+    // Geometer.reduceFaces(sliced_elem.geometry);
+    
+    // it may broken `fillHoles` if there are mergable vertices
     Geometer.fillHoles(elem.geometry, cut.clone().negate());
     Geometer.fillHoles(sliced_elem.geometry, cut);
+
     Geometer.land(elem.geometry);
     Geometer.land(sliced_elem.geometry);
   }
@@ -272,11 +277,9 @@ class TwistyBallBuilder extends TwistySphereBuilder
   constructor(config={}) {
     var color = config.color || 0xffffff;
     var edgeColor = config.edgeColor || 0xff0000;
-    var N = config.N || 4;
+    var N = config.N || 3;
 
-  	// var shell_geometry = new THREE.IcosahedronGeometry(1, N);
-  	var shell_geometry = new THREE.OctahedronGeometry(1, N);
-    shell_geometry.faceVertexUvs = [[]];
+  	var shell_geometry = new THREE.IcosahedronGeometry(1, N);
     Geometer.fly(shell_geometry);
     var shell_material = new THREE.MeshLambertMaterial({color:color});
     var shape = new THREE.Mesh(shell_geometry, shell_material);
