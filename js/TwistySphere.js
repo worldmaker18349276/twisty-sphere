@@ -31,11 +31,13 @@ class TwistySphereBuilder
       fuzzyTool: defaultFuzzyTool
     }, config);
 
+    if ( !Array.isArray(shape.material) ) {
+      let n = Math.max(...shape.geometry.faces.map(f => f.materialIndex));
+      shape.material = Array(n+1).fill(shape.material);
+      let side_material = new THREE.MeshLambertMaterial({color:0xffffff});
+      shape.material.push(side_material);
+    }
     Geometer.fly(shape.geometry);
-  	var edge_geometry = new THREE.Geometry();
-    var edge_material = new THREE.LineBasicMaterial({color:0xffffff, linewidth:5});
-    var edge = new THREE.LineLoop(edge_geometry, edge_material);
-    shape.add(edge);
 
   	this.shape = shape;
     this.fuzzyTool = config.fuzzyTool;
@@ -60,38 +62,35 @@ class TwistySphereBuilder
   sliceElement(elem, sliced_elem, cut) {
     sliced_elem.geometry = Geometer.slice(elem.geometry, cut, true);
 
-    // // slice may produce mergable vertices if there are arealess faces
-    // Geometer.reduceVertices(elem.geometry);
-    // Geometer.reduceFaces(elem.geometry);
-    // Geometer.reduceVertices(sliced_elem.geometry);
-    // Geometer.reduceFaces(sliced_elem.geometry);
-    
-    // it may broken `fillHoles` if there are mergable vertices
-    var anticut = cut.clone().negate();
-    Geometer.fillHoles(elem.geometry, anticut,
-      {label: ()=>[cut], materialIndex: elem.material.length-1});
-    Geometer.fillHoles(sliced_elem.geometry, cut,
-      {label: ()=>[anticut], materialIndex: sliced_elem.material.length-1});
+    for ( let [elem_, cut_] of [[elem, cut], [sliced_elem, cut.clone().negate()]] ) {
+      // // slice may produce mergable vertices if there are arealess faces
+      // Geometer.reduceVertices(elem_.geometry);
+      // Geometer.reduceFaces(elem_.geometry);
+      
+      // it may broken `fillHoles` if there are mergable vertices
+      Geometer.fillHoles(elem_.geometry, cut_.clone().negate(),
+        {label: ()=>[cut_], materialIndex: elem_.material.length-1});
+      elem_.userData.cuts = [...new Set(flatmap(elem_.geometry.faces, f => f.label || []))];
 
-    elem.userData.cuts = [...new Set(flatmap(elem.geometry.faces, f => f.label || []))];
-    sliced_elem.userData.cuts = [...new Set(flatmap(sliced_elem.geometry.faces, f => f.label || []))];
+      // build edge
+      elem_.remove(...elem_.children.filter(e => e.name=="edge"));
+      let edge_material = new THREE.LineBasicMaterial({color:0xffffff, linewidth:5});
 
-    // edge
-    for ( let self of [elem, sliced_elem] ) {
-      let boundaries = Geometer.boundariesIn(self.geometry.faces.filter(f => !f.label || !f.label.length));
-      let loops = Geometer.findLoops(boundaries);
-    
-      self.children[self.children.length-1].geometry.vertices = [];
+      let shell = elem_.geometry.faces.filter(f => !f.label || !f.label.length);
+      let loops = Geometer.findLoops(Geometer.boundariesIn(shell));
+
       for ( let loop of loops ) {
-        loop = loop.map(([face, edge]) => self.geometry.vertices[face[edge[0]]]);
-        // loop[-1] = loop[loop.length-1];
-        for ( let i in loop )
-          self.children[self.children.length-1].geometry.vertices.push(loop[i]);
-      }
-    }
+      	let edge_geometry = new THREE.Geometry();
+        loop = loop.map(([f, e]) => elem_.geometry.vertices[f[e[0]]]);
+        edge_geometry.vertices.push(...loop);
 
-    Geometer.land(elem.geometry);
-    Geometer.land(sliced_elem.geometry);
+        let edge = new THREE.LineLoop(edge_geometry, edge_material);
+        edge.name = "edge";
+        elem_.add(edge);
+      }
+
+      Geometer.land(elem_.geometry);
+    }
   }
   slice(puzzle, ...planes) {
     if ( planes.length !== 1 )
@@ -113,7 +112,8 @@ class TwistySphereBuilder
 
       } else {
         // slice elements `elem` by plane `plane_`
-        let new_elem = cloneObject3D(elem);
+        let new_elem = elem.clone();
+        new_elem.material = elem.material.map(m => m.clone());
         puzzle.add(new_elem);
 
         this.sliceElement(elem, new_elem, plane_);
@@ -285,48 +285,6 @@ class TwistySphereBuilder
     this.determineSides(puzzle);
     this.computeAnglesMatches(puzzle);
     return puzzle;
-  }
-}
-
-class TwistyBallBuilder extends TwistySphereBuilder
-{
-  constructor(config={}) {
-    var color = config.color || 0xffffff;
-    var edgeColor = config.edgeColor || 0xff0000;
-    var N = config.N || 3;
-
-  	var shell_geometry = new THREE.IcosahedronGeometry(1, N);
-    Geometer.fly(shell_geometry);
-    var shell_material = new THREE.MeshLambertMaterial({color:color});
-    var shape = new THREE.Mesh(shell_geometry, shell_material);
-    
-  	var edge_geometry = new THREE.Geometry();
-    var edge_material = new THREE.LineBasicMaterial({color:edgeColor, linewidth:3});
-    var edge = new THREE.LineLoop(edge_geometry, edge_material);
-    shape.add(edge);
-
-    super(shape, config);
-  }
-  make() {
-    var puzzle = super.make();
-    puzzle.userData.type = "twistyBall";
-    return puzzle;
-  }
-  sliceElement(elem, sliced_elem, cut) {
-    sliced_elem.geometry = Geometer.slice(elem.geometry, cut, true);
-    for ( let self of [elem, sliced_elem] ) {
-      let loop = Geometer.findLoops(self.geometry.boundaries)[0];
-      if ( loop )
-        self.children[0].geometry.vertices = loop.map(([face, edge]) => self.geometry.vertices[face[edge[0]]]);
-      else 
-        self.children[0].geometry.vertices = [];
-    }
-
-    elem.userData.cuts = [...new Set(flatmap(elem.geometry.faces, f => f.label || []))];
-    sliced_elem.userData.cuts = [...new Set(flatmap(sliced_elem.geometry.faces, f => f.label || []))];
-
-    Geometer.land(elem.geometry);
-    Geometer.land(sliced_elem.geometry);
   }
 }
 
@@ -581,6 +539,15 @@ class Display
     document.body.style.overflow = "hidden";
 
     this.scene = new THREE.Scene();
+    function resize_bg() {
+      var aspect = window.innerWidth / window.innerHeight;
+      var relAspect = aspect / (background.image.width / background.image.height);
+      background.repeat = new THREE.Vector2(5*Math.max(relAspect, 1), 5*Math.max(1/relAspect,1));
+    }
+    var background = new THREE.TextureLoader().load("background.png", resize_bg);
+    background.wrapS = THREE.RepeatWrapping;
+    background.wrapT = THREE.RepeatWrapping;
+    this.scene.background = background;
     // this.scene.add(new THREE.AxesHelper(20));
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.3));
 
@@ -588,9 +555,10 @@ class Display
     this.camera.add(new THREE.PointLight(0xffffff, 0.7));
 
     window.addEventListener("resize", () => {
-      this.camera.aspect = window.innerWidth/window.innerHeight;
+      this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(window.innerWidth, window.innerHeight);
+      resize_bg();
     }, false);
 
     // controls

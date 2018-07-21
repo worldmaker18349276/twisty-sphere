@@ -69,6 +69,13 @@ function filterInPlace(arr, condition) {
   arr.length = j;
   return false;
 }
+function removeFirst(arr, filter) {
+  var i = arr.findIndex(filter);
+  if ( i === -1 )
+    return false;
+  arr.splice(i, 1);
+  return true;
+}
 
 
 // ######## ##     ## ######## ######## ##    ## 
@@ -186,14 +193,6 @@ class Geometer
       if ( !face[edge] || !faces.includes(face[edge]) )
         boundaries.push([face, edge]);
     return boundaries;
-  }
-  // remove `(face,edge)` from list
-  static removeLink(list, face, edge) {
-    var i = list.findIndex(([f,e]) => f===face && e==edge);
-    if ( i === -1 )
-      return false;
-    list.splice(i, 1);
-    return true;
   }
 
   // modify structure of Face3 to faster computing
@@ -524,7 +523,7 @@ class Geometer
       let loop = [];
 
       let [face, edge] = boundaries[0];
-      while ( this.removeLink(boundaries, face, edge) ) {
+      while ( removeFirst(boundaries, ([f,e]) => f===face && e==edge) ) {
         loop.push([face, edge]);
         while ( face[EDGES_NEXT[edge]] !== undefined )
           [face, edge] = [face[EDGES_NEXT[edge]], face.adj[EDGES_NEXT[edge]]];
@@ -679,8 +678,8 @@ class Geometer
       for ( let [[face1, edge1], [face2, edge2]] of comb2(sewable) )
         if ( !face1[edge1] && !face2[edge2] )
           if ( this.areAdjacent(face1, edge1, face2, edge2) ) {
-            this.removeLink(geometry.boundaries, face1, edge1);
-            this.removeLink(geometry.boundaries, face2, edge2);
+            removeFirst(geometry.boundaries, ([f,e]) => f===face1 && e==edge1);
+            removeFirst(geometry.boundaries, ([f,e]) => f===face2 && e==edge2);
             this.connect(face1, edge1, face2, edge2);
           }
     }
@@ -700,7 +699,7 @@ class Geometer
         // trivial face with three trivial edges
         for ( let edge of EDGES ) {
           if ( !face[edge] )
-            this.removeLink(geometry.boundaries, face, edge);
+            removeFirst(geometry.boundaries, ([f,e]) => f===face && e==edge);
         }
   
       } else {
@@ -717,7 +716,7 @@ class Geometer
             geometry.boundaries.push(...this.connect(face_prev, edge_prev));
 
           for ( let edge_ of EDGES ) if ( !face[edge_] )
-            this.removeLink(geometry.boundaries, face, edge_);
+            removeFirst(geometry.boundaries, ([f,e]) => f===face && e==edge_);
 
           break;
         }

@@ -7,14 +7,13 @@
   <script src="js/three.min.js"></script>
 
   <script src="js/Geometer.js"></script>
-  <script src="js/twistySphere.js"></script>
+  <script src="js/TwistySphere.js"></script>
 </head>
 <body>
 <script>
 var material = new THREE.MeshLambertMaterial({color:0xffffff});
-var side_material = new THREE.MeshLambertMaterial({color:0xffffff});
 var geometry = new THREE.BoxGeometry(2,2,2);
-var shape = new THREE.Mesh(geometry, [material, material, material, material, material, material, side_material]);
+var shape = new THREE.Mesh(geometry, material);
 
 material.map = new THREE.TextureLoader().load("crate.gif");
 
