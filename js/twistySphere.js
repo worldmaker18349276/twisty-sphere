@@ -30,6 +30,13 @@ class TwistySphereBuilder
     config = Object.assign({
       fuzzyTool: defaultFuzzyTool
     }, config);
+
+    Geometer.fly(shape.geometry);
+  	var edge_geometry = new THREE.Geometry();
+    var edge_material = new THREE.LineBasicMaterial({color:0xffffff, linewidth:5});
+    var edge = new THREE.LineLoop(edge_geometry, edge_material);
+    shape.add(edge);
+
   	this.shape = shape;
     this.fuzzyTool = config.fuzzyTool;
   }
@@ -68,6 +75,20 @@ class TwistySphereBuilder
 
     elem.userData.cuts = [...new Set(flatmap(elem.geometry.faces, f => f.label || []))];
     sliced_elem.userData.cuts = [...new Set(flatmap(sliced_elem.geometry.faces, f => f.label || []))];
+
+    // edge
+    for ( let self of [elem, sliced_elem] ) {
+      let boundaries = Geometer.boundariesIn(self.geometry.faces.filter(f => !f.label || !f.label.length));
+      let loops = Geometer.findLoops(boundaries);
+    
+      self.children[self.children.length-1].geometry.vertices = [];
+      for ( let loop of loops ) {
+        loop = loop.map(([face, edge]) => self.geometry.vertices[face[edge[0]]]);
+        // loop[-1] = loop[loop.length-1];
+        for ( let i in loop )
+          self.children[self.children.length-1].geometry.vertices.push(loop[i]);
+      }
+    }
 
     Geometer.land(elem.geometry);
     Geometer.land(sliced_elem.geometry);

@@ -234,10 +234,17 @@ class Geometer
     for ( let x in geometry.faces ) {
       let face = geometry.faces[x];
 
-      if ( face.vertexUvs )
-        for ( let l=0; l<nlayer; l++ )
-          if ( face.vertexUvs[l] &&  face.vertexUvs[l].length )
+      if ( face.vertexUvs ) {
+        for ( let l=0; l<nlayer; l++ ) {
+          if ( face.vertexUvs[l] && face.vertexUvs[l].length )
             uvs[l][x] = face.vertexUvs[l];
+          else
+            uvs[l][x] = [new THREE.Vector2(0,0),new THREE.Vector2(0,0),new THREE.Vector2(0,0)];
+        }
+      } else {
+        for ( let l=0; l<nlayer; l++ )
+          uvs[l][x] = [new THREE.Vector2(0,0),new THREE.Vector2(0,0),new THREE.Vector2(0,0)];
+      }
     }
   }
   static preprocess(face, param) {
@@ -288,6 +295,22 @@ class Geometer
     this.copyFaces(geometry.faces, copied.faces);
     copied.boundaries = this.boundariesIn(copied.faces);
     return copied;
+  }
+
+  static reverse(geometry) {
+    const EDGES_REV = {ca:"ca", ab:"bc", bc:"ab"};
+
+    for ( let face of geometry.faces ) {
+      [face.a, face.b, face.c] = [face.c, face.b, face.a];
+      var old_adj = Object.assign({}, face.adj);
+      for ( let edge of EDGES )
+        face.adj[EDGES_REV[edge]] = EDGES_REV[old_adj[edge]];
+    }
+
+    for ( let bd of geometry.boundaries )
+      bd[1] = EDGES_REV[bd[1]];
+
+    return geometry;
   }
 
   // trim trivial vertices
@@ -493,9 +516,9 @@ class Geometer
     if ( sliced )
       return sliced_geometry;
   }
-  static findLoops(boundaries) {
+  static walkBoundaries(geometry) {
     var loops = [];
-    boundaries = boundaries.slice(0);
+    boundaries = geometry.boundaries.slice(0);
 
     while ( boundaries.length > 0 ) {
       let loop = [];
@@ -506,6 +529,26 @@ class Geometer
         while ( face[EDGES_NEXT[edge]] !== undefined )
           [face, edge] = [face[EDGES_NEXT[edge]], face.adj[EDGES_NEXT[edge]]];
         edge = EDGES_NEXT[edge];
+      }
+      loops.push(loop);
+    }
+    return loops;
+  }
+  static findLoops(boundaries) {
+    var loops = [];
+    boundaries = boundaries.slice(0);
+
+    while ( boundaries.length > 0 ) {
+      let loop = [];
+
+      let res = boundaries[0];
+      while ( true ) {
+        let i = boundaries.findIndex(next => next[0][next[1][0]] === res[0][res[1][1]]);
+        if ( i === -1 )
+          break;
+        res = boundaries[i];
+        boundaries.splice(i,1);
+        loop.push(res);
       }
       loops.push(loop);
     }
