@@ -15,7 +15,20 @@ var display = new Display();
 var builder = new TwistyBallBuilder();
 var controller = new BasicController({builder, display, R:1.1});
 
-colorBall(builder.shape);
+// builder.shape.geometry.computeFlatVertexNormals();
+// for ( let face of builder.shape.geometry.faces ) {
+//   let {phi, theta} = new THREE.Spherical().setFromVector3(face.normal);
+//   face.color = new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
+// }
+// builder.shape.material.vertexColors = THREE.FaceColors;
+
+builder.shape.geometry.computeVertexNormals();
+for ( let face of builder.shape.geometry.faces ) for ( let a of [0,1,2] ) {
+  let {phi, theta} = new THREE.Spherical().setFromVector3(face.vertexNormals[a]);
+  face.vertexColors[a] = new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
+}
+builder.shape.material.vertexColors = THREE.VertexColors;
+
 // var texture = new THREE.TextureLoader().load("land_ocean_ice_cloud_2048.jpg");
 // texture.wrapS = THREE.RepeatWrapping;
 // builder.shape.material.map = texture;

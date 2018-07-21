@@ -15,7 +15,10 @@ const NONE = Symbol("NONE");
 
 function cloneObject3D(obj, copied=obj.clone()) {
   copied.geometry = Geometer.copy(obj.geometry);
-  copied.material = obj.material.clone();
+  if ( Array.isArray(copied.material) )
+    copied.material = obj.material.map(m => m.clone());
+  else
+    copied.material = obj.material.clone();
   for ( let [target, elem] of zip(copied.children, obj.children) )
     cloneObject3D(target, elem);
   return copied;
@@ -29,11 +32,6 @@ class TwistySphereBuilder
     }, config);
   	this.shape = shape;
     this.fuzzyTool = config.fuzzyTool;
-  }
-  getBoundingRadius() {
-    if ( !this.shape.geometry.boundingSphere )
-      this.shape.geometry.computeBoundingSphere();
-    return this.shape.geometry.boundingSphere.radius;
   }
 
   make() {
@@ -62,8 +60,14 @@ class TwistySphereBuilder
     // Geometer.reduceFaces(sliced_elem.geometry);
     
     // it may broken `fillHoles` if there are mergable vertices
-    Geometer.fillHoles(elem.geometry, cut.clone().negate());
-    Geometer.fillHoles(sliced_elem.geometry, cut);
+    var anticut = cut.clone().negate();
+    Geometer.fillHoles(elem.geometry, anticut,
+      {label: ()=>[cut], materialIndex: elem.material.length-1});
+    Geometer.fillHoles(sliced_elem.geometry, cut,
+      {label: ()=>[anticut], materialIndex: sliced_elem.material.length-1});
+
+    elem.userData.cuts = [...new Set(flatmap(elem.geometry.faces, f => f.label || []))];
+    sliced_elem.userData.cuts = [...new Set(flatmap(sliced_elem.geometry.faces, f => f.label || []))];
 
     Geometer.land(elem.geometry);
     Geometer.land(sliced_elem.geometry);
@@ -92,8 +96,8 @@ class TwistySphereBuilder
         puzzle.add(new_elem);
 
         this.sliceElement(elem, new_elem, plane_);
-        elem.userData.cuts.push(plane_);
-        new_elem.userData.cuts.push(plane_.clone().negate());
+        // elem.userData.cuts.push(plane_); // hidden cut
+        // new_elem.userData.cuts.push(plane_.clone().negate()); // hidden cut
       }
 
     }
@@ -263,15 +267,6 @@ class TwistySphereBuilder
   }
 }
 
-function colorBall(shape) {
-  shape.geometry.computeFlatVertexNormals();
-  for ( let face of shape.geometry.faces ) {
-    let {phi, theta} = new THREE.Spherical().setFromVector3(face.normal);
-    face.color = new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
-  }
-  shape.material.vertexColors = THREE.FaceColors;
-}
-
 class TwistyBallBuilder extends TwistySphereBuilder
 {
   constructor(config={}) {
@@ -305,6 +300,10 @@ class TwistyBallBuilder extends TwistySphereBuilder
       else 
         self.children[0].geometry.vertices = [];
     }
+
+    elem.userData.cuts = [...new Set(flatmap(elem.geometry.faces, f => f.label || []))];
+    sliced_elem.userData.cuts = [...new Set(flatmap(sliced_elem.geometry.faces, f => f.label || []))];
+
     Geometer.land(elem.geometry);
     Geometer.land(sliced_elem.geometry);
   }
@@ -684,17 +683,22 @@ class Display
 
   highlight(...targets) {
     for ( let target of targets ) {
-      if ( target.userData.oldColor === undefined ) {
-        target.userData.oldColor = target.material.color.getHex();
-        target.material.color.offsetHSL(0,0,-0.5);
+      if ( target.userData.oldColors === undefined ) {
+        target.userData.oldColors = [];
+        for ( let i in target.material ) {
+          target.userData.oldColors[i] = target.material[i].color.getHex();
+          target.material[i].color.offsetHSL(0,0,-0.5);
+        }
       }
     }
   }
   unhighlight(...targets) {
     for ( let target of targets ) {
-      if ( target.userData.oldColor !== undefined ) {
-        target.material.color.setHex(target.userData.oldColor);
-        delete target.userData.oldColor;
+      if ( target.userData.oldColors !== undefined ) {
+        for ( let i in target.material ) {
+          target.material[i].color.setHex(target.userData.oldColors[i]);
+        }
+        delete target.userData.oldColors;
       }
     }
   }

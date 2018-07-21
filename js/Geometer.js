@@ -183,7 +183,7 @@ class Geometer
   static boundariesIn(faces) {
     var boundaries = [];
     for ( let face of faces ) for ( let edge of EDGES )
-      if ( !face[edge] )
+      if ( !face[edge] || !faces.includes(face[edge]) )
         boundaries.push([face, edge]);
     return boundaries;
   }
@@ -203,6 +203,8 @@ class Geometer
 
     for ( let x=0,len=geometry.faces.length; x<len; x++ ) {
       let face = geometry.faces[x];
+
+      face.label = [];
 
       face.vertexUvs = [];
       for ( let l=0; l<nlayer; l++ )
@@ -238,12 +240,20 @@ class Geometer
             uvs[l][x] = face.vertexUvs[l];
     }
   }
+  static preprocess(face, param) {
+    for ( let key in param ) {
+      if ( typeof param[key] == "function" )
+        face[key] = param[key](face);
+      else
+        face[key] = param[key];
+    }
+  }
 
   // copy flying face
   // shallow copy flying data `face.label`, `face.normals`, `face.colors`, `face.uvs`,
   //   but no link `face.ca`, `face.ab`, `face.bc` and `face.adj`
   static copyFace(face, copied=new THREE.Face3().copy(face)) {
-    copied.label = face.label;
+    copied.label = (face.label || []).slice(0);
 
     copied.vertexUvs = [];
     if ( face.vertexUvs )
@@ -501,7 +511,7 @@ class Geometer
     }
     return loops;
   }
-  static fillHoles(geometry, plane) {
+  static fillHoles(geometry, plane, meta={}) {
     // offset and rotation to plane
     var offset = plane.normal.clone().multiplyScalar(-plane.constant);
     var {phi, theta} = new THREE.Spherical().setFromVector3(plane.normal);
@@ -542,6 +552,7 @@ class Geometer
         }
     
         let face_ca = new THREE.Face3(i, j, k, normal);
+        this.preprocess(face_ca, meta);
         let bd_ca = "ca";
         this.connect(face_ca, "ab", face_ba, bd_ba);
         this.connect(face_ca, "bc", face_cb, bd_cb);
