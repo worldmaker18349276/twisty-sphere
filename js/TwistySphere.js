@@ -26,71 +26,80 @@ function cloneObject3D(obj, copied=obj.clone()) {
 
 class TwistySphereBuilder
 {
-  constructor(shape, config={}) {
+  constructor(config={}) {
     config = Object.assign({
       fuzzyTool: defaultFuzzyTool
     }, config);
 
-    if ( !Array.isArray(shape.material) ) {
-      let n = Math.max(...shape.geometry.faces.map(f => f.materialIndex));
-      shape.material = Array(n+1).fill(shape.material);
-      let side_material = new THREE.MeshLambertMaterial({color:0xffffff});
-      shape.material.push(side_material);
-    }
-    Geometer.fly(shape.geometry);
+    var shell_geometry = new THREE.IcosahedronGeometry(1, 3);
+    var shell_material = new THREE.MeshLambertMaterial({color:0xffffff});
+    var shell = new THREE.Mesh(shell_geometry, [shell_material]);
+    shell.name = "shell";
 
-  	this.shape = shape;
+    shell_geometry.faceVertexUvs = [[]];
+    shell_geometry.computeVertexNormals();
+    for ( let face of shell_geometry.faces ) for ( let a of [0,1,2] ) {
+      let {phi, theta} = new THREE.Spherical().setFromVector3(face.vertexNormals[a]);
+      face.vertexColors[a] = new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
+    }
+    shell_material.vertexColors = THREE.VertexColors;
+
+    Geometer.fly(shell.geometry);
+
+  	this.shell = shell;
     this.fuzzyTool = config.fuzzyTool;
   }
 
   make() {
-    var elem = cloneObject3D(this.shape);
+    var elem = cloneObject3D(this.shell);
     elem.userData = {
     	type: "element",
-      cuts: [],
+      arcs: [],
       hoverable: true
     };
     
     var puzzle = new THREE.Group();
     puzzle.add(elem);
     puzzle.userData = {
-      type: "twistySphere",
+      type: "TwistySphere",
       builder: `${this.constructor.name}`
     };
     return puzzle;
   }
-  sliceElement(elem, sliced_elem, cut) {
-    sliced_elem.geometry = Geometer.slice(elem.geometry, cut, true);
+  sliceArcs(arcs, cut) {
+    var center1 = cut.normal;
+    var quad1 = SphericalGeometer.quadrant(cut);
+    var arcs1 = SphericalGeometer.intersectArcs(arcs, center1, quad1);
 
-    for ( let [elem_, cut_] of [[elem, cut], [sliced_elem, cut.clone().negate()]] ) {
-      // // slice may produce mergable vertices if there are arealess faces
-      // Geometer.reduceVertices(elem_.geometry);
-      // Geometer.reduceFaces(elem_.geometry);
-      
-      // it may broken `fillHoles` if there are mergable vertices
-      Geometer.fillHoles(elem_.geometry, cut_.clone().negate(),
-        {label: ()=>[cut_], materialIndex: elem_.material.length-1});
-      elem_.userData.cuts = [...new Set(flatmap(elem_.geometry.faces, f => f.label || []))];
+    var center2 = center1.clone().negate();
+    var quad2 = 2-quad1;
+    var arcs2 = SphericalGeometer.intersectArcs(arcs, center2, quad2);
 
-      // build edge
-      elem_.remove(...elem_.children.filter(e => e.name=="edge"));
-      let edge_material = new THREE.LineBasicMaterial({color:0xffffff, linewidth:5});
+    return [arcs1, arcs2];
+  }
+  makeEdge(elem) {
+    elem.remove(...elem.children.filter(e => e.name=="edge"));
+    let edge_material = new THREE.LineBasicMaterial({color:0xffffff, linewidth:3});
 
-      let shell = elem_.geometry.faces.filter(f => !f.label || !f.label.length);
-      let loops = Geometer.findLoops(Geometer.boundariesIn(shell));
+    for ( let arc of elem.userData.arcs ) {
+      if ( arc.type == "empty" )
+        continue;
 
-      for ( let loop of loops ) {
-      	let edge_geometry = new THREE.Geometry();
-        loop = loop.map(([f, e]) => elem_.geometry.vertices[f[e[0]]]);
-        edge_geometry.vertices.push(...loop);
-
-        let edge = new THREE.LineLoop(edge_geometry, edge_material);
-        edge.name = "edge";
-        elem_.add(edge);
-      }
-
-      Geometer.land(elem_.geometry);
+    	let edge_geometry = new THREE.Geometry();
+      let edge;
+      if ( arc.type == "circle" )
+        edge = new THREE.LineLoop(edge_geometry, edge_material);
+      else if ( arc.type == "arc" )
+        edge = new THREE.Line(edge_geometry, edge_material);
+      edge_geometry.vertices = arc.vertices.slice(0);
+      edge.name = "edge";
+      elem.add(edge);
     }
+  }
+  sliceShell(elem, sliced_elem, cut) {
+    sliced_elem.geometry = Geometer.slice(elem.geometry, cut, true);
+    Geometer.land(elem.geometry);
+    Geometer.land(sliced_elem.geometry);
   }
   slice(puzzle, ...planes) {
     if ( planes.length !== 1 )
@@ -103,12 +112,14 @@ class TwistySphereBuilder
       plane_.applyMatrix4(new THREE.Matrix4().getInverse(elem.matrixWorld));
 
       // check sides of element respect to cut `plane_`
-      let dis = elem.geometry.vertices.map(v => plane_.distanceToPoint(v));
-      if ( dis.every(d => this.fuzzyTool.greater_than(d, 0)) ) {
-        // elem.userData.cuts.push(plane_); // hidden cut
+      let [arcs1, arcs2] = this.sliceArcs(elem.userData.arcs, plane_);
+      if ( arcs1 === null ) {
+        elem.userData.arcs = arcs2;
+        this.makeEdge(elem);
 
-      } else if ( dis.every(d => this.fuzzyTool.greater_than(-d, 0)) ) {
-        // elem.userData.cuts.push(plane_.negate()); // hidden cut
+      } else if ( arcs2 === null ) {
+        elem.userData.arcs = arcs1;
+        this.makeEdge(elem);
 
       } else {
         // slice elements `elem` by plane `plane_`
@@ -116,9 +127,11 @@ class TwistySphereBuilder
         new_elem.material = elem.material.map(m => m.clone());
         puzzle.add(new_elem);
 
-        this.sliceElement(elem, new_elem, plane_);
-        // elem.userData.cuts.push(plane_); // hidden cut
-        // new_elem.userData.cuts.push(plane_.clone().negate()); // hidden cut
+        elem.userData.arcs = arcs1;
+        new_elem.userData.arcs = arcs2;
+        this.makeEdge(elem);
+        this.makeEdge(new_elem);
+        this.sliceShell(elem, new_elem, plane_);
       }
 
     }
@@ -139,23 +152,33 @@ class TwistySphereBuilder
   	var cuts = puzzle.userData.cuts = [];
     var sides = puzzle.userData.sides = [];
 
-    for ( let i of ind_elem ) for ( let cut of puzzle.children[i].userData.cuts ) {
-      // localToWorld
-    	cut = new THREE.Plane().copy(cut)
-        .applyMatrix4(puzzle.children[i].matrixWorld);
+    for ( let i of ind_elem ) for ( let arc of puzzle.children[i].userData.arcs ) {
+      if ( arc.type == "empty" )
+        continue;
 
-      let side = FRONT;
-    	if ( cut.constant > 0 ) {
-        cut = cut.negate();
-        side = BACK;
-      }
-      
+      // localToWorld
+    	let cut = SphericalGeometer.plane(arc.center, arc.quad)
+                  .applyMatrix4(puzzle.children[i].matrixWorld);
+
     	let x = cuts.findIndex(cut_ => this.fuzzyTool.equals(cut_, cut));
-      if ( x === -1 ) {
+      let anticut = cut.clone().negate();
+    	let x_ = cuts.findIndex(cut_ => this.fuzzyTool.equals(cut_, anticut));
+
+      if ( x !== -1 ) {
+        sides[x][i] = FRONT;
+      } else if ( x_ !== -1 ) {
+        sides[x_][i] = BACK;
+      } else if ( x === -1 && x_ === -1 ) {
+        let side = FRONT;
+      	if ( cut.constant > 0 ) {
+          cut = anticut;
+          side = BACK;
+        }
+
         cuts.push(cut);
         x = sides.push(new Array(puzzle.children.length))-1;
+        sides[x][i] = side;
       }
-      sides[x][i] = side;
     }
     
     return puzzle;
@@ -460,8 +483,9 @@ class BasicController
     return this.selectElement(puzzle)
       .then(([e, i]) => {
         this.display.remove(...cuts);
-        cuts = e.userData.cuts
-          .map(c => new THREE.Plane().copy(c).applyMatrix4(e.matrixWorld))
+        cuts = e.userData.arcs.filter(arc => arc.type!=="empty")
+          .map(arc => SphericalGeometer.plane(arc.center, arc.quad))
+          .map(c => c.applyMatrix4(e.matrixWorld))
           .map((c, i) => this.makeCutHelper(c));
         cuts.forEach(c => { c.material.transparent = true; c.material.opacity = 0.3; c.material.side=THREE.DoubleSide; });
         this.display.add(...cuts);

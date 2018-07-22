@@ -194,10 +194,10 @@ class Geometer
     }
   }
   // find all boundaries (`face[edge] === undefined`) in `faces`
-  static boundariesIn(faces) {
+  static boundariesIn(geometry) {
     var boundaries = [];
-    for ( let face of faces ) for ( let edge of EDGES )
-      if ( !face[edge] || !faces.includes(face[edge]) )
+    for ( let face of geometry.faces ) for ( let edge of EDGES )
+      if ( !face[edge] )
         boundaries.push([face, edge]);
     return boundaries;
   }
@@ -229,7 +229,7 @@ class Geometer
             this.connect(face1, edge1, face2, edge2);
 
     // find boundaries of faces
-    geometry.boundaries = this.boundariesIn(geometry.faces);
+    geometry.boundaries = this.boundariesIn(geometry);
   }
   static land(geometry) {
     var uvs = geometry.faceVertexUvs = [[]];
@@ -299,7 +299,7 @@ class Geometer
   static copy(geometry, copied=geometry.clone()) {
     copied.nlayer = geometry.nlayer;
     this.copyFaces(geometry.faces, copied.faces);
-    copied.boundaries = this.boundariesIn(copied.faces);
+    copied.boundaries = this.boundariesIn(copied);
     return copied;
   }
 
@@ -441,26 +441,22 @@ class Geometer
   static slice(geometry, plane, sliced=false) {
     plane = new THREE.Plane().copy(plane);
 
-    var vertices = geometry.vertices;
-    var faces = geometry.faces;
-    var boundaries = geometry.boundaries;
-
-    var dis = vertices.map(v => plane.distanceToPoint(v));
+    var dis = geometry.vertices.map(v => plane.distanceToPoint(v));
     var sgn = dis.map(d => defaultFuzzyTool.sign(d));
 
     // split edge
     // notice: length of `geometry.faces` increase in method `interpolateAtEdge`
-    for ( let face of faces ) for ( let edge of EDGES ) {
+    for ( let face of geometry.faces ) for ( let edge of EDGES ) {
       let i = face[edge[0]];
       let j = face[edge[1]];
 
       if ( sgn[i] * sgn[j] < 0 ) {
         // interpolation
         let t = dis[i]/(dis[i]-dis[j]);
-        let vi = vertices[i];
-        let vj = vertices[j];
+        let vi = geometry.vertices[i];
+        let vj = geometry.vertices[j];
         let vk = vi.clone().lerp(vj, t);
-        let k = vertices.push(vk)-1;
+        let k = geometry.vertices.push(vk)-1;
         dis.push(0);
         sgn.push(0);
 
@@ -473,7 +469,7 @@ class Geometer
     const FRONT = 1;
     const BACK = 2;
     
-    for ( let face of faces ) {
+    for ( let face of geometry.faces ) {
       if ( VERTICES.some(a => sgn[face[a]] !== 0) ) {
         if ( VERTICES.every(a => sgn[face[a]] >= 0) )
           face[SIDE] = FRONT;
@@ -491,38 +487,40 @@ class Geometer
     }
     
     // unlink edge between two sides
-    for ( let face of faces ) if ( face[SIDE] === FRONT ) for ( let edge of EDGES ) {
+    for ( let face of geometry.faces ) if ( face[SIDE] === FRONT ) for ( let edge of EDGES ) {
       if ( face[edge] && face[SIDE] !== face[edge][SIDE] ) {
         this.connect(face[edge], face.adj[edge]);
         this.connect(face, edge);
       }
     }
+
+    var vertices = geometry.vertices.slice(0);
+    var front_faces = geometry.faces.filter(face => face[SIDE] === FRONT);
+    var back_faces  = geometry.faces.filter(face => face[SIDE] === BACK );
+
+    for ( let face of geometry.faces )
+      delete face[SIDE];
     
     // split geometry into `geometry` and `sliced_geometry`
-    geometry.faces = [];
-    geometry.boundaries = [];
-    var sliced_geometry = this.copy(geometry);
-
-    geometry.faces = faces.filter(face => face[SIDE] === FRONT);
-    geometry.boundaries = this.boundariesIn(geometry.faces);
+    geometry.vertices = vertices;
+    geometry.faces = front_faces;
+    geometry.boundaries = this.boundariesIn(geometry);
     this.trimVertices(geometry);
 
     if ( sliced ) {
-      sliced_geometry.faces = [];
-      sliced_geometry.boundaries = [];
-      
-      sliced_geometry.faces = faces.filter(face => face[SIDE] === BACK);
-      sliced_geometry.boundaries = this.boundariesIn(sliced_geometry.faces);
-      this.trimVertices(sliced_geometry);
-    }
-    
-    for ( let face of faces )
-      delete face[SIDE];
+      let sliced_geometry = new THREE.Geometry();
+      sliced_geometry.name = geometry.name;
+      sliced_geometry.nlayer = geometry.nlayer;
 
-    if ( sliced )
+      sliced_geometry.vertices = vertices;
+      sliced_geometry.faces = back_faces;
+      sliced_geometry.boundaries = this.boundariesIn(sliced_geometry);
+      this.trimVertices(sliced_geometry);
+
       return sliced_geometry;
+    }
   }
-  static walkBoundaries(geometry) {
+  static walkAlongBoundaries(geometry) {
     var loops = [];
     boundaries = geometry.boundaries.slice(0);
 
@@ -632,7 +630,7 @@ class Geometer
     var merged_faces = geometry.faces.slice(origin_len);
     var merged_boundary = this.copyFaces(origin_faces, merged_faces);
   
-    geometry.boundaries = this.boundariesIn(geometry.faces);
+    geometry.boundaries = this.boundariesIn(geometry);
   
     // this.reduceVertices(geometry);
     // this.reduceFaces(geometry);
@@ -865,62 +863,74 @@ class SphericalGeometer
     return new THREE.Plane(center, constant);
   }
 
-  static arc(center, quad, v0, v1=v0, dA=0.02) {
-    center = new THREE.Vector3().copy(center).normalize();
-    if ( quad >= 2 || quad <= 0 )
+  // make arc with arguments `arc={type, center, quad, v0, v1, vertices}`
+  // - empty:  `{type:"empty",   center, quad}`
+  // - arc:    `{type:"arc",    center, quad, v0, v1}` with `(quad < 2 && quad > 0)`
+  // - circle: `{type:"circle", center, quad, v0}`
+  static makeVerticesOfArc(arc, dA=0.02) {
+    if ( arc.type == "empty" )
+      return arc;
+
+    arc.center = new THREE.Vector3().copy(arc.center).normalize();
+    if ( arc.quad >= 2 || arc.quad <= 0 )
       throw "bad quadrant value";
 
-    var arc = {
-      center: center,
-      quad: quad,
-      vertices: []
-    };
-
-    if ( v0 === undefined ) {
-      let ax = new THREE.Vector3(0,1,0).cross(center);
+    if ( arc.v0 === undefined ) {
+      let ax = new THREE.Vector3(0,1,0).cross(arc.center);
       if ( ax.length() < 1e-3 )
-        ax = new THREE.Vector3(1,0,0).cross(center);
+        ax = new THREE.Vector3(1,0,0).cross(arc.center);
       ax.normalize();
-      v0 = new THREE.Vector3().copy(center).applyAxisAngle(ax, quad*Math.PI/2);
-      v1 = v0;
+      arc.v0 = new THREE.Vector3().copy(arc.center).applyAxisAngle(ax, arc.quad*Math.PI/2);
+    }
+    if ( arc.v1 === undefined )
+      arc.v1 = arc.v0;
+
+    if ( arc.type === undefined ) {
+      if ( arc.v0 === arc.v1 )
+        arc.type = "circle";
+      else
+        arc.type = "arc";
     }
 
-    if ( v0 === v1 ) {
-      arc.type = "circle";
+    arc.vertices = [];
 
-      let da = dA*Math.sin(quad*Math.PI/2);
+    if ( arc.type == "circle" ) {
+      let da = dA*Math.sin(arc.quad*Math.PI/2);
       let angle = 2*Math.PI;
       for ( let a=0; a<angle; a+=da )
-        arc.vertices.push(new THREE.Vector3().copy(v0).applyAxisAngle(center, a));
+        arc.vertices.push(new THREE.Vector3().copy(arc.v0).applyAxisAngle(arc.center, a));
 
-    } else {
-      arc.type = "arc";
-
-      let da = dA*Math.sin(quad*Math.PI/2);
-      let angle = this.angleTo(center, v0, v1);
+    } else if ( arc.type == "arc" ) {
+      let da = dA*Math.sin(arc.quad*Math.PI/2);
+      let angle = this.angleTo(arc.center, arc.v0, arc.v1);
       for ( let a=0; a<angle; a+=da )
-        arc.vertices.push(new THREE.Vector3().copy(v0).applyAxisAngle(normal, a));
-      arc.vertices.push(v1);
+        arc.vertices.push(new THREE.Vector3().copy(arc.v0).applyAxisAngle(arc.center, a));
+      arc.vertices.push(arc.v1);
     }
 
     return arc;
   }
+  // return list of sliced arc segments, or [<empty arc>] if nothing leave
   static sliceArc(arc, plane) {
+    if ( arc.type == "empty" )
+      return [arc];
+    if ( !arc.vertices )
+      this.makeVerticesOfArc(arc);
     var vs = arc.vertices
       .map(v => ({v, dis:plane.distanceToPoint(v)}))
       .map(({v, dis}) => ({v, dis, sgn:defaultFuzzyTool.sign(dis)}));
 
     function interpolate(vi, vj) {
       var t = vi.dis/(vi.dis - vj.dis);
-      var vk_v = vi.v.clone().lerp(vj.v, t);
+      var vk_v = new THREE.Vector3().copy(vi.v).lerp(vj.v, t);
       return {v:vk_v, dis:0, sgn:0};
     }
 
-    // special cases: all or none
+    // special cases: all or nothing
     if ( vs.every(({sgn}) => sgn>=0) )
       return [arc];
     else if ( vs.every(({sgn}) => sgn<=0) )
-      return [];
+      return [{center:arc.center, quad:arc.quad, type:"empty"}];
 
     // cut circle as arc
     if ( arc.type == "circle" ) {
@@ -934,17 +944,17 @@ class SphericalGeometer
     // interpolate
     for ( let i=0; i<vs.length; i++ )
       if ( (vs[i-1] || vs[0]).sgn * vs[i].sgn < 0 )
-        vs.splice(i, 0, interpolate(vs[i], vs[i+1]));
+        vs.splice(i, 0, interpolate(vs[i-1], vs[i]));
 
     // slice arc as multiple segments
     var start_ind = [];
     var end_ind = [];
 
-    if ( vs[0].sgn === 1 )
+    if ( vs[0].sgn !== -1 )
       start_ind.push(0);
     for ( let i=0; i<vs.length; i++ ) {
       let sgn = vs[i].sgn;
-      let prev_sgn = (vs[i-1] || {sgn:-1}).sgn;
+      let prev_sgn = (vs[i-1] || vs[0]).sgn;
 
       if ( prev_sgn === -1 && sgn === 0 )
         start_ind.push(i);
@@ -955,49 +965,81 @@ class SphericalGeometer
       end_ind.push(vs.length);
 
     var sliced_vs = [];
-    for ( let [i, j] of zip(start_ind, end_ind) )
-      sliced_vs.push(vs.slice(i,j).map(({v}) => v));
+    for ( let [i, j] of zip(start_ind, end_ind) ) {
+      let subvs = vs.slice(i,j);
+      if ( subvs.every(({sgn}) => sgn!==1) )
+        continue;
+      if ( subvs.length < 5 ) {
+        console.warn("bad slice of arc");
+        continue;
+      }
+      sliced_vs.push(subvs.map(({v}) => v));
+    }
 
-    return sliced_vs.map(vs => ({type:"arc", center:arc.center, quad:arc.quad, vertices:vs}));
+    if ( sliced_vs.length === 0 )
+      return [{center:arc.center, quad:arc.quad, type:"empty"}];
+    else
+      return sliced_vs.map(vs => ({
+        type: "arc",
+        center: arc.center,
+        quad: arc.quad,
+        v0: vs[0],
+        v1: vs[vs.length-1],
+        vertices: vs
+      }));
   }
-  static sliceShell(shell, center, quad) {
-    var plane = this.plane(center, quad);
-    var planes = defaultFuzzyTool.collect(map(shell, arc => this.plane(arc.center, arc.quad)));
+  // `arcs` represent shell of sphere produced by intersection of planes,
+  //   element of which is boundaries of shell (includes empty arc)
+  // `[]` represent full shell of sphere; `null` represent empty shell
+  static intersectArcs(arcs, center, quad) {
+    center = new THREE.Vector3().copy(center).normalize();
+    if ( quad >= 2 || quad <= 0 )
+      throw "bad quadrant value";
 
-    if ( planes.find(p => defaultFuzzyTool.equals(p, plane)) )
-      return shell;
-    else if ( planes.find(p => defaultFuzzyTool.equals(p, plane.clone().negate())) )
+    // special cases: all or nothing
+    if ( arcs.find(arc => defaultFuzzyTool.equals(arc.quad, quad)
+                       && defaultFuzzyTool.equals(arc.center, center)) )
+      return arcs;
+
+    var anticenter = new THREE.Vector3().copy(center).negate();
+    var antiquad = 2-quad;
+    if ( arcs.find(arc => defaultFuzzyTool.equals(arc.quad, antiquad)
+                       && defaultFuzzyTool.equals(arc.center, anticenter)) )
       return null;
 
-    shell = [...flatmap(shell, arc => this.sliceArc(arc, plane))];
-    var new_arcs = [this.arc(center, quad)];
+    // slice arcs
+    var res = [];
 
-    for ( let p of planes )
-      new_arcs = [...flatmap(new_arcs, arc => this.sliceArc(arc, p))];
-    shell.push(...new_arcs);
+    var new_plane = this.plane(center, quad);
+    res.push(...flatmap(arcs, arc => this.sliceArc(arc, new_plane)));
 
-    if ( shell.length === 0 )
+    var planes = defaultFuzzyTool.collect(map(arcs, arc => this.plane(arc.center, arc.quad)));
+    var new_arcs = [this.makeVerticesOfArc({center, quad})];
+    for ( let plane of planes )
+      new_arcs = [...flatmap(new_arcs, arc => this.sliceArc(arc, plane))];
+    res.push(...new_arcs);
+
+    if ( res.every(arc => arc.type=="empty") )
       return null;
     else
-      return shell;
+      return res;
   }
 
-  static makeLines(shell) {
-    if ( shell === null )
-      return null;
+  static makeLines(arcs, geometry=new THREE.Geometry()) {
+    if ( arcs === null )
+      return geometry;
 
-    var res = [];
-    for ( let arc of shell ) {
-      let geo = new THREE.Geometry();
-      geo.vertices = arc.vertices;
+    for ( let arc of arcs ) {
+      let sub = new THREE.Geometry();
+      sub.vertices = arc.vertices;
       let mat = new THREE.LineBasicMaterial({color:0xff0000});
 
       if ( arc.type == "cricle" )
-        res.push(new THREE.LineLoop(geo, mat));
-      else
-        res.push(new THREE.Line(geo, mat));
+        geometry.add(new THREE.LineLoop(sub, mat));
+      else if ( arc.type == "arc" )
+        geometry.add(new THREE.Line(sub, mat));
     }
 
-    return res;
+    return geometry;
   }
 }

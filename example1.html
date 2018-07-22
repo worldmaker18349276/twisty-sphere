@@ -11,33 +11,8 @@
 </head>
 <body>
 <script>
-var geometry = new THREE.IcosahedronGeometry(1, 3);
-var material = new THREE.MeshLambertMaterial({color:0xffffff});
-
-// geometry.faceVertexUvs = [[]];
-// geometry.computeFlatVertexNormals();
-// for ( let face of geometry.faces ) {
-//   let {phi, theta} = new THREE.Spherical().setFromVector3(face.normal);
-//   face.color = new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
-// }
-// material.vertexColors = THREE.FaceColors;
-
-geometry.faceVertexUvs = [[]];
-geometry.computeVertexNormals();
-for ( let face of geometry.faces ) for ( let a of [0,1,2] ) {
-  let {phi, theta} = new THREE.Spherical().setFromVector3(face.vertexNormals[a]);
-  face.vertexColors[a] = new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
-}
-material.vertexColors = THREE.VertexColors;
-
-// var texture = new THREE.TextureLoader().load("land_ocean_ice_cloud_2048.jpg");
-// texture.wrapS = THREE.RepeatWrapping;
-// material.map = texture;
-
-var shape = new THREE.Mesh(geometry, material);
-
 var display = new Display();
-var builder = new TwistySphereBuilder(shape);
+var builder = new TwistySphereBuilder();
 var controller = new BasicController({builder, display, R:1.1});
 
 var puzzle = builder.make();
