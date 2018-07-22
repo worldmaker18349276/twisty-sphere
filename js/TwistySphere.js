@@ -539,15 +539,6 @@ class Display
     document.body.style.overflow = "hidden";
 
     this.scene = new THREE.Scene();
-    function resize_bg() {
-      var aspect = window.innerWidth / window.innerHeight;
-      var relAspect = aspect / (background.image.width / background.image.height);
-      background.repeat = new THREE.Vector2(5*Math.max(relAspect, 1), 5*Math.max(1/relAspect,1));
-    }
-    var background = new THREE.TextureLoader().load("background.png", resize_bg);
-    background.wrapS = THREE.RepeatWrapping;
-    background.wrapT = THREE.RepeatWrapping;
-    this.scene.background = background;
     // this.scene.add(new THREE.AxesHelper(20));
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.3));
 
@@ -558,7 +549,6 @@ class Display
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(window.innerWidth, window.innerHeight);
-      resize_bg();
     }, false);
 
     // controls
@@ -594,6 +584,21 @@ class Display
 
       }
     }, false);
+
+    // make background
+    var background_geometry = new THREE.IcosahedronGeometry(10, 0);
+    var background_uv = [new THREE.Vector2(0,0), new THREE.Vector2(0,1), new THREE.Vector2(Math.sqrt(3)/2,0)];
+    for ( let i in background_geometry.faceVertexUvs[0] )
+      background_geometry.faceVertexUvs[0][i] = background_uv.slice(0);
+    var background_material = new THREE.MeshBasicMaterial({color:0xffffff});
+    background_material.side = THREE.DoubleSide;
+    var background_texture = new THREE.TextureLoader().load("background.png"); // broken noise, made by http://bg.siteorigin.com/
+    background_texture.wrapS = THREE.RepeatWrapping;
+    background_texture.wrapT = THREE.RepeatWrapping;
+    background_texture.repeat = new THREE.Vector2(2.5, 2.5);
+    background_material.map = background_texture;
+    var background_shape = new THREE.Mesh(background_geometry, background_material);
+    this.scene.add(background_shape);
 
     // event system on Object3D, implemented by raycaster
     this.raycaster = new THREE.Raycaster();
