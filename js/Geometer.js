@@ -135,6 +135,13 @@ class FuzzyTool
   sign(value) {
     return (Math.abs(value) < this.tolerance) ? 0 : Math.sign(value);
   }
+  collect(it) {
+    var res = [];
+    for ( let value of it )
+      if ( !res.find(v => this.equals(v, value)) )
+        res.push(value);
+    return res;
+  }
 }
 var defaultFuzzyTool = new FuzzyTool();
 
@@ -819,5 +826,178 @@ class Geometer
     var head = 0.05<0.4*len ? 0.05 : 0.4*len;
     var arrow = new THREE.ArrowHelper(dir.normalize(), v1, len, 0xff0000, head);
     return arrow;
+  }
+}
+
+
+//  ######  ########  ##     ## ######## ########  ####  ######     ###    ##       
+// ##    ## ##     ## ##     ## ##       ##     ##  ##  ##    ##   ## ##   ##       
+// ##       ##     ## ##     ## ##       ##     ##  ##  ##        ##   ##  ##       
+//  ######  ########  ######### ######   ########   ##  ##       ##     ## ##       
+//       ## ##        ##     ## ##       ##   ##    ##  ##       ######### ##       
+// ##    ## ##        ##     ## ##       ##    ##   ##  ##    ## ##     ## ##       
+//  ######  ##        ##     ## ######## ##     ## ####  ######  ##     ## ######## 
+
+
+class SphericalGeometer
+{
+  static align(vs, normal) {
+    var {phi, theta} = new THREE.Spherical().setFromVector3(normal);
+    var rot = new THREE.Quaternion().setFromAxisAngle({x:-Math.cos(theta), y:0, z:Math.sin(theta)}, phi);
+    return vs.map(v => v.clone().applyQuaternion(rot))
+             .map(v => new THREE.Spherical().setFromVector3(v));
+  }
+  static angleTo(normal, v0, v1) {
+    [v0,v1] = this.align([v0,v1], normal);
+    const TAU = 2*Math.PI;
+    return ((v1.theta-v0.theta) % TAU + TAU) % TAU;
+  }
+
+  static quadrant(plane, R=1) {
+    return 2 - Math.acos(plane.constant/R)*2/Math.PI;
+  }
+  static qcolor(quad) {
+    return new THREE.Color(`hsl(${Math.floor(Math.abs(quad-1)*300)}, 100%, 50%)`);
+  }
+  static plane(center, quad, R=1) {
+    center = new THREE.Vector3().copy(center).normalize();
+    var constant = Math.cos((2-quad)*Math.PI/2)*R;
+    return new THREE.Plane(center, constant);
+  }
+
+  static arc(center, quad, v0, v1=v0, dA=0.02) {
+    center = new THREE.Vector3().copy(center).normalize();
+    if ( quad >= 2 || quad <= 0 )
+      throw "bad quadrant value";
+
+    var arc = {
+      center: center,
+      quad: quad,
+      vertices: []
+    };
+
+    if ( v0 === undefined ) {
+      let ax = new THREE.Vector3(0,1,0).cross(center);
+      if ( ax.length() < 1e-3 )
+        ax = new THREE.Vector3(1,0,0).cross(center);
+      ax.normalize();
+      v0 = new THREE.Vector3().copy(center).applyAxisAngle(ax, quad*Math.PI/2);
+      v1 = v0;
+    }
+
+    if ( v0 === v1 ) {
+      arc.type = "circle";
+
+      let da = dA*Math.sin(quad*Math.PI/2);
+      let angle = 2*Math.PI;
+      for ( let a=0; a<angle; a+=da )
+        arc.vertices.push(new THREE.Vector3().copy(v0).applyAxisAngle(center, a));
+
+    } else {
+      arc.type = "arc";
+
+      let da = dA*Math.sin(quad*Math.PI/2);
+      let angle = this.angleTo(center, v0, v1);
+      for ( let a=0; a<angle; a+=da )
+        arc.vertices.push(new THREE.Vector3().copy(v0).applyAxisAngle(normal, a));
+      arc.vertices.push(v1);
+    }
+
+    return arc;
+  }
+  static sliceArc(arc, plane) {
+    var vs = arc.vertices
+      .map(v => ({v, dis:plane.distanceToPoint(v)}))
+      .map(({v, dis}) => ({v, dis, sgn:defaultFuzzyTool.sign(dis)}));
+
+    function interpolate(vi, vj) {
+      var t = vi.dis/(vi.dis - vj.dis);
+      var vk_v = vi.v.clone().lerp(vj.v, t);
+      return {v:vk_v, dis:0, sgn:0};
+    }
+
+    // special cases: all or none
+    if ( vs.every(({sgn}) => sgn>=0) )
+      return [arc];
+    else if ( vs.every(({sgn}) => sgn<=0) )
+      return [];
+
+    // cut circle as arc
+    if ( arc.type == "circle" ) {
+      while ( !(vs[0].sgn >= 0 && vs[vs.length-1].sgn === -1) )
+        vs.push(vs.shift());
+
+      if ( vs[0].sgn === 1 )
+        vs.unshift(interpolate(vs[0], vs[vs.length-1]));
+    }
+
+    // interpolate
+    for ( let i=0; i<vs.length; i++ )
+      if ( (vs[i-1] || vs[0]).sgn * vs[i].sgn < 0 )
+        vs.splice(i, 0, interpolate(vs[i], vs[i+1]));
+
+    // slice arc as multiple segments
+    var start_ind = [];
+    var end_ind = [];
+
+    if ( vs[0].sgn === 1 )
+      start_ind.push(0);
+    for ( let i=0; i<vs.length; i++ ) {
+      let sgn = vs[i].sgn;
+      let prev_sgn = (vs[i-1] || {sgn:-1}).sgn;
+
+      if ( prev_sgn === -1 && sgn === 0 )
+        start_ind.push(i);
+      else if ( prev_sgn === 0 && sgn === -1 )
+        end_ind.push(i);
+    }
+    if ( vs[vs.length-1].sgn !== -1 )
+      end_ind.push(vs.length);
+
+    var sliced_vs = [];
+    for ( let [i, j] of zip(start_ind, end_ind) )
+      sliced_vs.push(vs.slice(i,j).map(({v}) => v));
+
+    return sliced_vs.map(vs => ({type:"arc", center:arc.center, quad:arc.quad, vertices:vs}));
+  }
+  static sliceShell(shell, center, quad) {
+    var plane = this.plane(center, quad);
+    var planes = defaultFuzzyTool.collect(map(shell, arc => this.plane(arc.center, arc.quad)));
+
+    if ( planes.find(p => defaultFuzzyTool.equals(p, plane)) )
+      return shell;
+    else if ( planes.find(p => defaultFuzzyTool.equals(p, plane.clone().negate())) )
+      return null;
+
+    shell = [...flatmap(shell, arc => this.sliceArc(arc, plane))];
+    var new_arcs = [this.arc(center, quad)];
+
+    for ( let p of planes )
+      new_arcs = [...flatmap(new_arcs, arc => this.sliceArc(arc, p))];
+    shell.push(...new_arcs);
+
+    if ( shell.length === 0 )
+      return null;
+    else
+      return shell;
+  }
+
+  static makeLines(shell) {
+    if ( shell === null )
+      return null;
+
+    var res = [];
+    for ( let arc of shell ) {
+      let geo = new THREE.Geometry();
+      geo.vertices = arc.vertices;
+      let mat = new THREE.LineBasicMaterial({color:0xff0000});
+
+      if ( arc.type == "cricle" )
+        res.push(new THREE.LineLoop(geo, mat));
+      else
+        res.push(new THREE.Line(geo, mat));
+    }
+
+    return res;
   }
 }
