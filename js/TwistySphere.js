@@ -8,6 +8,27 @@ function plane(x, y, z, sphr) {
   return new THREE.Plane(normal, constant);
 }
 
+function colorball(R=1, N=8) {
+  var shell_geometry = new THREE.IcosahedronGeometry(R);
+  shell_geometry.faceVertexUvs = [[]];
+  for ( let face of shell_geometry.faces )
+    face.VertexNormals = [];
+  Geometer.fly(shell_geometry);
+  Geometer.divideFaces(shell_geometry, N);
+
+  shell_geometry.vertices = shell_geometry.vertices.map(v => v.normalize());
+  for ( let face of shell_geometry.faces ) for ( let a of [0,1,2] ) {
+    face.vertexNormals[a] = shell_geometry.vertices[face[VERTICES[a]]].clone();
+    let {phi, theta} = new THREE.Spherical().setFromVector3(face.vertexNormals[a]);
+    face.vertexColors[a] = new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
+  }
+
+  var shell_material = new THREE.MeshLambertMaterial({color:0xffffff, vertexColors:THREE.VertexColors});
+  var shell = new THREE.Mesh(shell_geometry, [shell_material]);
+
+  return shell;
+}
+
 // side
 const FRONT = Symbol("FRONT");
 const BACK = Symbol("BACK");
@@ -31,22 +52,7 @@ class TwistySphereBuilder
       fuzzyTool: defaultFuzzyTool
     }, config);
 
-    var shell_geometry = new THREE.IcosahedronGeometry(1);
-    shell_geometry.faceVertexUvs = [[]];
-    for ( let face of shell_geometry.faces )
-      face.VertexNormals = [];
-    Geometer.fly(shell_geometry);
-    Geometer.divideFaces(shell_geometry, 8);
-
-    shell_geometry.vertices = shell_geometry.vertices.map(v => v.normalize());
-    for ( let face of shell_geometry.faces ) for ( let a of [0,1,2] ) {
-      face.vertexNormals[a] = shell_geometry.vertices[face[VERTICES[a]]].clone();
-      let {phi, theta} = new THREE.Spherical().setFromVector3(face.vertexNormals[a]);
-      face.vertexColors[a] = new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
-    }
-
-    var shell_material = new THREE.MeshLambertMaterial({color:0xffffff, vertexColors:THREE.VertexColors});
-    var shell = new THREE.Mesh(shell_geometry, [shell_material]);
+    var shell = colorball();
     shell.name = "shell";
 
   	this.shell = shell;
@@ -100,7 +106,7 @@ class TwistySphereBuilder
     }
   }
   sliceShell(elem, sliced_elem, cut) {
-    sliced_elem.geometry = Geometer.slice(elem.geometry, cut, true);
+    Geometer.slice(elem.geometry, cut, sliced_elem.geometry);
     Geometer.land(elem.geometry);
     Geometer.land(sliced_elem.geometry);
   }
@@ -127,6 +133,7 @@ class TwistySphereBuilder
       } else {
         // slice elements `elem` by plane `plane_`
         let new_elem = elem.clone();
+        new_elem.geometry = new THREE.Geometry();
         new_elem.material = elem.material.map(m => m.clone());
         puzzle.add(new_elem);
 

@@ -437,8 +437,9 @@ class Geometer
     return [splited_face, splited_adjFace];
   }
   // slice geometry by plane
-  // in-place modify `geometry` as positive side, and return new geometry as negative side
-  static slice(geometry, plane, sliced=false) {
+  // in-place modify `geometry` as positive side, and modify `sliced` as negative side
+  // return sliced boundaries as the form `[face, edge, adjFace, adjEdge]`
+  static slice(geometry, plane, sliced) {
     plane = new THREE.Plane().copy(plane);
 
     var dis = geometry.vertices.map(v => plane.distanceToPoint(v));
@@ -487,8 +488,10 @@ class Geometer
     }
     
     // unlink edge between two sides
+    var unlinked = [];
     for ( let face of geometry.faces ) if ( face[SIDE] === FRONT ) for ( let edge of EDGES ) {
       if ( face[edge] && face[SIDE] !== face[edge][SIDE] ) {
+        unlinked.push([face, edge, face[edge], face.adj[edge]]);
         this.connect(face[edge], face.adj[edge]);
         this.connect(face, edge);
       }
@@ -507,18 +510,17 @@ class Geometer
     geometry.boundaries = this.boundariesIn(geometry);
     this.trimVertices(geometry);
 
-    if ( sliced ) {
-      let sliced_geometry = new THREE.Geometry();
-      sliced_geometry.name = geometry.name;
-      sliced_geometry.nlayer = geometry.nlayer;
+    if ( sliced !== undefined ) {
+      sliced.name = geometry.name;
+      sliced.nlayer = geometry.nlayer;
 
-      sliced_geometry.vertices = vertices;
-      sliced_geometry.faces = back_faces;
-      sliced_geometry.boundaries = this.boundariesIn(sliced_geometry);
-      this.trimVertices(sliced_geometry);
-
-      return sliced_geometry;
+      sliced.vertices = vertices;
+      sliced.faces = back_faces;
+      sliced.boundaries = this.boundariesIn(sliced);
+      this.trimVertices(sliced);
     }
+
+    return unlinked;
   }
   static walkAlongBoundaries(geometry) {
     var loops = [];
@@ -1046,7 +1048,7 @@ class SphericalGeometer
   }
 
   // make arc with arguments `arc={type, center, quad, v0, v1, vertices}`
-  // - empty:  `{type:"empty",   center, quad}`
+  // - empty:  `{type:"empty",  center, quad}`
   // - arc:    `{type:"arc",    center, quad, v0, v1}` with `(quad < 2 && quad > 0)`
   // - circle: `{type:"circle", center, quad, v0}`
   static makeVerticesOfArc(arc, dA=0.02) {
