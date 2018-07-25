@@ -31,20 +31,23 @@ class TwistySphereBuilder
       fuzzyTool: defaultFuzzyTool
     }, config);
 
-    var shell_geometry = new THREE.IcosahedronGeometry(1, 3);
-    var shell_material = new THREE.MeshLambertMaterial({color:0xffffff});
-    var shell = new THREE.Mesh(shell_geometry, [shell_material]);
-    shell.name = "shell";
-
+    var shell_geometry = new THREE.IcosahedronGeometry(1);
     shell_geometry.faceVertexUvs = [[]];
-    shell_geometry.computeVertexNormals();
+    for ( let face of shell_geometry.faces )
+      face.VertexNormals = [];
+    Geometer.fly(shell_geometry);
+    Geometer.divideFaces(shell_geometry, 8);
+
+    shell_geometry.vertices = shell_geometry.vertices.map(v => v.normalize());
     for ( let face of shell_geometry.faces ) for ( let a of [0,1,2] ) {
+      face.vertexNormals[a] = shell_geometry.vertices[face[VERTICES[a]]].clone();
       let {phi, theta} = new THREE.Spherical().setFromVector3(face.vertexNormals[a]);
       face.vertexColors[a] = new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
     }
-    shell_material.vertexColors = THREE.VertexColors;
 
-    Geometer.fly(shell.geometry);
+    var shell_material = new THREE.MeshLambertMaterial({color:0xffffff, vertexColors:THREE.VertexColors});
+    var shell = new THREE.Mesh(shell_geometry, [shell_material]);
+    shell.name = "shell";
 
   	this.shell = shell;
     this.fuzzyTool = config.fuzzyTool;

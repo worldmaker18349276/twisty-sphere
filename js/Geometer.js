@@ -816,6 +816,188 @@ class Geometer
   //   }
   // }
 
+  // divide faces triangly
+  //   c
+  //   |\
+  //   |_\
+  //   |\ |\
+  //   |_\|_\
+  //   |\ |\ |\
+  //   |_\|_\|_\
+  //  a         b
+  static divideFaces(geometry, N=1) {
+    // divide vertices
+    var _cache = {};
+    function _interpolate_vertices(i, j, t) {
+      if ( i > j ) [i, j, t] = [j, i, N-t];
+      if ( t === 0 ) return i;
+      if ( t === N ) return j;
+      if ( _cache[i+","+j+":"+t] !== undefined )
+        return _cache[i+","+j+":"+t];
+
+      var vi = geometry.vertices[i];
+      var vj = geometry.vertices[j];
+      var vk = vi.clone().lerp(vj, t/N);
+      var k = geometry.vertices.push(vk)-1;
+      _cache[i+","+j+":"+t] = k;
+      return k;
+    }
+    function _divide_vertices(a, b, c) {
+      var divided = Array.from({length: N+1}, (v, i) => new Array(N-i));
+      for ( let nx=0; nx<=N; nx++ ) for ( let ny=0; ny<=N-nx; ny++ ) {
+        if ( ny === 0 )
+          divided[nx][ny] = _interpolate_vertices(a, b, nx);
+        else if ( nx === 0 )
+          divided[nx][ny] = _interpolate_vertices(a, c, ny);
+        else if ( nx + ny === N )
+          divided[nx][ny] = _interpolate_vertices(b, c, ny);
+        else {
+          let dx = geometry.vertices[b].clone().sub(geometry.vertices[a]).multiplyScalar(nx/N);
+          let dy = geometry.vertices[c].clone().sub(geometry.vertices[a]).multiplyScalar(ny/N);
+          let v = geometry.vertices[a].clone().add(dx).add(dy);
+          divided[nx][ny] = geometry.vertices.push(v)-1;
+        }
+      }
+      return divided;
+    }
+    function _divide_triangly(a, b, c) {
+      var divided = Array.from({length: N+1}, (v, i) => new Array(N-i));
+      for ( let nx=0; nx<=N; nx++ ) for ( let ny=0; ny<=N-nx; ny++ ) {
+        if ( nx === 0 && ny === 0 )
+          divided[nx][ny] = a;
+        else if ( nx === N && ny === 0 )
+          divided[nx][ny] = b;
+        else if ( nx === 0 && ny === N )
+          divided[nx][ny] = c;
+        else {
+          let dx = b.clone().sub(a).multiplyScalar(nx/N);
+          let dy = c.clone().sub(a).multiplyScalar(ny/N);
+          divided[nx][ny] = a.clone().add(dx).add(dy);
+        }
+      }
+      return divided;
+    }
+
+    var faces = geometry.faces;
+    geometry.faces = [];
+
+    for ( let face of faces ) {
+      // interpolate vertices, normals, colors and uvs
+      var divided_vertices = _divide_vertices(face.a,
+                                              face.b,
+                                              face.c);
+      if ( face.vertexNormals.length )
+        var divided_normals = _divide_triangly(face.vertexNormals[0],
+                                               face.vertexNormals[1],
+                                               face.vertexNormals[2]);
+      if ( face.vertexColors.length )
+        var divided_colors = _divide_triangly(face.vertexColors[0],
+                                              face.vertexColors[1],
+                                              face.vertexColors[2]);
+      var divided_vertexUvs = [];
+      if ( face.vertexUvs )
+        for ( let l=0; l<face.vertexUvs.length; l++ )
+          if ( face.vertexUvs[l] && face.vertexUvs[l].length )
+            divided_vertexUvs[l] = _divide_triangly(face.vertexUvs[l][0],
+                                                    face.vertexUvs[l][1],
+                                                    face.vertexUvs[l][2]);
+
+      // build faces and connect them
+      let divided_faces = Array.from({length: N}, (v, i) => new Array(N-i));
+      for ( let nx=0; nx<N; nx++ ) for ( let ny=0; ny<N-nx; ny++ ) {
+        divided_faces[nx][ny] = [];
+
+        // build face abc
+        let face1 = face.clone();
+        [face1.a, face1.b, face1.c] = [divided_vertices[nx][ny],
+                                       divided_vertices[nx+1][ny],
+                                       divided_vertices[nx][ny+1]];
+        if ( divided_normals )
+          face1.vertexNormals = [divided_normals[nx][ny].clone(),
+                                 divided_normals[nx+1][ny].clone(),
+                                 divided_normals[nx][ny+1].clone()];
+        if ( divided_colors )
+          face1.vertexColors = [divided_colors[nx][ny].clone(),
+                                divided_colors[nx+1][ny].clone(),
+                                divided_colors[nx][ny+1].clone()];
+        face1.vertexUvs = [];
+        for ( let l=0; l<divided_vertexUvs.length; l++ )
+          if ( divided_vertexUvs[l] && divided_vertexUvs[l].length )
+            face1.vertexUvs[l] = [divided_vertexUvs[l][nx][ny].clone(),
+                                  divided_vertexUvs[l][nx+1][ny].clone(),
+                                  divided_vertexUvs[l][nx][ny+1].clone()];
+        divided_faces[nx][ny].push(face1);
+        geometry.faces.push(face1);
+
+        // build face dcb
+        let face2;
+        if ( nx + ny < N-1 ) {
+          face2 = face.clone();
+          [face2.a, face2.b, face2.c] = [divided_vertices[nx+1][ny+1],
+                                         divided_vertices[nx][ny+1],
+                                         divided_vertices[nx+1][ny]];
+          if ( divided_normals )
+            face2.vertexNormals = [divided_normals[nx+1][ny+1].clone(),
+                                   divided_normals[nx][ny+1].clone(),
+                                   divided_normals[nx+1][ny].clone()];
+          if ( divided_colors )
+            face2.vertexColors = [divided_colors[nx+1][ny+1].clone(),
+                                  divided_colors[nx][ny+1].clone(),
+                                  divided_colors[nx+1][ny].clone()];
+          face2.vertexUvs = [];
+          for ( let l=0; l<divided_vertexUvs.length; l++ )
+            if ( divided_vertexUvs[l] && divided_vertexUvs[l].length )
+              face2.vertexUvs[l] = [divided_vertexUvs[l][nx+1][ny+1].clone(),
+                                    divided_vertexUvs[l][nx][ny+1].clone(),
+                                    divided_vertexUvs[l][nx+1][ny].clone()];
+          divided_faces[nx][ny].push(face2);
+          geometry.faces.push(face2);
+        }
+
+        // connect adjacent faces
+        if ( nx + ny < N-1 )
+          this.connect(face1, "bc", face2, "bc");
+        if ( nx > 0 )
+          this.connect(face1, "ca", divided_faces[nx-1][ny][1], "ca");
+        if ( ny > 0 )
+          this.connect(face1, "ab", divided_faces[nx][ny-1][1], "ab");
+      }
+
+      face.divided = {
+        ca: Array.from({length: N}, (v, i) => divided_faces[0][N-1-i][0]),
+        ab: Array.from({length: N}, (v, i) => divided_faces[i][0][0]),
+        bc: Array.from({length: N}, (v, i) => divided_faces[N-1-i][i][0]),
+      };
+    }
+
+    // reconnect divided faces
+    geometry.boundaries = [];
+
+    for ( let face of faces ) for ( let edge of EDGES ) {
+      let adjFace = face[edge];
+      let adjEdge = face.adj[edge];
+
+      if ( adjFace ) {
+        if ( face.divided[edge] ) {
+          for ( let z=0; z<N; z++ ) {
+            let facez = face.divided[edge][z];
+            let adjFacez = adjFace.divided[adjEdge][N-1-z];
+            this.connect(facez, edge, adjFacez, adjEdge);
+          }
+          delete face.divided[edge];
+          delete adjFace.divided[adjEdge];
+        }
+
+      } else {
+        for ( let z=0; z<N; z++ ) {
+          let facez = face.divided[edge][z];
+          geometry.boundaries.push([facez, edge]);
+        }
+        delete face.divided[edge];
+      }
+    }
+  }
+
   static makeEdgeHelper(geometry, face, edge) {
     var v1 = geometry.vertices[face[edge[0]]];
     var v2 = geometry.vertices[face[edge[1]]];
