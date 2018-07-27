@@ -76,7 +76,29 @@ function removeFirst(arr, filter) {
   arr.splice(i, 1);
   return true;
 }
+function findMax(arr, key=arr) {
+  let j = 0;
+  for ( let i=0; i < arr.length; i++ )
+    if ( key[i] > key[j] )
+      j = i;
+  return j;
+}
 
+// iterate uv values along z-curve order by order
+function* ziter() {
+  var queue = [1/2, 1/2, 1, 1];
+  while ( true ) {
+    let u = queue.shift();
+    let v = queue.shift();
+    let w = queue.shift();
+    let h = queue.shift();
+    yield [u, v];
+    queue.push(u-w/4, v-h/4, w/2, h/2,
+               u+w/4, v-h/4, w/2, h/2,
+               u-w/4, v+h/4, w/2, h/2,
+               u+w/4, v+h/4, w/2, h/2);
+  }
+}
 
 // ######## ##     ## ######## ######## ##    ## 
 // ##       ##     ##      ##       ##   ##  ##  
@@ -204,13 +226,15 @@ class Geometer
 
   // modify structure of Face3 to faster computing
   static fly(geometry) {
+    if ( geometry.flying )
+      return;
     var uvs = geometry.faceVertexUvs;
     const nlayer = geometry.nlayer = geometry.faceVertexUvs.length;
 
     for ( let x=0,len=geometry.faces.length; x<len; x++ ) {
       let face = geometry.faces[x];
 
-      face.label = [];
+      face.labels = {};
 
       face.vertexUvs = [];
       for ( let l=0; l<nlayer; l++ )
@@ -230,6 +254,7 @@ class Geometer
 
     // find boundaries of faces
     geometry.boundaries = this.boundariesIn(geometry);
+    geometry.flying = true;
   }
   static land(geometry) {
     var uvs = geometry.faceVertexUvs = [[]];
@@ -253,20 +278,35 @@ class Geometer
       }
     }
   }
-  static preprocess(face, param) {
-    for ( let key in param ) {
-      if ( typeof param[key] == "function" )
-        face[key] = param[key](face);
+  static check(geometry) {
+    console.assert(geometry.flying);
+    console.assert(geometry.nlayer >= geometry.faceVertexUvs.length);
+    for ( let face of geometry.faces )
+      console.assert(face.labels && face.adj);
+
+    for ( let [face1, face2] of comb2(geometry.faces) )
+      for ( let edge1 of EDGES ) for ( let edge2 of EDGES )
+        if ( this.areAdjacent(face1, edge1, face2, edge2) ) {
+          console.assert(face1[edge1] === face2 && face1.adj[edge1] === edge2);
+          console.assert(face2[edge2] === face1 && face2.adj[edge2] === edge1);
+        }
+
+    for ( let [face, edge] of geometry.boundaries )
+      console.assert(face[edge] === undefined && face.adj[edge] === undefined);
+
+    for ( let face of geometry.faces ) for ( let edge of EDGES ) {
+      if ( face[edge] )
+        console.assert(this.areAdjacent(face, edge, face[edge], face.adj[edge]));
       else
-        face[key] = param[key];
+        console.assert(geometry.boundaries.find(([f,e]) => f===face && e==edge));
     }
   }
 
   // copy flying face
-  // shallow copy flying data `face.label`, `face.normals`, `face.colors`, `face.uvs`,
+  // shallow copy flying data `face.labels`, `face.normals`, `face.colors`, `face.uvs`,
   //   but no link `face.ca`, `face.ab`, `face.bc` and `face.adj`
   static copyFace(face, copied=new THREE.Face3().copy(face)) {
-    copied.label = (face.label || []).slice(0);
+    copied.labels = Object.assign({}, face.labels);
 
     copied.vertexUvs = [];
     if ( face.vertexUvs )
@@ -300,6 +340,7 @@ class Geometer
     copied.nlayer = geometry.nlayer;
     this.copyFaces(geometry.faces, copied.faces);
     copied.boundaries = this.boundariesIn(copied);
+    copied.flying = true;
     return copied;
   }
 
@@ -345,7 +386,7 @@ class Geometer
   }
 
   // split face at edge with interpolation alpha `t` and vertex index `k`
-  // return the new face splited out of `face`
+  // return the splited face `[face_A, face_B]`
   //
   //          c                            c          
   //         / \                          /|\         
@@ -353,33 +394,37 @@ class Geometer
   //       /     \                      /  |  \       
   //      /       \                    /   |   \      
   //     /  face   \       ===>       /    |    \     
-  //    /           \              splited |     \    
-  //   /             \              /face  | face \   
+  //    /           \               A-side | B-side   
+  //   /             \              /face  |  face\   
   //  /_______________\            /_______|_______\  
   // a        |        b          a       b a       b 
   //    split edge `ab`
   static _split_face(face, edge, t, k) {
-    // split face
     const ab = edge;
     const bc = EDGES_NEXT[ab];
     const ca = EDGES_PREV[ab];
+    const a_ind = VERTICES_IND[ab[0]];
+    const b_ind = VERTICES_IND[ab[1]];
 
-    var splited_face = this.copyFace(face);
-    face[ab[0]] = splited_face[ab[1]] = k;
+    // split face
+    var face_A = this.copyFace(face);
+    var face_B = this.copyFace(face);
+    face_B[ab[0]] = face_A[ab[1]] = k;
 
-    [splited_face[ab], splited_face.adj[ab]] = [face[ab], face.adj[ab]]
-    this.connect(splited_face, ca, face[ca], face.adj[ca]);
-    this.connect(face, ca, splited_face, bc);
-
-    var a_ind = VERTICES_IND[ab[0]];
-    var b_ind = VERTICES_IND[ab[1]];
+    [face_A[ab], face_A.adj[ab]] = [face[ab], face.adj[ab]];
+    [face_B[ab], face_B.adj[ab]] = [face[ab], face.adj[ab]];
+    this.connect(face_A, ca, face[ca], face.adj[ca]);
+    this.connect(face_B, bc, face[bc], face.adj[bc]);
+    this.connect(face_A, bc, face_B, ca);
+    delete face_A.labels.bc;
+    delete face_B.labels.ca;
 
     // interpolate normal
     if ( face.vertexNormals.length ) {
       let ni = face.vertexNormals[a_ind];
       let nj = face.vertexNormals[b_ind];
       let nk = ni.clone().lerp(nj, t);
-      face.vertexNormals[a_ind] = splited_face.vertexNormals[b_ind] = nk;
+      face_B.vertexNormals[a_ind] = face_A.vertexNormals[b_ind] = nk;
     }
 
     // interpolate color
@@ -387,7 +432,7 @@ class Geometer
       let ci = face.vertexColors[a_ind];
       let cj = face.vertexColors[b_ind];
       let ck = ci.clone().lerp(cj, t);
-      face.vertexColors[a_ind] = splited_face.vertexColors[b_ind] = ck;
+      face_B.vertexColors[a_ind] = face_A.vertexColors[b_ind] = ck;
     }
 
     // interpolate uv
@@ -397,10 +442,10 @@ class Geometer
           let uvli = face.vertexUvs[l][a_ind];
           let uvlj = face.vertexUvs[l][b_ind];
           let uvlk = uvli.clone().lerp(uvlj, t);
-          face.vertexUvs[l][a_ind] = splited_face.vertexUvs[l][b_ind] = uvlk;
+          face_B.vertexUvs[l][a_ind] = face_A.vertexUvs[l][b_ind] = uvlk;
         }
 
-    return splited_face;
+    return [face_A, face_B];
   }
   // interpolate geometry at edge `(face,edge)`
   // new faces will be insert after splited faces
@@ -419,35 +464,57 @@ class Geometer
     }
 
     // split face
-    var splited_face = this._split_face(face, edge, t, k);
-    geometry.faces.splice(geometry.faces.indexOf(face)+1, 0, splited_face);
+    var [face_A, face_B] = this._split_face(face, edge, t, k);
+    geometry.faces.splice(geometry.faces.indexOf(face), 1, face_A, face_B);
 
-    if ( !adjFace ) {
-      geometry.boundaries.push([splited_face, edge]);
-      return [splited_face];
-    }
+    for ( let i=0; i<geometry.boundaries.length; i++ )
+      if ( geometry.boundaries[i][0] === face ) {
+        if ( geometry.boundaries[i][1] == edge )
+          geometry.boundaries.splice(i, 1, [face_A, edge], [face_B, edge]);
+        else if ( geometry.boundaries[i][1] == EDGES_NEXT[edge] )
+          geometry.boundaries.splice(i, 1, [face_B, EDGES_NEXT[edge]]);
+        else if ( geometry.boundaries[i][1] == EDGES_PREV[edge] )
+          geometry.boundaries.splice(i, 1, [face_A, EDGES_PREV[edge]]);
+        else
+          console.assert(false);
+      }
+
+    if ( !adjFace )
+      return [face_A, face_B];
 
     // split adjacent face
-    var splited_adjFace = this._split_face(adjFace, adjEdge, 1-t, k);
-    geometry.faces.splice(geometry.faces.indexOf(adjFace)+1, 0, splited_adjFace);
+    var [adjFace_A, adjFace_B] = this._split_face(adjFace, adjEdge, 1-t, k);
+    geometry.faces.splice(geometry.faces.indexOf(adjFace), 1, adjFace_A, adjFace_B);
+    this.connect(face_A, edge, adjFace_B, adjEdge);
+    this.connect(face_B, edge, adjFace_A, adjEdge);
 
-    this.connect(face, edge, splited_adjFace, adjEdge);
-    this.connect(splited_face, edge, adjFace, adjEdge);
+    for ( let i=0; i<geometry.boundaries.length; i++ )
+      if ( geometry.boundaries[i][0] === adjFace ) {
+        if ( geometry.boundaries[i][1] == adjEdge )
+          geometry.boundaries.splice(i, 1, [adjFace_A, adjEdge], [adjFace_B, adjEdge]);
+        else if ( geometry.boundaries[i][1] == EDGES_NEXT[adjEdge] )
+          geometry.boundaries.splice(i, 1, [adjFace_B, EDGES_NEXT[adjEdge]]);
+        else if ( geometry.boundaries[i][1] == EDGES_PREV[adjEdge] )
+          geometry.boundaries.splice(i, 1, [adjFace_A, EDGES_PREV[adjEdge]]);
+        else
+          throw `unknown side ${geometry.boundaries[i][1]}`;
+      }
 
-    return [splited_face, splited_adjFace];
+    return [face_A, face_B, adjFace_A, adjFace_B];
   }
   // slice geometry by plane
-  // in-place modify `geometry` as positive side, and modify `sliced` as negative side
-  // return sliced boundaries as the form `[face, edge, adjFace, adjEdge]`
-  static slice(geometry, plane, sliced) {
+  // in-place modify `geometry` as positive side, and modify `geometry_back` as negative side
+  static slice(geometry, plane, geometry_back, label, label_back=label) {
     plane = new THREE.Plane().copy(plane);
 
     var dis = geometry.vertices.map(v => plane.distanceToPoint(v));
     var sgn = dis.map(d => defaultFuzzyTool.sign(d));
 
     // split edge
-    // notice: length of `geometry.faces` increase in method `interpolateAtEdge`
-    for ( let face of geometry.faces ) for ( let edge of EDGES ) {
+    // notice: `geometry.faces` will be modified in method `interpolateAtEdge`,
+    //   but it's easy to prove that processed edges are no need to process agian
+    for ( let n=0; n<geometry.faces.length; n++ ) for ( let edge of EDGES ) {
+      let face = geometry.faces[n];
       let i = face[edge[0]];
       let j = face[edge[1]];
 
@@ -467,8 +534,8 @@ class Geometer
 
     // determine side of faces respect to cut plane
     const SIDE = Symbol("SIDE");
-    const FRONT = 1;
-    const BACK = 2;
+    const FRONT = Symbol("SIDE.FRONT");
+    const BACK = Symbol("SIDE.BACK");
     
     for ( let face of geometry.faces ) {
       if ( VERTICES.some(a => sgn[face[a]] !== 0) ) {
@@ -488,43 +555,54 @@ class Geometer
     }
     
     // unlink edge between two sides
-    var unlinked = [];
+    var front_bd = [];
+    var back_bd  = [];
+
     for ( let face of geometry.faces ) if ( face[SIDE] === FRONT ) for ( let edge of EDGES ) {
       if ( face[edge] && face[SIDE] !== face[edge][SIDE] ) {
-        unlinked.push([face, edge, face[edge], face.adj[edge]]);
-        this.connect(face[edge], face.adj[edge]);
+        let adjFace = face[edge];
+        let adjEdge = face.adj[edge];
         this.connect(face, edge);
+        this.connect(adjFace, adjEdge);
+        front_bd.push([face, edge]);
+        back_bd.push([adjFace, adjEdge]);
+        if ( label !== undefined ) {
+          face.labels[edge] = label;
+          adjFace.labels[adjEdge] = label_back;
+        }
       }
     }
 
     var vertices = geometry.vertices.slice(0);
     var front_faces = geometry.faces.filter(face => face[SIDE] === FRONT);
     var back_faces  = geometry.faces.filter(face => face[SIDE] === BACK );
+    front_bd.push(...geometry.boundaries.filter(([face, edge]) => face[SIDE] === FRONT));
+    back_bd.push( ...geometry.boundaries.filter(([face, edge]) => face[SIDE] === BACK ));
 
     for ( let face of geometry.faces )
       delete face[SIDE];
     
-    // split geometry into `geometry` and `sliced_geometry`
+    // split geometry into `geometry` and `geometry_back`
     geometry.vertices = vertices;
     geometry.faces = front_faces;
-    geometry.boundaries = this.boundariesIn(geometry);
+    geometry.boundaries = front_bd;
     this.trimVertices(geometry);
 
-    if ( sliced !== undefined ) {
-      sliced.name = geometry.name;
-      sliced.nlayer = geometry.nlayer;
+    if ( geometry_back !== undefined ) {
+      geometry_back.name = geometry.name;
+      geometry_back.nlayer = geometry.nlayer;
 
-      sliced.vertices = vertices;
-      sliced.faces = back_faces;
-      sliced.boundaries = this.boundariesIn(sliced);
-      this.trimVertices(sliced);
+      geometry_back.vertices = vertices;
+      geometry_back.faces = back_faces;
+      geometry_back.boundaries = back_bd;
+      this.trimVertices(geometry_back);
+
+      geometry_back.flying = true;
     }
-
-    return unlinked;
   }
   static walkAlongBoundaries(geometry) {
     var loops = [];
-    boundaries = geometry.boundaries.slice(0);
+    var boundaries = geometry.boundaries.slice(0);
 
     while ( boundaries.length > 0 ) {
       let loop = [];
@@ -540,37 +618,36 @@ class Geometer
     }
     return loops;
   }
-  static findLoops(boundaries) {
-    var loops = [];
-    boundaries = boundaries.slice(0);
+  static boundariesLoopsOf(faces) {
+    var boundaries = [];
+    for ( let face of faces ) for ( let edge of EDGES )
+      if ( !face[edge] || !faces.includes(face[edge]) )
+        boundaries.push([face, edge]);
 
+    var loops = [];
     while ( boundaries.length > 0 ) {
       let loop = [];
 
-      let res = boundaries[0];
-      while ( true ) {
-        let i = boundaries.findIndex(next => next[0][next[1][0]] === res[0][res[1][1]]);
-        if ( i === -1 )
-          break;
-        res = boundaries[i];
-        boundaries.splice(i,1);
-        loop.push(res);
+      let [face, edge] = boundaries[0];
+      while ( removeFirst(boundaries, ([f,e]) => f===face && e==edge) ) {
+        loop.push([face, edge]);
+        while ( faces.includes(face[EDGES_NEXT[edge]]) )
+          [face, edge] = [face[EDGES_NEXT[edge]], face.adj[EDGES_NEXT[edge]]];
+        edge = EDGES_NEXT[edge];
       }
       loops.push(loop);
     }
     return loops;
   }
-  static fillHoles(geometry, plane, meta={}) {
+  static fillHoles(geometry, plane, labels) {
     // offset and rotation to plane
     var offset = plane.normal.clone().multiplyScalar(-plane.constant);
     var {phi, theta} = new THREE.Spherical().setFromVector3(plane.normal);
     var rot = new THREE.Quaternion().setFromAxisAngle({x:-Math.cos(theta), y:0, z:Math.sin(theta)}, phi);
 
     // project vertices onto the plane
-    var boundaries = geometry.boundaries;
     var points = {};
-
-    for ( let [face, edge] of boundaries )
+    for ( let [face, edge] of geometry.boundaries )
       for ( let i of [face[edge[0]], face[edge[1]]] )
         if ( points[i] === undefined ) {
           let v = geometry.vertices[i].clone();
@@ -579,48 +656,85 @@ class Geometer
         }
 
     // fill holes
-    var loops = this.findLoops(boundaries);
+    var loops = this.walkAlongBoundaries(geometry);
+    geometry.boundaries = [];
     var normal = plane.normal.clone();
-    
+
+    // only valid for convex holes
     for ( let loop of loops ) {
       // make face to fill the hole
-      for ( let count=loop.length*(loop.length-1)/2; loop.length>=3 && count>0; count-- ) {
-        let [[face_cb, bd_cb], [face_ba, bd_ba], ...remains] = loop;
+      while ( loop.length >= 3 ) {
+        let [face_cb, bd_cb] = loop.shift();
+        let [face_ba, bd_ba] = loop.shift();
 
         let i = face_ba[bd_ba[1]];
         let j = face_cb[bd_cb[1]];
         let k = face_cb[bd_cb[0]];
 
-        // angle ijk
-        let angle_ji = points[i].clone().sub(points[j]).angle()*2/Math.PI;
-        let angle_jk = points[k].clone().sub(points[j]).angle()*2/Math.PI;
-        let angle_ijk = ((angle_ji - angle_jk) % 4 + 4) % 4;
-        if ( defaultFuzzyTool.greater_than(angle_ijk, 2) ) {
-          loop.push(loop.shift());
-          continue;
-        }
-    
         let face_ca = new THREE.Face3(i, j, k, normal);
-        this.preprocess(face_ca, meta);
+        face_ca.labels = {};
+        face_ca.vertexUvs = [];
+        face_ca.adj = {};
+
+        Object.assign(face_ca.labels, labels);
         let bd_ca = "ca";
         this.connect(face_ca, "ab", face_ba, bd_ba);
         this.connect(face_ca, "bc", face_cb, bd_cb);
         geometry.faces.push(face_ca);
     
         // remains.unshift([face_ca, bd_ca]); // fan-like filling
-        remains.push([face_ca, bd_ca]); // rose-like filling
-        loop = remains;
+        loop.push([face_ca, bd_ca]); // rose-like filling
       }
 
-      if ( loop.length >= 3 ) {
-        console.log(loop.map(([f,e]) => geometry.vertices[f[e[0]]]));
-        throw "unterminated loop";
-      } else if ( loop.length === 2 ) {
+      if ( loop.length === 2 ) {
         this.connect(...loop[0], ...loop[1]);
       } else {
         throw "???";
       }
     }
+    
+    // for ( let loop of loops ) {
+    //   // make face to fill the hole
+    //   for ( let count=loop.length*(loop.length-1)/2; loop.length>=3 && count>0; count-- ) {
+    //     let [[face_cb, bd_cb], [face_ba, bd_ba], ...remains] = loop;
+    // 
+    //     let i = face_ba[bd_ba[1]];
+    //     let j = face_cb[bd_cb[1]];
+    //     let k = face_cb[bd_cb[0]];
+    // 
+    //     // angle ijk
+    //     let angle_ji = points[i].clone().sub(points[j]).angle()*2/Math.PI;
+    //     let angle_jk = points[k].clone().sub(points[j]).angle()*2/Math.PI;
+    //     let angle_ijk = ((angle_ji - angle_jk) % 4 + 4) % 4;
+    //     if ( defaultFuzzyTool.greater_than(angle_ijk, 2) ) {
+    //       loop.push(loop.shift());
+    //       continue;
+    //     }
+    // 
+    //     let face_ca = new THREE.Face3(i, j, k, normal);
+    //     face_ca.labels = {};
+    //     face_ca.vertexUvs = [];
+    //     face_ca.adj = {};
+    //     Object.assign(face_ca.labels, labels);
+    //     let bd_ca = "ca";
+    //     this.connect(face_ca, "ab", face_ba, bd_ba);
+    //     this.connect(face_ca, "bc", face_cb, bd_cb);
+    //     geometry.faces.push(face_ca);
+    // 
+    //     // remains.unshift([face_ca, bd_ca]); // fan-like filling
+    //     remains.push([face_ca, bd_ca]); // rose-like filling
+    //     loop = remains;
+    //   }
+    // 
+    //   if ( loop.length >= 3 ) {
+    //     console.log(loop.map(([f,e]) => geometry.vertices[f[e[0]]]));
+    //     throw "unterminated loop";
+    //   } else if ( loop.length === 2 ) {
+    //     this.connect(...loop[0], ...loop[1]);
+    //   } else {
+    //     throw "???";
+    //   }
+    // }
   }
 
   // merge two geometries
@@ -911,6 +1025,9 @@ class Geometer
 
         // build face abc
         let face1 = face.clone();
+        face1.labels = {};
+        face1.vertexUvs = [];
+        face1.adj = {};
         [face1.a, face1.b, face1.c] = [divided_vertices[nx][ny],
                                        divided_vertices[nx+1][ny],
                                        divided_vertices[nx][ny+1]];
@@ -935,6 +1052,9 @@ class Geometer
         let face2;
         if ( nx + ny < N-1 ) {
           face2 = face.clone();
+          face2.labels = {};
+          face2.vertexUvs = [];
+          face2.adj = {};
           [face2.a, face2.b, face2.c] = [divided_vertices[nx+1][ny+1],
                                          divided_vertices[nx][ny+1],
                                          divided_vertices[nx+1][ny]];
