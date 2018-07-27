@@ -1162,7 +1162,10 @@ class SphericalGeometer
     return new THREE.Color(`hsl(${Math.floor(Math.abs(quad-1)*300)}, 100%, 50%)`);
   }
   static plane(center, quad, R=1) {
-    center = new THREE.Vector3().copy(center).normalize();
+    if ( Array.isArray(center) )
+      center = new THREE.Vector3().fromArray(center).normalize();
+    else
+      center = new THREE.Vector3().copy(center).normalize();
     var constant = Math.cos((2-quad)*Math.PI/2)*R;
     return new THREE.Plane(center, constant);
   }

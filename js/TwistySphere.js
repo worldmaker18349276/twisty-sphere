@@ -1,11 +1,6 @@
 function always() { return true; }
-function sphidius(plane) {
-  return 2 - Math.acos(plane.constant)*2/Math.PI;
-}
-function plane(x, y, z, sphr) {
-  var normal = new THREE.Vector3(x,y,z).normalize();
-  var constant = Math.cos((2-sphr)*Math.PI/2);
-  return new THREE.Plane(normal, constant);
+function plane(x, y, z, q) {
+  return SphericalGeometer.plane([x,y,z], q);
 }
 
 function cloneObject3D(obj, copied=obj.clone()) {
@@ -62,7 +57,6 @@ class TwistySphereBuilder
     shape.geometry.faces.forEach(f => f.materialIndex++);
     shape.material.unshift(new THREE.MeshLambertMaterial({color:0xffffff}));
     Geometer.fly(shape.geometry);
-    Geometer.check(shape.geometry);
 
   	this.shape = shape;
   	this.R = Array.isArray(config.R) ? config.R.slice(0).sort() : [config.R];
@@ -316,7 +310,7 @@ class TwistySphereBuilder
         for ( let y2 of ind_cut ) if ( intercuts[y2] && outercutables[y2] )
         	if ( y1 !== y2 )
       {
-        if ( !this.fuzzyTool.equals(sphidius(cuts[y1]), sphidius(cuts[y2])) )
+        if ( !this.fuzzyTool.equals(SphericalGeometer.quadrant(cuts[y1]), SphericalGeometer.quadrant(cuts[y2])) )
           break;
         if ( !this.fuzzyTool.equals(axes[y1].phi, axes[y2].phi) )
           break;
@@ -402,7 +396,7 @@ class BasicController
     disk.translate(0, 0, -plane.constant);
     disk.lookAt(plane.normal);
 
-    var sphr = sphidius(plane);
+    var sphr = SphericalGeometer.quadrant(plane);
     var color = new THREE.Color(`hsl(${Math.floor(Math.abs(sphr-1)*300)}, 100%, 50%)`);
     var material = new THREE.MeshBasicMaterial({color:color});
     return new THREE.Mesh(disk, material);
@@ -414,7 +408,7 @@ class BasicController
     ring.translate(0, 0, -plane.constant);
     ring.lookAt(plane.normal);
 
-    var sphr = sphidius(plane);
+    var sphr = SphericalGeometer.quadrant(plane);
     var color = new THREE.Color(`hsl(${Math.floor(Math.abs(sphr-1)*300) + angle*90}, 100%, 50%)`);
     var material = new THREE.MeshBasicMaterial({color:color});
     return new THREE.Mesh(ring, material);
@@ -553,8 +547,7 @@ class BasicController
     return this.selectElement(puzzle)
       .then(([e, i]) => {
         this.display.remove(...cuts);
-        cuts = e.userData.arcs.filter(arc => arc.type!=="empty")
-          .map(arc => SphericalGeometer.plane(arc.center, arc.quad))
+        cuts = e.userData.cuts
           .map(c => c.applyMatrix4(e.matrixWorld))
           .map((c, i) => this.makeCutHelper(c));
         cuts.forEach(c => { c.material.transparent = true; c.material.opacity = 0.3; c.material.side=THREE.DoubleSide; });
