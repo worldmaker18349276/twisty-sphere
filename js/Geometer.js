@@ -1158,6 +1158,10 @@ class SphericalGeometer
   static quadrant(plane, R=1) {
     return 2 - Math.acos(plane.constant/R)*2/Math.PI;
   }
+  static ncolor(normal) {
+    let {phi, theta} = new THREE.Spherical().setFromVector3(normal);
+    return new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
+  }
   static qcolor(quad) {
     return new THREE.Color(`hsl(${Math.floor(Math.abs(quad-1)*300)}, 100%, 50%)`);
   }

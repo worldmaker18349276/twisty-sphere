@@ -13,7 +13,7 @@
 <script>
 var display = new Display();
 var builder = new TwistySphereBuilder();
-var controller = new BasicController({builder, display, R:1.1});
+var controller = new BasicController({builder, display, R:1.5});
 
 var puzzle = builder.make();
 builder.slice(puzzle,
@@ -32,6 +32,10 @@ builder.slice(puzzle,
 );
 
 display.add(puzzle);
+
+// builder.analyze(puzzle);
+// var cut = controller.makeDraggableCut(puzzle, 0);
+// display.add(cut);
 
 // var geometry = new THREE.Geometry();
 // geometry.merge(new THREE.DodecahedronGeometry(1), new THREE.Matrix4().identity(), 1);

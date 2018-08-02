@@ -15,25 +15,29 @@ function cloneObject3D(obj, copied=obj.clone()) {
 }
 
 function colorball(R=1, N=8) {
-  var shell_geometry = new THREE.IcosahedronGeometry(1);
-  shell_geometry.faceVertexUvs = [[]];
-  for ( let face of shell_geometry.faces )
+  var geometry = new THREE.IcosahedronGeometry(1);
+  geometry.faceVertexUvs = [[]];
+  for ( let face of geometry.faces )
     face.VertexNormals = [];
-  Geometer.fly(shell_geometry);
-  Geometer.divideFaces(shell_geometry, N);
-  shell_geometry.vertices = shell_geometry.vertices.map(v => v.normalize());
+  Geometer.fly(geometry);
+  Geometer.divideFaces(geometry, N);
+  geometry.vertices = geometry.vertices.map(v => v.normalize());
 
-  for ( let face of shell_geometry.faces ) for ( let a of [0,1,2] ) {
-    face.vertexNormals[a] = shell_geometry.vertices[face[VERTICES[a]]].clone();
-    let {phi, theta} = new THREE.Spherical().setFromVector3(face.vertexNormals[a]);
-    face.vertexColors[a] = new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
+  for ( let face of geometry.faces ) for ( let a of [0,1,2] ) {
+    face.vertexNormals[a] = geometry.vertices[face[VERTICES[a]]].clone();
+    face.vertexColors[a] = SphericalGeometer.ncolor(face.vertexNormals[a]);
   }
-  shell_geometry.scale(R,R,R);
+  geometry.scale(R,R,R);
 
-  var shell_material = new THREE.MeshLambertMaterial({color:0xffffff, vertexColors:THREE.VertexColors});
-  var shell = new THREE.Mesh(shell_geometry, [shell_material]);
-
-  return shell;
+  var material = new THREE.MeshLambertMaterial({color:0xffffff, vertexColors:THREE.VertexColors});
+  return new THREE.Mesh(geometry, [material]);
+}
+function cube() {
+  var geometry = new THREE.BoxGeometry(2,2,2);
+  for ( let face of geometry.faces )
+    face.color = SphericalGeometer.ncolor(face.normal);
+  var material = new THREE.MeshLambertMaterial({color:0xffffff, vertexColors:THREE.FaceColors});
+  return new THREE.Mesh(geometry, material);
 }
 
 // side
@@ -49,7 +53,7 @@ class TwistySphereBuilder
       fuzzyTool: defaultFuzzyTool,
     }, config);
 
-    var shape = config.shape !== undefined ? config.shape : colorball();
+    var shape = config.shape !== undefined ? config.shape : cube();
     if ( !Array.isArray(shape.material) ) {
       let n = Math.max(...shape.geometry.faces.map(f => f.materialIndex))+1;
       shape.material = Array(n).fill(shape.material);
@@ -64,19 +68,22 @@ class TwistySphereBuilder
   }
 
   make() {
-    var elem = cloneObject3D(this.shape);
+    var elem = new THREE.Object3D();
+    elem.name = "element";
+    elem.userData = {cuts: []};
+
+    var shape = cloneObject3D(this.shape);
+    shape.name = "shape";
+    shape.userData.hoverable = true;
+    elem.add(shape);
+
     for ( let r of this.R ) {
       let shell = colorball(r);
       shell.visible = false;
       shell.name = "shell";
-      shell.userData = {R:r};
+      shell.userData.R = r;
       elem.add(shell);
     }
-    elem.name = "element";
-    elem.userData = {
-      cuts: [],
-      hoverable: true
-    };
     
     var puzzle = new THREE.Group();
     puzzle.add(elem);
@@ -129,36 +136,36 @@ class TwistySphereBuilder
     else
       return NONE;
   }
-  sliceShape(elem, cut, elem_back) {
-    function _fill_holes_of_shape(elem, cut) {
-      Geometer.fillHoles(elem.geometry, cut.clone().negate());
+  sliceShape(shape, cut, shape_back) {
+    function _fill_holes_of_shape(shape, cut) {
+      Geometer.fillHoles(shape.geometry, cut.clone().negate());
 
-      elem.remove(...elem.children.filter(e => e.name=="edge"));
+      shape.remove(...shape.children.filter(e => e.name=="edge"));
       let edge_material = new THREE.LineBasicMaterial({color:0xffffff, linewidth:5});
 
-      let loops = Geometer.boundariesLoopsOf(elem.geometry.faces.filter(f => f.materialIndex !== 0));
+      let loops = Geometer.boundariesLoopsOf(shape.geometry.faces.filter(f => f.materialIndex !== 0));
 
       for ( let loop of loops ) {
       	let edge_geometry = new THREE.Geometry();
-        loop = loop.map(([f, e]) => elem.geometry.vertices[f[e[0]]]);
+        loop = loop.map(([f, e]) => shape.geometry.vertices[f[e[0]]]);
         edge_geometry.vertices.push(...loop);
 
         let edge = new THREE.LineLoop(edge_geometry, edge_material);
         edge.name = "edge";
-        elem.add(edge);
+        shape.add(edge);
       }
     }
 
-    if ( elem_back ) {
-      Geometer.slice(elem.geometry, cut, elem_back.geometry);
-      Geometer.land(elem.geometry);
-      Geometer.land(elem_back.geometry);
-      _fill_holes_of_shape(elem, cut);
-      _fill_holes_of_shape(elem_back, cut.clone().negate());
+    if ( shape_back ) {
+      Geometer.slice(shape.geometry, cut, shape_back.geometry);
+      _fill_holes_of_shape(shape, cut);
+      _fill_holes_of_shape(shape_back, cut.clone().negate());
+      Geometer.land(shape.geometry);
+      Geometer.land(shape_back.geometry);
     } else {
-      Geometer.slice(elem.geometry, cut);
-      Geometer.land(elem.geometry);
-      _fill_holes_of_shape(elem, cut);
+      Geometer.slice(shape.geometry, cut);
+      _fill_holes_of_shape(shape, cut);
+      Geometer.land(shape.geometry);
     }
   }
   sliceElement(elem, cut) {
@@ -169,28 +176,28 @@ class TwistySphereBuilder
     var shells2 = res.map(([shell1, shell2]) => shell2).filter(shell => shell!==null);
 
     if ( shells2.length === 0 ) {
-      this.sliceShape(elem, cut);
-      for ( let shell of shells1 )
-        elem.add(shell);
+      let shape = elem.children.find(e => e.name=="shape");
+      this.sliceShape(shape, cut);
+      elem.add(...shells1);
 
     } else if ( shells1.length === 0 ) {
-      this.sliceShape(elem, cut.clone().negate());
-      for ( let shell of shells2 )
-        elem.add(shell);
+      let shape = elem.children.find(e => e.name=="shape");
+      this.sliceShape(shape, cut.clone().negate());
+      elem.add(...shells2);
 
     } else {
       // slice elements `elem` by plane `plane_`
-      let new_elem = elem.clone();
-      new_elem.geometry = new THREE.Geometry();
-      new_elem.material = elem.material.map(m => m.clone());
+      let shape = elem.children.find(e => e.name=="shape");
+      let new_shape = shape.clone();
+      new_shape.geometry = new THREE.Geometry();
+      new_shape.material = shape.material.map(m => m.clone());
+      this.sliceShape(shape, cut, new_shape);
+
+      let new_elem = new THREE.Object3D();
+      new_elem.add(new_shape);
+      elem.add(...shells1);
+      new_elem.add(...shells2);
       puzzle.add(new_elem);
-
-      this.sliceShape(elem, cut, new_elem);
-
-      for ( let shell of shells1 )
-        elem.add(shell);
-      for ( let shell of shells2 )
-        new_elem.add(shell);
 
       let cuts1 = new Set();
       for ( let shell1 of shells1 )
@@ -216,13 +223,45 @@ class TwistySphereBuilder
         this.sliceElement(elem, cut.clone().applyMatrix4(new THREE.Matrix4().getInverse(elem.matrixWorld)));
     return puzzle;
   }
-  twist(puzzle, x, q) {
-    var targets = puzzle.userData.sides[x].map((b, i) => b === FRONT && puzzle.children[i]).filter(b => b);
-    var axis = puzzle.userData.cuts[x].normal;
-    var angle = puzzle.userData.angles[x][q] || 0;
-    var rot = new THREE.Quaternion().setFromAxisAngle(axis, angle*Math.PI/2);
-    for ( let target of targets )
-      target.quaternion.premultiply(rot);
+
+  standardize(op) {
+    if ( op.type == "canonical" ) {
+      let {x, q, angle} = op;
+      let cut = puzzle.userData.cuts[x];
+      if ( q !== undefined ) angle = puzzle.userData.angles[x][q];
+      if ( angle === undefined ) angle = 0;
+      return {type:"standard", cut, angle};
+
+    } else if ( op.type == "standard" ) {
+      return op;
+    }
+  }
+  canonicalize(op) {
+    if ( op.type == "canonical" ) {
+      return op;
+
+    } else if ( op.type == "standard" ) {
+      let {cut, angle} = op;
+      // ...
+    }
+  }
+  twist(puzzle, op) {
+    if ( op.type == "canonical" ) {
+      let {x, q, angle} = op;
+      let targets = puzzle.userData.sides[x].map((b, i) => b === FRONT && puzzle.children[i]).filter(b => b);
+      let axis = puzzle.userData.cuts[x].normal;
+      if ( q !== undefined ) angle = puzzle.userData.angles[x][q];
+      if ( angle === undefined ) angle = 0;
+      let rot = new THREE.Quaternion().setFromAxisAngle(axis, angle*Math.PI/2);
+      for ( let target of targets )
+        target.quaternion.premultiply(rot);
+      return op;
+
+    } else if ( op.type == "standard" ) {
+      let {cut, angle} = op;
+      // ...
+      // return this.canonicalize(op);
+    }
   }
 
   findCuts(puzzle) {
@@ -336,10 +375,12 @@ class TwistySphereBuilder
     this.computeAnglesMatches(puzzle);
     return puzzle;
   }
-  analyzeAfterTwist(puzzle, x, q) {
+  analyzeAfterTwist(puzzle, op) {
+    var {x, q, angle} = this.canonicalize(op);
     var elem_twisted = puzzle.userData.sides[x].map(s => s === FRONT);
     var axis = puzzle.userData.cuts[x].normal;
-    var angle = puzzle.userData.angles[x][q] || 0;
+    if ( q !== undefined ) angle = puzzle.userData.angles[x][q];
+    if ( angle === undefined ) angle = 0;
     var rot = new THREE.Matrix4().makeRotationAxis(axis, angle*Math.PI/2);
 
     var old_sides = puzzle.userData.sides;
@@ -396,8 +437,7 @@ class BasicController
     disk.translate(0, 0, -plane.constant);
     disk.lookAt(plane.normal);
 
-    var sphr = SphericalGeometer.quadrant(plane);
-    var color = new THREE.Color(`hsl(${Math.floor(Math.abs(sphr-1)*300)}, 100%, 50%)`);
+    var color = SphericalGeometer.qcolor(SphericalGeometer.quadrant(plane));
     var material = new THREE.MeshBasicMaterial({color:color});
     return new THREE.Mesh(disk, material);
   }
@@ -408,36 +448,120 @@ class BasicController
     ring.translate(0, 0, -plane.constant);
     ring.lookAt(plane.normal);
 
-    var sphr = SphericalGeometer.quadrant(plane);
-    var color = new THREE.Color(`hsl(${Math.floor(Math.abs(sphr-1)*300) + angle*90}, 100%, 50%)`);
+    var quad = SphericalGeometer.quadrant(plane);
+    var color = new THREE.Color(`hsl(${Math.floor(Math.abs(quad-1)*300) + angle*90}, 100%, 50%)`);
     var material = new THREE.MeshBasicMaterial({color:color});
     return new THREE.Mesh(ring, material);
   }
 
+  makeCut(puzzle, x) {
+    var cut = this.makeCutHelper(puzzle.userData.cuts[x]);
+    cut.material.transparent = true;
+    cut.material.opacity = 0.3;
+
+    cut.userData.hoverable = true;
+    cut.userData.x = x;
+    cut.userData.elems = puzzle.children.filter((elem, i) => puzzle.userData.sides[x][i] === FRONT);
+
+    var enter_handler = event => {
+      event.target.material.opacity = 0.7;
+      for ( let elem of event.target.userData.elems )
+        this.display.highlight(elem.children.find(e => e.name=="shape"));
+    };
+    var leave_handler = event => {
+      event.target.material.opacity = 0.3;
+      for ( let elem of event.target.userData.elems )
+        this.display.unhighlight(elem.children.find(e => e.name=="shape"));
+    };
+    cut.addEventListener("mouseenter", enter_handler);
+    cut.addEventListener("mouseleave", leave_handler);
+
+    var finalize = self => {
+      for ( let elem in self.userData.elems )
+        this.display.unhighlight(elem.children.find(e => e.name=="shape"));
+    };
+    cut.userData.finalize = [finalize];
+
+    return cut;
+  }
+  makeDraggableCut(puzzle, x) {
+    var cut = this.makeCut(puzzle, x);
+    cut.userData.draggable = true;
+    cut.userData.angle = 0;
+
+    var dragstart_handler = event => {
+      var normal = new THREE.Vector3().copy(puzzle.userData.cuts[event.target.userData.x].normal);
+      var constant = -normal.dot(event.point);
+      var plane = new THREE.Plane(normal, constant);
+      cut.userData.plane = plane;
+
+      var {phi, theta} = new THREE.Spherical().setFromVector3(normal);
+      var rot0 = new THREE.Quaternion().setFromAxisAngle({x:-Math.cos(theta), y:0, z:Math.sin(theta)}, phi);
+      var {theta:theta0} = new THREE.Spherical().setFromVector3(event.point.clone().applyQuaternion(rot0));
+      rot0.premultiply(new THREE.Quaternion().setFromAxisAngle({x:0, y:1, z:0}, -theta0));
+      cut.userData.rot0 = rot0;
+
+      cut.userData.quats0 = cut.userData.elems.map(e => e.quaternion.clone());
+    };
+    var drag_handler = event => {
+      var {point} = this.display.pointer(event.originalEvent, cut.userData.plane);
+      if ( !point )
+        return;
+      var {theta} = new THREE.Spherical().setFromVector3(point.clone().applyQuaternion(cut.userData.rot0));
+      var angle = ((theta*2/Math.PI) % 4 + 4) % 4;
+      var rot = new THREE.Quaternion().setFromAxisAngle(cut.userData.plane.normal, angle*Math.PI/2);
+      for ( let [elem, quat0] of zip(cut.userData.elems, cut.userData.quats0) )
+        elem.quaternion.multiplyQuaternions(rot, quat0);
+    };
+    var dragend_handler = event => {
+      var {point} = this.display.pointer(event.originalEvent, cut.userData.plane);
+      if ( !point )
+        return;
+      var {theta} = new THREE.Spherical().setFromVector3(point.clone().applyQuaternion(cut.userData.rot0));
+      var angle = ((theta*2/Math.PI) % 4 + 4) % 4;
+      cut.userData.angle += angle;
+      var rot = new THREE.Quaternion().setFromAxisAngle(cut.userData.plane.normal, angle*Math.PI/2);
+      for ( let [elem, quat0] of zip(cut.userData.elems, cut.userData.quats0) )
+        elem.quaternion.multiplyQuaternions(rot, quat0);
+    };
+    cut.addEventListener("dragstart", dragstart_handler);
+    cut.addEventListener("drag", drag_handler);
+    cut.addEventListener("dragend", dragend_handler);
+
+    var finalize = self => {
+      self.removeEventListener("dragstart", dragstart_handler);
+      self.removeEventListener("drag", drag_handler);
+      self.removeEventListener("dragend", dragend_handler);
+    };
+    cut.userData.finalize.push(finalize);
+
+    return cut;
+  }
+
   selectElement(puzzle, filter=always) {
     return new Promise((resolve, reject) => {
-      var elements = puzzle.children.map((elem, i) => filter(elem, i) ? elem : null);
+      var shapes = puzzle.children.map((elem, i) => filter(elem, i) ? elem.children.find(e => e.name=="shape") : null);
 
       var enter_handler = event => { this.display.highlight(event.target); };
       var leave_handler = event => { this.display.unhighlight(event.target); };
-      var click_handler = event => { remove(); resolve([event.target, elements.indexOf(event.target)]); };
+      var click_handler = event => { remove(); resolve([event.target.parent, shapes.indexOf(event.target)]); };
       var esc_handler = event => { if ( event.which === 27 ) { remove(); reject("esc"); } };
 
       var remove = () => {
-        for ( let elem of elements ) if ( elem )
-          this.display.unhighlight(elem);
-        for ( let elem of elements ) if ( elem ) {
-          elem.removeEventListener("mouseenter", enter_handler);
-          elem.removeEventListener("mouseleave", leave_handler);
-          elem.removeEventListener("click", click_handler);
+        for ( let shape of shapes ) if ( shape )
+          this.display.unhighlight(shape);
+        for ( let shape of shapes ) if ( shape ) {
+          shape.removeEventListener("mouseenter", enter_handler);
+          shape.removeEventListener("mouseleave", leave_handler);
+          shape.removeEventListener("click", click_handler);
         }
         document.removeEventListener("keydown", esc_handler);
       }
 
-      for ( let elem of elements ) if ( elem ) {
-        elem.addEventListener("mouseenter", enter_handler);
-        elem.addEventListener("mouseleave", leave_handler);
-        elem.addEventListener("click", click_handler);
+      for ( let shape of shapes ) if ( shape ) {
+        shape.addEventListener("mouseenter", enter_handler);
+        shape.addEventListener("mouseleave", leave_handler);
+        shape.addEventListener("click", click_handler);
       }
       document.addEventListener("keydown", esc_handler);
     });
@@ -455,14 +579,14 @@ class BasicController
         var x = cuts.indexOf(event.target);
         for ( let i in puzzle.userData.sides[x] )
           if ( puzzle.userData.sides[x][i] === FRONT )
-            this.display.highlight(puzzle.children[i]);
+            this.display.highlight(puzzle.children[i].children.find(e => e.name=="shape"));
       };
       var leave_handler = event => {
         event.target.material.opacity = 0.3;
         var x = cuts.indexOf(event.target);
         for ( let i in puzzle.userData.sides[x] )
           if ( puzzle.userData.sides[x][i] === FRONT )
-            this.display.unhighlight(puzzle.children[i]);
+            this.display.unhighlight(puzzle.children[i].children.find(e => e.name=="shape"));
       };
       var click_handler = event => {
         remove();
@@ -474,10 +598,10 @@ class BasicController
 
       var remove = () => {
         for ( let elem of puzzle.children )
-          this.display.unhighlight(elem);
+          this.display.unhighlight(elem.children.find(e => e.name=="shape"));
         this.display.remove(...cuts.filter(c => c));
         document.removeEventListener("keydown", esc_handler);
-      }
+      };
 
       this.display.add(...cuts.filter(c => c));
       for ( let c of cuts ) if ( c ) {
@@ -503,7 +627,7 @@ class BasicController
       }
       for ( let i in puzzle.userData.sides[x] )
         if ( puzzle.userData.sides[x][i] === FRONT )
-          this.display.highlight(puzzle.children[i]);
+          this.display.highlight(puzzle.children[i].children.find(e => e.name=="shape"));
 
       var enter_handler = event => { event.target.material.opacity = 0.7; };
       var leave_handler = event => { event.target.material.opacity = 0.3; };
@@ -574,35 +698,39 @@ class BasicController
         .then(([_, x]) => this.selectTwist(puzzle, x))
         .catch(e => {if ( e == "esc" ) { sel_twist_loop_(); throw "re-select twist"; } throw e; })
         .then(([_, __, x, q]) => this.animatedTwist(puzzle, x, q)
-          .then(() => { this.builder.analyzeAfterTwist(puzzle, x, q); }))
+          .then(() => { this.builder.analyzeAfterTwist(puzzle, {type:"canonical", x, q}); }))
         .then(sel_twist_loop_)
         .catch(e => {if ( typeof e == "string" ) console.log(e); else throw e; });
     }
     sel_twist_loop_();
   }
   explodeHandler(puzzle) {
-    var elements = puzzle.children.slice(0);
+    var shapes = puzzle.children.map(elem => elem.children.find(e => e.name=="shape"));
 
-    for ( let elem of elements ) {
-      if ( elem.geometry.vertices.length ) {
-        let number = elem.geometry.vertices.length;
-        let center = elem.geometry.vertices.reduce((a, v) => a.add(v), new THREE.Vector3()).divideScalar(number);
+    for ( let shape of shapes ) {
+      if ( shape.geometry.vertices.length ) {
+        let number = shape.geometry.vertices.length;
+        let center = shape.geometry.vertices.reduce((a, v) => a.add(v), new THREE.Vector3()).divideScalar(number);
         let dis = center.length();
-        elem.userData.center = [center.normalize(), dis];
-        elem.userData.oldPosition = elem.position.clone();
+        shape.userData.center = [center.normalize(), dis];
+        shape.userData.oldPosition = shape.position.clone();
+      } else {
+        shape.userData.center = [new THREE.Vector3(0,0,0), 0];
+        shape.userData.oldPosition = shape.position.clone();
       }
     }
 
     var wheel_handler = event => {
-      for ( let elem of elements )
-        elem.translateOnAxis(elem.userData.center[0], -elem.userData.center[1]*event.deltaY/100);
+      for ( let shape of shapes )
+        shape.translateOnAxis(shape.userData.center[0], -shape.userData.center[1]*event.deltaY/100);
     };
     var esc_handler = event => { if ( event.which === 27 ) remove(); };
 
     var remove = () => {
-      for ( let elem of elements ) {
-        elem.position.copy(elem.userData.oldPosition);
-        delete elem.userData.oldPosition;
+      for ( let shape of shapes ) {
+        shape.position.copy(shape.userData.oldPosition);
+        delete shape.userData.center;
+        delete shape.userData.oldPosition;
       }
       document.removeEventListener("wheel", wheel_handler);
       document.removeEventListener("keydown", esc_handler);
@@ -638,7 +766,22 @@ class Display
       this.renderer.setSize(window.innerWidth, window.innerHeight);
     }, false);
 
-    // controls
+    // background
+    var background_geometry = new THREE.IcosahedronGeometry(10, 0);
+    var background_uv = [new THREE.Vector2(0,0), new THREE.Vector2(0,1), new THREE.Vector2(Math.sqrt(3)/2,0)];
+    for ( let i in background_geometry.faceVertexUvs[0] )
+      background_geometry.faceVertexUvs[0][i] = background_uv.slice(0);
+    var background_material = new THREE.MeshBasicMaterial({color:0xffffff});
+    background_material.side = THREE.DoubleSide;
+    var background_texture = new THREE.TextureLoader().load("background.png"); // broken noise, made by http://bg.siteorigin.com/
+    background_texture.wrapS = THREE.RepeatWrapping;
+    background_texture.wrapT = THREE.RepeatWrapping;
+    background_texture.repeat = new THREE.Vector2(2.5, 2.5);
+    background_material.map = background_texture;
+    var background_shape = new THREE.Mesh(background_geometry, background_material);
+    this.scene.add(background_shape);
+
+    // navigation control
     this.rotateSpeed = Math.PI/500;
     this.zoomSpeed = 1/100;
     this.distanceRange = [2, 8];
@@ -649,7 +792,10 @@ class Display
     this.setCamera(1,2,3);
 
     document.addEventListener("contextmenu", event => event.preventDefault());
+    this.trackball_lock = new Set();
     this.dom.addEventListener("mousemove", event => {
+      if ( this.trackball_lock.size ) return;
+
       var x = event.movementX, y = -event.movementY;
 
       if ( event.buttons === 1 ) { // rotate
@@ -672,61 +818,79 @@ class Display
       }
     }, false);
 
-    // make background
-    var background_geometry = new THREE.IcosahedronGeometry(10, 0);
-    var background_uv = [new THREE.Vector2(0,0), new THREE.Vector2(0,1), new THREE.Vector2(Math.sqrt(3)/2,0)];
-    for ( let i in background_geometry.faceVertexUvs[0] )
-      background_geometry.faceVertexUvs[0][i] = background_uv.slice(0);
-    var background_material = new THREE.MeshBasicMaterial({color:0xffffff});
-    background_material.side = THREE.DoubleSide;
-    var background_texture = new THREE.TextureLoader().load("background.png"); // broken noise, made by http://bg.siteorigin.com/
-    background_texture.wrapS = THREE.RepeatWrapping;
-    background_texture.wrapT = THREE.RepeatWrapping;
-    background_texture.repeat = new THREE.Vector2(2.5, 2.5);
-    background_material.map = background_texture;
-    var background_shape = new THREE.Mesh(background_geometry, background_material);
-    this.scene.add(background_shape);
 
-    // event system on Object3D, implemented by raycaster
+    // event system on Object3D
     this.raycaster = new THREE.Raycaster();
     this.raycaster.linePrecision = 0;
-    var mouse = new THREE.Vector2();
-    var target = null, ray_event = {};
+
+    // hover event
+    var hover_event = {};
 
     this.dom.addEventListener("mousemove", event => {
-      mouse.set((event.clientX/window.innerWidth)*2 - 1,
-                - (event.clientY/window.innerHeight)*2 + 1);
-      this.raycaster.setFromCamera(mouse, this.camera);
-      
-      var hoverable_objects = [];
-      this.scene.traverse(e => { if ( e.userData.hoverable ) hoverable_objects.push(e); });
-      [ray_event = {}] = this.raycaster.intersectObjects(hoverable_objects, true);
+      var pre_target = hover_event.object;
+      hover_event = this.pointer(event, e => e.userData.hoverable);
 
-      var pre_target = target;
-      target = ray_event.object;
-      while ( target && !target.userData.hoverable ) target = target.parent;
-
-      if ( pre_target !== target ) {
+      if ( pre_target !== hover_event.object ) {
         if ( pre_target )
-          pre_target.dispatchEvent(Object.assign({type:"mouseleave"}, ray_event));
-        if ( target )
-          target.dispatchEvent(Object.assign({type:"mouseenter"}, ray_event));
+          pre_target.dispatchEvent(Object.assign({type:"mouseleave", originalEvent:event}, hover_event));
+        if ( hover_event.object )
+          hover_event.object.dispatchEvent(Object.assign({type:"mouseenter", originalEvent:event}, hover_event));
       }
-      if ( target )
-        target.dispatchEvent(Object.assign({type:"mouseover"}, ray_event));
+      if ( hover_event.object )
+        hover_event.object.dispatchEvent(Object.assign({type:"mouseover", originalEvent:event}, hover_event));
     }, false);
 
-    // click control
-    var click_flag = false;
-    this.dom.addEventListener("mousedown", event => { click_flag = true; }, false);
+    // click event
+    var click_event = {};
+
+    this.dom.addEventListener("mousedown", event => {
+      if ( !click_event.object ) {
+        click_event = this.pointer(event, e => e.userData.hoverable);
+      }
+    }, false);
     this.dom.addEventListener("mousemove", event => {
-      if ( Math.abs(event.movementX) > 1 || Math.abs(event.movementY) > 1 )
-        click_flag = false;
+      if ( click_event.object ) {
+        if ( Math.abs(event.movementX) > 1 || Math.abs(event.movementY) > 1 )
+          click_event = {};
+      }
     }, false);
     this.dom.addEventListener("mouseup", event => {
-      if ( click_flag ) {
-        click_flag = false;
-        if ( target ) target.dispatchEvent(Object.assign({type:"click"}, ray_event));
+      if ( click_event.object ) {
+        click_event.object.dispatchEvent(Object.assign({type:"click", originalEvent:event}, click_event));
+        click_event = {};
+      }
+    }, false);
+
+    // drag event
+    var dragging = false, dragstart_event = {};
+    const DRAG_KEY = Symbol("drag");
+
+    this.dom.addEventListener("mousedown", event => {
+      if ( event.buttons === 1 && !dragging ) {
+        dragstart_event = this.pointer(event, e => e.userData.hoverable);
+        if ( dragstart_event.object && !dragstart_event.object.userData.draggable )
+          dragstart_event = {};
+        if ( dragstart_event.object )
+          this.lockTrackball(DRAG_KEY);
+      }
+    }, false);
+    this.dom.addEventListener("mousemove", event => {
+      if ( event.buttons === 1 ) {
+        if ( !dragging && dragstart_event.object ) {
+          dragstart_event.object.dispatchEvent(Object.assign({type:"dragstart", originalEvent:event}, dragstart_event));
+          dragging = true;
+        }
+
+        if ( dragging )
+          dragstart_event.object.dispatchEvent(Object.assign({type:"drag", originalEvent:event}));
+      }
+    }, false);
+    this.dom.addEventListener("mouseup", event => {
+      if ( dragging ) {
+        dragstart_event.object.dispatchEvent({type:"dragend", originalEvent:event});
+        this.unlockTrackball(DRAG_KEY);
+        dragstart_event = {};
+        dragging = false;
       }
     }, false);
 
@@ -744,11 +908,47 @@ class Display
     if ( objs.length === 0 )
       return;
     this.scene.add(...objs);
+    for ( let obj of objs )
+      if ( obj.userData.initialize )
+        for ( let func of obj.userData.initialize )
+          func(obj);
   }
   remove(...objs) {
     if ( objs.length === 0 )
       return;
     this.scene.remove(...objs);
+    for ( let obj of objs )
+      if ( obj.userData.finalize )
+        for ( let func of obj.userData.finalize )
+          func(obj);
+  }
+
+  pointer(event, objs) {
+    if ( typeof objs == "function" ) {
+      let filter = objs;
+      objs = [];
+      this.scene.traverse(e => { if ( filter(e) ) objs.push(e); });
+    }
+
+    var mouse = new THREE.Vector2(
+      event.clientX/window.innerWidth*2 - 1,
+      - event.clientY/window.innerHeight*2 + 1);
+    this.raycaster.setFromCamera(mouse, this.camera);
+
+    if ( Array.isArray(objs) ) {
+      var [ray_event={}] = this.raycaster.intersectObjects(objs, true);
+      while ( ray_event.object && !ray_event.object.userData.hoverable )
+        ray_event.object = ray_event.object.parent;
+      return ray_event;
+
+    } else if ( objs.normal !== undefined && objs.constant !== undefined ) {
+      var point = this.raycaster.ray.intersectPlane(objs, new THREE.Vector3());
+      var distance = this.raycaster.ray.distanceToPlane(objs);
+      return {distance, point, objs};
+
+    } else {
+      throw "??";
+    }
   }
 
   setCamera(x, y, z, dis) {
@@ -760,6 +960,12 @@ class Display
 
     this.camera.position.z = dis;
     this.trackball.lookAt(vec.normalize());
+  }
+  lockTrackball(key) {
+    this.trackball_lock.add(key);
+  }
+  unlockTrackball(key) {
+    this.trackball_lock.delete(key);
   }
 
   highlight(...targets) {
