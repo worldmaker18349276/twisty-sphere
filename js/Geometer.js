@@ -140,12 +140,17 @@ class FuzzyTool
   less_than(v1, v2) {
     return (v1-v2 < this.tolerance);
   }
+  inrange(v, v1, v2) {
+    return this.greater_than(v, v1) && this.less_than(v, v2);
+  }
   equals(v1, v2) {
-    if ( v1.x !== undefined && v1.y !== undefined && v1.z !== undefined )
+    if ( v1.fuzzyKeys !== undefined && v2.fuzzyKeys !== undefined )
+      return this.equals(v1.fuzzyKeys(), v2.fuzzyKeys());
+    else if ( v1.x !== undefined && v1.y !== undefined && v1.z !== undefined ) // THREE.Vector3
       return (Math.abs(v1.x-v2.x) < this.tolerance)
           && (Math.abs(v1.y-v2.y) < this.tolerance)
           && (Math.abs(v1.z-v2.z) < this.tolerance);
-    else if ( v1.constant !== undefined && v1.normal !== undefined )
+    else if ( v1.constant !== undefined && v1.normal !== undefined ) // THREE.Plane
       return this.equals(v1.constant, v2.constant)
           && this.equals(v1.normal, v2.normal);
     else
@@ -198,6 +203,8 @@ class Geometer
   }
   // connect `(face,edge)` and `(adjFace,adjEdge)`,
   //   then return connected links: `[ [face,edge], [adjFace,adjEdge] ]`
+  // or disconnect `(face,edge)` if `adjFace` is undefined,
+  //   then return connected links: `[ [face,edge] ]`
   static connect(face, edge, adjFace, adjEdge) {
     if ( adjFace ) {
       if ( !face.adj ) face.adj = {};
@@ -303,7 +310,7 @@ class Geometer
   }
 
   // copy flying face
-  // shallow copy flying data `face.labels`, `face.normals`, `face.colors`, `face.uvs`,
+  // shallow copy flying data `face.labels`, `face.vertexUvs`,
   //   but no link `face.ca`, `face.ab`, `face.bc` and `face.adj`
   static copyFace(face, copied=new THREE.Face3().copy(face)) {
     copied.labels = Object.assign({}, face.labels);
@@ -349,9 +356,22 @@ class Geometer
 
     for ( let face of geometry.faces ) {
       [face.a, face.b, face.c] = [face.c, face.b, face.a];
+
+      if ( face.vertexNormals.length )
+        face.vertexNormals.reverse();
+      if ( face.vertexColors.length )
+        face.vertexColors.reverse();
+      if ( face.vertexUvs )
+        for ( let uvs of face.vertexUvs ) uvs.reverse();
+
+      face.normal.negate();
+
       var old_adj = Object.assign({}, face.adj);
       for ( let edge of EDGES )
         face.adj[EDGES_REV[edge]] = EDGES_REV[old_adj[edge]];
+      var old_labels = Object.assign({}, face.labels);
+      for ( let edge of EDGES )
+        face.labels[EDGES_REV[edge]] = EDGES_REV[old_labels[edge]];
     }
 
     for ( let bd of geometry.boundaries )
@@ -365,7 +385,7 @@ class Geometer
     // find non-trivial vertices, which must be refered by face
     var nontriviality = []; // index of vertex -> if vertex is non-trivial
     var nontrivial_vertices = []; // non-trivial vertices
-    var nontrivial_vertices_map = {}; // index of merged vertex -> index of non-trivial vertex
+    var nontrivial_vertices_map = {}; // original vertex index -> vertex index in `nontrivial_vertices`
   
     for ( let face of geometry.faces ) for ( let a of VERTICES ) {
       let i = face[a];
@@ -385,7 +405,7 @@ class Geometer
     geometry.vertices = nontrivial_vertices;
   }
 
-  // split face at edge with interpolation alpha `t` and vertex index `k`
+  // split `face` at `edge` with interpolation alpha `t` and vertex index `k`
   // return the splited face `[face_A, face_B]`
   //
   //          c                            c          
@@ -447,7 +467,7 @@ class Geometer
 
     return [face_A, face_B];
   }
-  // interpolate geometry at edge `(face,edge)`
+  // interpolate `geometry` at edge `(face,edge)`
   // new faces will be insert after splited faces
   // return the new faces splited out of `face` and its dual
   static interpolateAtEdge(geometry, face, edge, t, k) {
@@ -497,12 +517,12 @@ class Geometer
         else if ( geometry.boundaries[i][1] == EDGES_PREV[adjEdge] )
           geometry.boundaries.splice(i, 1, [adjFace_A, EDGES_PREV[adjEdge]]);
         else
-          throw `unknown side ${geometry.boundaries[i][1]}`;
+          console.assert(false);
       }
 
     return [face_A, face_B, adjFace_A, adjFace_B];
   }
-  // slice geometry by plane
+  // slice `geometry` by `plane`
   // in-place modify `geometry` as positive side, and modify `geometry_back` as negative side
   static slice(geometry, plane, geometry_back, label, label_back=label) {
     plane = new THREE.Plane().copy(plane);
@@ -1131,226 +1151,3 @@ class Geometer
   }
 }
 
-
-//  ######  ########  ##     ## ######## ########  ####  ######     ###    ##       
-// ##    ## ##     ## ##     ## ##       ##     ##  ##  ##    ##   ## ##   ##       
-// ##       ##     ## ##     ## ##       ##     ##  ##  ##        ##   ##  ##       
-//  ######  ########  ######### ######   ########   ##  ##       ##     ## ##       
-//       ## ##        ##     ## ##       ##   ##    ##  ##       ######### ##       
-// ##    ## ##        ##     ## ##       ##    ##   ##  ##    ## ##     ## ##       
-//  ######  ##        ##     ## ######## ##     ## ####  ######  ##     ## ######## 
-
-
-class SphericalGeometer
-{
-  static align(vs, normal) {
-    var {phi, theta} = new THREE.Spherical().setFromVector3(normal);
-    var rot = new THREE.Quaternion().setFromAxisAngle({x:-Math.cos(theta), y:0, z:Math.sin(theta)}, phi);
-    return vs.map(v => v.clone().applyQuaternion(rot))
-             .map(v => new THREE.Spherical().setFromVector3(v));
-  }
-  static angleTo(normal, v0, v1) {
-    [v0,v1] = this.align([v0,v1], normal);
-    const TAU = 2*Math.PI;
-    return ((v1.theta-v0.theta) % TAU + TAU) % TAU;
-  }
-
-  static quadrant(plane, R=1) {
-    return 2 - Math.acos(plane.constant/R)*2/Math.PI;
-  }
-  static ncolor(normal) {
-    let {phi, theta} = new THREE.Spherical().setFromVector3(normal);
-    return new THREE.Color().setHSL(theta/2/Math.PI, 1, phi/Math.PI);
-  }
-  static qcolor(quad) {
-    return new THREE.Color(`hsl(${Math.floor(Math.abs(quad-1)*300)}, 100%, 50%)`);
-  }
-  static plane(center, quad, R=1) {
-    if ( Array.isArray(center) )
-      center = new THREE.Vector3().fromArray(center).normalize();
-    else
-      center = new THREE.Vector3().copy(center).normalize();
-    var constant = Math.cos((2-quad)*Math.PI/2)*R;
-    return new THREE.Plane(center, constant);
-  }
-
-  // make arc with arguments `arc={type, center, quad, v0, v1, vertices}`
-  // - empty:  `{type:"empty",  center, quad}`
-  // - arc:    `{type:"arc",    center, quad, v0, v1}` with `(quad < 2 && quad > 0)`
-  // - circle: `{type:"circle", center, quad, v0}`
-  static makeVerticesOfArc(arc, dA=0.02) {
-    if ( arc.type == "empty" )
-      return arc;
-
-    arc.center = new THREE.Vector3().copy(arc.center).normalize();
-    if ( arc.quad >= 2 || arc.quad <= 0 )
-      throw "bad quadrant value";
-
-    if ( arc.v0 === undefined ) {
-      let ax = new THREE.Vector3(0,1,0).cross(arc.center);
-      if ( ax.length() < 1e-3 )
-        ax = new THREE.Vector3(1,0,0).cross(arc.center);
-      ax.normalize();
-      arc.v0 = new THREE.Vector3().copy(arc.center).applyAxisAngle(ax, arc.quad*Math.PI/2);
-    }
-    if ( arc.v1 === undefined )
-      arc.v1 = arc.v0;
-
-    if ( arc.type === undefined ) {
-      if ( arc.v0 === arc.v1 )
-        arc.type = "circle";
-      else
-        arc.type = "arc";
-    }
-
-    arc.vertices = [];
-
-    if ( arc.type == "circle" ) {
-      let da = dA*Math.sin(arc.quad*Math.PI/2);
-      let angle = 2*Math.PI;
-      for ( let a=0; a<angle; a+=da )
-        arc.vertices.push(new THREE.Vector3().copy(arc.v0).applyAxisAngle(arc.center, a));
-
-    } else if ( arc.type == "arc" ) {
-      let da = dA*Math.sin(arc.quad*Math.PI/2);
-      let angle = this.angleTo(arc.center, arc.v0, arc.v1);
-      for ( let a=0; a<angle; a+=da )
-        arc.vertices.push(new THREE.Vector3().copy(arc.v0).applyAxisAngle(arc.center, a));
-      arc.vertices.push(arc.v1);
-    }
-
-    return arc;
-  }
-  // return list of sliced arc segments, or [<empty arc>] if nothing leave
-  static sliceArc(arc, plane) {
-    if ( arc.type == "empty" )
-      return [arc];
-    if ( !arc.vertices )
-      this.makeVerticesOfArc(arc);
-    var vs = arc.vertices
-      .map(v => ({v, dis:plane.distanceToPoint(v)}))
-      .map(({v, dis}) => ({v, dis, sgn:defaultFuzzyTool.sign(dis)}));
-
-    function interpolate(vi, vj) {
-      var t = vi.dis/(vi.dis - vj.dis);
-      var vk_v = new THREE.Vector3().copy(vi.v).lerp(vj.v, t);
-      return {v:vk_v, dis:0, sgn:0};
-    }
-
-    // special cases: all or nothing
-    if ( vs.every(({sgn}) => sgn>=0) )
-      return [arc];
-    else if ( vs.every(({sgn}) => sgn<=0) )
-      return [{center:arc.center, quad:arc.quad, type:"empty"}];
-
-    // cut circle as arc
-    if ( arc.type == "circle" ) {
-      while ( !(vs[0].sgn >= 0 && vs[vs.length-1].sgn === -1) )
-        vs.push(vs.shift());
-
-      if ( vs[0].sgn === 1 )
-        vs.unshift(interpolate(vs[0], vs[vs.length-1]));
-    }
-
-    // interpolate
-    for ( let i=0; i<vs.length; i++ )
-      if ( (vs[i-1] || vs[0]).sgn * vs[i].sgn < 0 )
-        vs.splice(i, 0, interpolate(vs[i-1], vs[i]));
-
-    // slice arc as multiple segments
-    var start_ind = [];
-    var end_ind = [];
-
-    if ( vs[0].sgn !== -1 )
-      start_ind.push(0);
-    for ( let i=0; i<vs.length; i++ ) {
-      let sgn = vs[i].sgn;
-      let prev_sgn = (vs[i-1] || vs[0]).sgn;
-
-      if ( prev_sgn === -1 && sgn === 0 )
-        start_ind.push(i);
-      else if ( prev_sgn === 0 && sgn === -1 )
-        end_ind.push(i);
-    }
-    if ( vs[vs.length-1].sgn !== -1 )
-      end_ind.push(vs.length);
-
-    var sliced_vs = [];
-    for ( let [i, j] of zip(start_ind, end_ind) ) {
-      let subvs = vs.slice(i,j);
-      if ( subvs.every(({sgn}) => sgn!==1) )
-        continue;
-      if ( subvs.length < 5 ) {
-        console.warn("bad slice of arc");
-        continue;
-      }
-      sliced_vs.push(subvs.map(({v}) => v));
-    }
-
-    if ( sliced_vs.length === 0 )
-      return [{center:arc.center, quad:arc.quad, type:"empty"}];
-    else
-      return sliced_vs.map(vs => ({
-        type: "arc",
-        center: arc.center,
-        quad: arc.quad,
-        v0: vs[0],
-        v1: vs[vs.length-1],
-        vertices: vs
-      }));
-  }
-  // `arcs` represent shell of sphere produced by intersection of planes,
-  //   element of which is boundaries of shell (includes empty arc)
-  // `[]` represent full shell of sphere; `null` represent empty shell
-  static intersectArcs(arcs, center, quad) {
-    center = new THREE.Vector3().copy(center).normalize();
-    if ( quad >= 2 || quad <= 0 )
-      throw "bad quadrant value";
-
-    // special cases: all or nothing
-    if ( arcs.find(arc => defaultFuzzyTool.equals(arc.quad, quad)
-                       && defaultFuzzyTool.equals(arc.center, center)) )
-      return arcs;
-
-    var anticenter = new THREE.Vector3().copy(center).negate();
-    var antiquad = 2-quad;
-    if ( arcs.find(arc => defaultFuzzyTool.equals(arc.quad, antiquad)
-                       && defaultFuzzyTool.equals(arc.center, anticenter)) )
-      return null;
-
-    // slice arcs
-    var res = [];
-
-    var new_plane = this.plane(center, quad);
-    res.push(...flatmap(arcs, arc => this.sliceArc(arc, new_plane)));
-
-    var planes = defaultFuzzyTool.collect(map(arcs, arc => this.plane(arc.center, arc.quad)));
-    var new_arcs = [this.makeVerticesOfArc({center, quad})];
-    for ( let plane of planes )
-      new_arcs = [...flatmap(new_arcs, arc => this.sliceArc(arc, plane))];
-    res.push(...new_arcs);
-
-    if ( res.every(arc => arc.type=="empty") )
-      return null;
-    else
-      return res;
-  }
-
-  static makeLines(arcs, geometry=new THREE.Geometry()) {
-    if ( arcs === null )
-      return geometry;
-
-    for ( let arc of arcs ) {
-      let sub = new THREE.Geometry();
-      sub.vertices = arc.vertices;
-      let mat = new THREE.LineBasicMaterial({color:0xff0000});
-
-      if ( arc.type == "cricle" )
-        geometry.add(new THREE.LineLoop(sub, mat));
-      else if ( arc.type == "arc" )
-        geometry.add(new THREE.Line(sub, mat));
-    }
-
-    return geometry;
-  }
-}
