@@ -3,15 +3,15 @@ function plane(x, y, z, q) {
   return SphGeometer.plane([x,y,z], q);
 }
 
-function cloneObject3D(obj, copied=obj.clone()) {
-  copied.geometry = Geometer.copy(obj.geometry);
-  if ( Array.isArray(copied.material) )
-    copied.material = obj.material.map(m => m.clone());
+function cloneObject3D(obj, out=obj.clone()) {
+  out.geometry = Geometer.copy(obj.geometry);
+  if ( Array.isArray(out.material) )
+    out.material = obj.material.map(m => m.clone());
   else
-    copied.material = obj.material.clone();
-  for ( let [target, elem] of zip(copied.children, obj.children) )
-    cloneObject3D(target, elem);
-  return copied;
+    out.material = obj.material.clone();
+  for ( let [elem, target] of zip(obj.children, out.children) )
+    cloneObject3D(elem, target);
+  return out;
 }
 
 function colorball(R=1, N=8) {
@@ -1131,23 +1131,26 @@ class Display
 
       var x = event.movementX, y = -event.movementY;
 
-      if ( event.buttons === 1 ) { // rotate
-        let axis = new THREE.Vector3(-y,x,0);
-        let angle = axis.length()*this.rotateSpeed;
-        this.trackball.rotateOnAxis(axis.normalize(), -angle);
-        event.preventDefault();
+      switch ( event.buttons ) {
+        case 1: // rotate
+          let axis = new THREE.Vector3(-y,x,0).normalize();
+          let angle = Math.sqrt(x*x+y*y)*this.rotateSpeed;
+          this.trackball.rotateOnAxis(axis, -angle);
+          event.preventDefault();
+          break;
 
-      } else if ( event.buttons === 2 ) { // spin
-        let angle = x*this.rotateSpeed;
-        this.trackball.rotateZ(angle);
-        event.preventDefault();
+        case 2: // spin
+          angle = x*this.rotateSpeed;
+          this.trackball.rotateZ(angle);
+          event.preventDefault();
+          break;
 
-      } else if ( event.buttons === 4 ) { // zoom
-        let z = this.camera.position.z - y*this.zoomSpeed;
-        if ( this.distanceRange[0] < z && z < this.distanceRange[1] )
-          this.camera.position.z = z;
-        event.preventDefault();
-
+        case 4: // zoom
+          let z = this.camera.position.z - y*this.zoomSpeed;
+          if ( this.distanceRange[0] < z && z < this.distanceRange[1] )
+            this.camera.position.z = z;
+          event.preventDefault();
+          break;
       }
     }, false);
 

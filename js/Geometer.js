@@ -312,43 +312,44 @@ class Geometer
   // copy flying face
   // shallow copy flying data `face.labels`, `face.vertexUvs`,
   //   but no link `face.ca`, `face.ab`, `face.bc` and `face.adj`
-  static copyFace(face, copied=new THREE.Face3().copy(face)) {
-    copied.labels = Object.assign({}, face.labels);
+  static copyFace(face, out=new THREE.Face3().copy(face)) {
+    out.labels = Object.assign({}, face.labels);
 
-    copied.vertexUvs = [];
+    out.vertexUvs = [];
     if ( face.vertexUvs )
       for ( let l in face.vertexUvs )
         if ( face.vertexUvs[l].length )
-          copied.vertexUvs[l] = face.vertexUvs[l].slice(0);
+          out.vertexUvs[l] = face.vertexUvs[l].slice(0);
 
-    copied.adj = {};
+    out.adj = {};
 
-    return copied;
+    return out;
   }
   // copy flying faces with adjacent links
-  static copyFaces(faces, copied_faces=faces.map(face=>new THREE.Face3().copy(face))) {
-    for ( let [face, copied_face] of zip(faces, copied_faces) ) {
-      this.copyFace(face, copied_face);
+  static copyFaces(faces, out=faces.map(face=>new THREE.Face3().copy(face))) {
+    for ( let [face, out_face] of zip(faces, out) ) {
+      this.copyFace(face, out_face);
 
       // transfer link
+      if ( !face.adj )
+        continue;
       for ( let edge of EDGES ) {
-        if ( !face.adj )
-          break;
         let [adjFace, adjEdge] = [face[edge], face.adj[edge]];
         if ( adjFace !== undefined ) {
-          adjFace = copied_faces[faces.indexOf(adjFace)];
-          [copied_face[edge], copied_face.adj[edge]] = [adjFace, adjEdge];
+          adjFace = out[faces.indexOf(adjFace)];
+          [out_face[edge], out_face.adj[edge]] = [adjFace, adjEdge];
         }
       }
     }
+    return out;
   }
   // copy flying geometry
-  static copy(geometry, copied=geometry.clone()) {
-    copied.nlayer = geometry.nlayer;
-    this.copyFaces(geometry.faces, copied.faces);
-    copied.boundaries = this.boundariesIn(copied);
-    copied.flying = true;
-    return copied;
+  static copy(geometry, out=geometry.clone()) {
+    out.nlayer = geometry.nlayer;
+    this.copyFaces(geometry.faces, out.faces);
+    out.boundaries = this.boundariesIn(out);
+    out.flying = true;
+    return out;
   }
 
   static reverse(geometry) {
@@ -532,7 +533,7 @@ class Geometer
 
     // split edge
     // notice: `geometry.faces` will be modified in method `interpolateAtEdge`,
-    //   but it's easy to prove that processed edges are no need to process agian
+    //   but it's easy to prove that processed edges are no need to process again
     for ( let n=0; n<geometry.faces.length; n++ ) for ( let edge of EDGES ) {
       let face = geometry.faces[n];
       let i = face[edge[0]];
@@ -558,20 +559,14 @@ class Geometer
     const BACK = Symbol("SIDE.BACK");
     
     for ( let face of geometry.faces ) {
-      if ( VERTICES.some(a => sgn[face[a]] !== 0) ) {
-        if ( VERTICES.every(a => sgn[face[a]] >= 0) )
-          face[SIDE] = FRONT;
-        else if ( VERTICES.every(a => sgn[face[a]] <= 0) )
-          face[SIDE] = BACK;
-        else
-          console.assert(false);
-    
-      } else {
-        if ( plane.normal.dot(face.normal) < 0 )
-          face[SIDE] = FRONT;
-        else
-          face[SIDE] = BACK;
-      }
+      if ( VERTICES.every(a => sgn[face[a]] == 0) )
+        face[SIDE] = plane.normal.dot(face.normal) < 0 ? FRONT : BACK;
+      else if ( VERTICES.every(a => sgn[face[a]] >= 0) )
+        face[SIDE] = FRONT;
+      else if ( VERTICES.every(a => sgn[face[a]] <= 0) )
+        face[SIDE] = BACK;
+      else
+        console.assert(false);
     }
     
     // unlink edge between two sides
@@ -593,7 +588,6 @@ class Geometer
       }
     }
 
-    var vertices = geometry.vertices.slice(0);
     var front_faces = geometry.faces.filter(face => face[SIDE] === FRONT);
     var back_faces  = geometry.faces.filter(face => face[SIDE] === BACK );
     front_bd.push(...geometry.boundaries.filter(([face, edge]) => face[SIDE] === FRONT));
@@ -603,7 +597,8 @@ class Geometer
       delete face[SIDE];
     
     // split geometry into `geometry` and `geometry_back`
-    geometry.vertices = vertices;
+    var vertices = geometry.vertices.slice(0);
+
     geometry.faces = front_faces;
     geometry.boundaries = front_bd;
     this.trimVertices(geometry);
