@@ -1,6 +1,8 @@
 function always() { return true; }
 function plane(x, y, z, q) {
-  return SphGeometer.plane([x,y,z], q);
+  var center = new THREE.Vector3(x,y,z).normalize();
+  var constant = -Math.cos(quad*Math.PI/2);
+  return new THREE.Plane(center, constant);
 }
 
 function cloneObject3D(obj, out=obj.clone()) {
