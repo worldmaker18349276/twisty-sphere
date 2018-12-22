@@ -246,28 +246,53 @@ class SphCircle
       return [0, 4, 0, 1]; // kissing anti-exclude
     else if ( distance < this.radius + circle.radius ) {
       // intersect
-      var a = circle.radius*Q;
-      var b = this.radius*Q;
-      var c = angleTo(circle.center, this.center);
-
-      // cosine rules for spherical triangle: cos a = cos b cos c + sin b sin c cos A
-      var [ca, cb, cc] = [Math.cos(a), Math.cos(b), Math.cos(c)];
-      var [sa, sb, sc] = [Math.sin(a), Math.sin(b), Math.sin(c)];
-      var cA = (ca - cb*cc)/(sb*sc);
-      var cB = (cb - cc*ca)/(sc*sa);
-      var cC = (cc - ca*cb)/(sa*sb);
-
-      var angle = Math.acos(cC)/Q;
-      var length1 = Math.acos(cA)*2/Q;
-      var length2 = Math.acos(cB)*2/Q;
-      console.assert(!Number.isNaN(length1) && length1 > 0);
-      console.assert(!Number.isNaN(length2) && length2 > 0);
-      console.assert(!Number.isNaN(angle) && angle > 0);
-
+      var [radius1, radius2] = [this.radius, circle.radius];
+      var distaince = angleTo(circle.center, this.center)/Q;
+      var [angle, length1, length2] = SphCircle._intersect(radius1, radius2, distance);
       return [angle, length1, length2, 2];
     }
     else
       throw `unknown case: distance=${distance}, radius1=${this.radius}, radius2=${circle.radius}`;
+  }
+  static _intersect(radius1, radius2, distance) {
+    var a = radius2*Q;
+    var b = radius1*Q;
+    var c = distance*Q;
+
+    // cosine rules for spherical triangle: cos a = cos b cos c + sin b sin c cos A
+    var [ca, cb, cc] = [Math.cos(a), Math.cos(b), Math.cos(c)];
+    var [sa, sb, sc] = [Math.sin(a), Math.sin(b), Math.sin(c)];
+    var cA = (ca - cb*cc)/(sb*sc);
+    var cB = (cb - cc*ca)/(sc*sa);
+    var cC = (cc - ca*cb)/(sa*sb);
+
+    var angle = Math.acos(cC)/Q;
+    var length1 = Math.acos(cA)*2/Q;
+    var length2 = Math.acos(cB)*2/Q;
+    console.assert(!Number.isNaN(length1) && length1 > 0);
+    console.assert(!Number.isNaN(length2) && length2 > 0);
+    console.assert(!Number.isNaN(angle) && angle > 0);
+
+    return [angle, length1, length2];
+  }
+  static _leaf(angle, radius1, radius2) {
+    var a = radius2*Q;
+    var b = radius1*Q;
+    var C = (2-angle)*Q;
+
+    // cotangent rule for spherical triangle: cos b cos C = cot a sin b - cot A sin C
+    var [ca, sa] = [Math.cos(a), Math.sin(a)];
+    var [cb, sb] = [Math.cos(b), Math.sin(b)];
+    var [cC, sC] = [Math.cos(C), Math.sin(C)];
+    var [cA_, sA_] = [ca*sb-sa*cb*cC, sa*sC];
+    var [cB_, sB_] = [cb*sa-sb*ca*cC, sb*sC];
+
+    var length2 = Math.tan2(sA_, cA_)*2/Q;
+    var length1 = Math.tan2(sB_, cB_)*2/Q;
+    console.assert(!Number.isNaN(length1) && length1 > 0);
+    console.assert(!Number.isNaN(length2) && length2 > 0);
+
+    return [length1, length2];
   }
 }
 
@@ -295,7 +320,11 @@ class SphSeg
     this.prev = undefined;
     this.adj = new Map();
     this.parent = undefined;
-    this.twist = undefined;
+    this.lock = undefined;
+  }
+  toJSON() {
+    var {length, angle, radius} = this;
+    return {length, angle, radius};
   }
   get vertex() {
     var vec = [Math.sin(this.radius*Q), 0, Math.cos(this.radius*Q)];
@@ -306,12 +335,26 @@ class SphSeg
     return new SphCircle({radius, orientation});
   }
 
-  *walk() {
+  *loop() {
     var seg = this;
     do {
       yield seg;
       seg = seg.next;
     } while ( seg !== this );
+  }
+  reachable() {
+    var path = [];
+    var queue = [this];
+    while ( queue.length != 0 ) {
+      let seg0 = queue.pop();
+      if ( path.includes(seg0) )
+        continue;
+      for ( let seg of seg0.loop() ) {
+        queue.push(...seg.adj.keys());
+        path.push(seg);
+      }
+    }
+    return path;
   }
 
   insertAfter(seg) {
@@ -513,43 +556,11 @@ class SphElem
     var segments = new Set(this.segments);
     for ( let seg0 of segments ) {
       yield seg0;
-      for ( let seg of seg0.walk() )
+      for ( let seg of seg0.loop() )
         segments.delete(seg);
     }
   }
-  sort() {
-    var segments = new Set(this.segments);
-    this.segments = [];
-    this._loops = [];
-    for ( let seg0 of segments ) {
-      this._loops.push(this.segments.length);
-      for ( let seg of seg0.walk() ) {
-        segments.delete(seg);
-        this.segments.push(seg);
-      }
-    }
-  }
 
-  /**
-   * Check if this element is connected intersection of spherical circles.
-   * @memberof SphElem#
-   */
-  validate() {
-    this.sort();
-
-    const TOUCH_DIR_ = ["--", "0-", "-0", "00"];
-    for ( let seg of this.segments )
-      for ( let meet of this.meetWith(seg.circle) )
-        console.assert(TOUCH_DIR_.includes(meet[5]));
-
-    for ( let i in this._loops ) {
-      let n = this._loops[i];
-      let n_ = this._loops[i+1] || this._loops.length;
-      let elem = new SphElem();
-      elem.segments = [...this.segments].splice(n, n_-n);
-      console.assert(elem.contains(this.segments[n].vertex));
-    }
-  }
   mergeTrivialVertex(exceptions=[]) {
     for ( let seg of this.segments )
       if ( !exceptions.includes(seg)
@@ -561,7 +572,6 @@ class SphElem
   /**
    * Find meet point between this element and circle.
    * 
-   * @memberof SphElem#
    * @param {SphCircle} circle - The circle wanted to meet with.
    * @yields {Array} Information about meet point, which has values
    *   `[ang, seg, offset, theta, dir, dir_]`.
@@ -591,7 +601,7 @@ class SphElem
         pre_side = fzy_cmp(pre_offset+len, 4) >= 0 ? "+" : "-";
       }
 
-      for ( let seg of seg0.walk() ) {
+      for ( let seg of seg0.loop() ) {
         for ( let [ang, offset, theta, dir, dir_] of seg.meetWith(circle, pre_side) ) {
           pre_side = dir[1];
           yield [ang, seg, offset, theta, dir, dir_];
@@ -601,8 +611,7 @@ class SphElem
   }
   /**
    * Check if point is inside this element
-   *
-   * @memberof SphElem#
+   * 
    * @param {number[]} point - The point to check.
    * @returns {boolean} True if point is in this element.
    */
@@ -631,7 +640,6 @@ class SphElem
   /**
    * Slice element by circle.
    * 
-   * @memberof SphElem#
    * @param {SphCircle} circle - The knife for slicing.
    * @returns {SphElem[][]} Sliced elements of both sides of `circle`, have
    *    values `[[inside_elem, ...], [outside_elem, ...]]`.
@@ -815,7 +823,7 @@ class SphElem
         let elem = new SphElem();
         in_elems.push(elem);
 
-        for ( let seg of seg0.walk() ) {
+        for ( let seg of seg0.loop() ) {
           this.delete(seg);
           in_dash.delete(seg);
           elem.add(seg);
@@ -827,7 +835,7 @@ class SphElem
         let elem = new SphElem();
         out_elems.push(elem);
 
-        for ( let seg of seg0.walk() ) {
+        for ( let seg of seg0.loop() ) {
           this.delete(seg);
           out_dash.delete(seg);
           elem.add(seg);
@@ -840,7 +848,7 @@ class SphElem
           if ( elem.contains(seg0.vertex) )
             break;
 
-        for ( let seg of seg0.walk() ) {
+        for ( let seg of seg0.loop() ) {
           this.delete(seg);
           elem.add(seg);
         }
@@ -853,5 +861,232 @@ class SphElem
       return [in_elems, out_elems];
     }
 
+  }
+}
+
+class SphLock
+{
+  constructor() {
+    this.left_segments = [];
+    this.right_segments = [];
+    this.offset = 0;
+    this.passwords = [];
+  }
+  lock() {
+    for ( let seg of this.left_segments )
+      seg.twist = this;
+    for ( let seg of this.right_segments )
+      seg.twist = this;
+  }
+  unlock() {
+    for ( let seg of this.left_segments )
+      seg.twist = undefined;
+    for ( let seg of this.right_segments )
+      seg.twist = undefined;
+  }
+  twist(theta) {
+    for ( let segs of [this.left_segments, this.right_segments] )
+      for ( let seg0 of segs )
+        for ( let [angle, seg, offset] of SphLock.turn(seg0) )
+          if ( offset == 0 && angle != 0 && fzy_cmp(angle, 2) != 0 )
+            if ( seg.lock ) seg.lock.unlock();
+
+    this.offset = mod4(this.offset-theta, 0);
+    this.passwords = this.passwords.map(offset => mod4(offset-theta, 0));
+
+    for ( let segs of [this.left_segments, this.right_segments] )
+      for ( let seg0 of segs )
+        seg0.adj.clear();
+
+    var offset1 = 0, offset2 = 0;
+    for ( let seg1 of this.left_segments ) {
+      offset2 = 0;
+      for ( let seg2 of this.right_segments ) {
+        let offset = mod4(this.offset-offset1-offset2, 4);
+        if ( fzy_cmp(offset, seg1.length+seg2.length) <= 0 )
+          seg1.adjacent(seg2, offset);
+        offset2 += seg2.length;
+      }
+      offset1 += seg1.length;
+    }
+
+    for ( let segs of [this.left_segments, this.right_segments] )
+      for ( let seg0 of segs )
+        for ( let [angle, seg, offset] of SphLock.turn(seg0) )
+          if ( offset == 0 && angle != 0 && fzy_cmp(angle, 2) != 0 )
+            if ( !seg.lock ) SphLock.build(seg);
+  }
+
+  static *turn(seg0) {
+    var seg = seg0;
+    var angle = 0;
+    var offset = 0;
+
+    do {
+      yield [angle, seg, offset];
+
+      if ( offset == 0 ) {
+        let adj = [...seg.prev.adj.entries()];
+        adj = adj.map(([seg_, th]) => [seg_, mod4(th-seg.prev.length, 0)]);
+        [seg, offset] = adj.find(([seg_, v_th]) => fzy_cmp(seg_.length, v_th) > 0);
+        angle += seg.angle;
+
+      } else {
+        let adj = [...seg.adj.entries()];
+        let [seg] = adj.find(([seg_, th]) => fzy_cmp(offset, th) == 0);
+        angle += 2;
+        offset = 0;
+      }
+
+    } while ( seg != seg0 );
+    console.assert(fzy_cmp(angle, 4) == 0);
+  }
+  static makeTick(segment) {
+    if ( segment.angle == 2 ) {
+      console.assert(fzy_cmp(segment.radius, segment.prev.radius) == 0);
+      return {segment, subticks:[], is_free:false, backward:segment.prev};
+
+    } else {
+      var subticks = [], pre = [], post = [];
+
+      for ( let [ang, seg] of SphLock.turn(segment) ) {
+        let side = fzy_cmp([ang, 2-seg.radius], [2, segment.radius]);
+        if ( side == 0 ) break;
+        if ( side >  0 ) return {};
+
+        if ( ang == 0 )
+          pre.push(seg);
+        else if ( fzy_cmp(ang, 2) == 0 )
+          post.push(seg);
+        else
+          subticks.push({angle:ang, segment:seg});
+      }
+
+      var backward = post[post.length-1].prev;
+      var is_free = false;
+      for ( let seg1 of pre )
+        if ( post.find(seg2 => fzy_cmp(2-seg1.radius, seg2.radius) == 0) ) {
+          is_free = true;
+          subticks = [];
+          break;
+        }
+
+      return {segment, subticks, is_free, backward};
+    }
+  }
+  static decipher(left_ticks, right_ticks, offset0) {
+    var left_latches = [], right_latches = []; // [{length, angle, offset, i, j}, ...]
+    for ( let [ticks, latches] of [[ left_ticks,  left_latches],
+                                   [right_ticks, right_latches]] ) {
+      // find latches (center of possible intercuting circle)
+      // find all free latches
+      let free_ind = ticks.flatmap(({is_free}, i) => is_free ? [i] : []);
+      for ( let i of free_ind ) for ( let j of free_ind ) if ( i < j ) {
+        let length = ticks[j].offset - ticks[i].offset;
+        let offset = mod4(ticks[i].offset+length/2, 0);
+
+        switch ( fzy_cmp(length, 2) ) {
+          case -1:
+            latches.push({length, offset, i, j});
+            break;
+
+          case +1:
+            length = 4 - length;
+            offset = mod4(offset+2, 0);
+            [i, j] = [j, i];
+            latches.push({length, offset, i, j});
+            break;
+
+          case 0:
+            length = 2;
+            latches.push({length, offset, i, j});
+            offset = mod4(offset+2, 0);
+            [i, j] = [j, i];
+            latches.push({length, offset, i, j});
+            break;
+        }
+      }
+
+      // find normal latches
+      let normal_ind = ticks.flatmap(({is_free}, i) => is_free ? [] : [i]);
+      for ( let i of normal_ind ) {
+        while ( ticks[i].subticks.length ) {
+          let {angle, segment:{radius}} = ticks[i].subticks.pop();
+          let [length] = SphCircle._leaf(angle, ticks[i].segment.radius, 2-radius);
+          let offset = mod4(ticks[i].offset+length/2, 0);
+
+          let j = ticks.findIndex(
+            ({offset}) => mod4(ticks[i].offset+length-offset, 0) == 0);
+          if ( j == -1 ) continue;
+          if ( !ticks[j].is_free ) {
+            let y = ticks[j].subticks.findIndex(
+              ({angle:a, segment:{radius:r}}) => fzy_cmp([2-a, 2-r], [angle, radius]) == 0);
+            if ( y == -1 ) continue;
+            ticks[j].subticks.splice(y, 1);
+          }
+          
+          switch ( fzy_cmp(length, 2) ) {
+            case -1:
+              latches.push({length, angle, offset, i, j});
+              break;
+
+            case +1:
+              length = 4 - length;
+              offset = mod4(offset+2, 0);
+              [i, j] = [j, i];
+              latches.push({length, angle, offset, i, j});
+              break;
+
+            case 0:
+              length = 2;
+              latches.push({length, angle, offset, i, j});
+              offset = mod4(offset+2, 0);
+              [i, j] = [j, i];
+              latches.push({length, angle, offset, i, j});
+              break;
+          }
+        }
+      }
+    }
+
+
+    // match left and right latches
+    var passwords = [];
+    for ( let latch1 of left_latches ) for ( let latch2 of right_latches )
+      if ( fzy_cmp([latch1.length, latch1.angle], [latch2.length, 2-latch2.angle]) == 0 ) {
+        let offset = mod4(offset0-latch1.offset-latch2.offset, 0);
+        let offset_ = passwords.find(offset_ => fzy_cmp(offset_, offset) == 0);
+        if ( offset_ === undefined )
+          passwords.push(offset);
+      }
+
+    return passwords;
+  }
+  static build(segment) {
+    var [segment2, offset] = segment.adj.entries().next().value;
+    var ticks1 = [], ticks2 = [];
+    for ( let [seg0, ticks] of [[segment, ticks1], [segment2, ticks2]] ) {
+      let seg = seg0;
+
+      do {
+        let {backward, ...tick} = SphLock.makeTick(seg);
+        if ( !backward ) return;
+        ticks.unshift(tick);
+        seg = backward;
+      } while ( seg != seg0 );
+
+      ticks.unshift(ticks.pop());
+      let full_len = ticks.reduce((acc, tick) => (tick.offset=acc)+tick.segment.length, 0);
+      console.assert(fzy_cmp(full_len, 4) == 0);
+    }
+
+    var lock = new SphLock();
+    lock.offset = offset;
+    lock.left_segments = ticks1.map(tick => tick.segment);
+    lock.right_segments = ticks2.map(tick => tick.segment);
+    lock.passwords = SphLock.decipher(ticks1, ticks2, offset);
+    lock.lock();
+
+    return lock;
   }
 }
