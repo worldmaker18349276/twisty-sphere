@@ -169,7 +169,7 @@ class SphCircle
   }
   thetaOf(vector) {
     var [x, y] = rotate(vector, q_inv(this.orientation));
-    return Math.atan2(y, x)/Q;
+    return mod4(Math.atan2(y, x)/Q);
   }
   vectorAt(theta) {
     var vec = [
@@ -276,22 +276,22 @@ class SphCircle
     return [angle, length1, length2];
   }
   static _leaf(angle, radius1, radius2) {
-    var a = radius2*Q;
-    var b = radius1*Q;
+    var a = radius1*Q;
+    var b = radius2*Q;
     var C = (2-angle)*Q;
-
+  
     // cotangent rule for spherical triangle: cos b cos C = cot a sin b - cot A sin C
     var [ca, sa] = [Math.cos(a), Math.sin(a)];
     var [cb, sb] = [Math.cos(b), Math.sin(b)];
     var [cC, sC] = [Math.cos(C), Math.sin(C)];
     var [cA_, sA_] = [ca*sb-sa*cb*cC, sa*sC];
     var [cB_, sB_] = [cb*sa-sb*ca*cC, sb*sC];
-
-    var length2 = Math.tan2(sA_, cA_)*2/Q;
-    var length1 = Math.tan2(sB_, cB_)*2/Q;
+  
+    var length2 = Math.atan2(sA_, cA_)*2/Q;
+    var length1 = Math.atan2(sB_, cB_)*2/Q;
     console.assert(!Number.isNaN(length1) && length1 > 0);
     console.assert(!Number.isNaN(length2) && length2 > 0);
-
+  
     return [length1, length2];
   }
 }
@@ -306,7 +306,7 @@ class SphCircle
  *   It has unit of quadrant, and should range in [0, 2].
  * @property {number} radius - Radius of curvature of segment.
  *   It has unit of quadrant, and should range in (0, 2).
- * @property {number[]} [orientation] - Orientation of this segment.
+ * @property {number[]} orientation - Orientation of this segment.
  */
 class SphSeg
 {
@@ -357,24 +357,15 @@ class SphSeg
     return path;
   }
 
-  insertAfter(seg) {
-    var next = this.next;
-    [next.prev, seg.next] = [seg, next];
+  _loop_connect(seg) {
     [this.next, seg.prev] = [seg, this];
-    return seg;
   }
-  remove() {
-    var prev = this.prev, next = this.next;
-    [prev.next, next.prev] = [next, prev];
-    this.prev = this.next = undefined;
-    return this;
-  }
-  adjacent(seg, offset) {
+  _adj_link(seg, offset) {
     this.adj.set(seg, offset);
     seg.adj.set(this, offset);
     return this;
   }
-  subjacent(seg) {
+  _adj_unlink(seg) {
     this.adj.delete(seg);
     seg.adj.delete(this);
     return this;
@@ -400,17 +391,23 @@ class SphSeg
       orientation: q_spin(this.orientation, theta*Q)
     });
     this.length = theta;
-    this.insertAfter(next_seg);
+
+    // merge loop
+    if ( this.next )
+      next_seg._loop_connect(this.next);
+    this._loop_connect(next_seg);
+    if ( this.parent )
+      this.parent._aff_add(next_seg);
 
     for ( let [adj_seg, offset] of this.adj ) {
       // remove adjacent of this
-      if ( offset > this.length + adj_seg.length )
-        this.subjacent(adj_seg);
+      if ( fzy_cmp(offset, this.length + adj_seg.length) >= 0 )
+        this._adj_unlink(adj_seg);
 
       // add adjacent of next_seg
       let offset_ = mod4(offset - this.length, 4);
-      if ( offset_ < next_seg.length + adj_seg.length )
-        next_seg.adjacent(adj_seg, offset_);
+      if ( fzy_cmp(offset_, next_seg.length + adj_seg.length) < 0 )
+        next_seg._adj_link(adj_seg, offset_);
     }
 
     return next_seg;
@@ -431,11 +428,21 @@ class SphSeg
     var merged = this.prev;
     var original_len = merged.length;
     merged.length = merged.length + this.length;
-    this.remove();
+
+    // merge loop
+    if ( this.next )
+      this.prev._loop_connect(this.next);
+    else
+      this.prev.next = undefined;
+    if ( this.parent )
+      this.parent._aff_delete(this);
 
     // merge adjacent
-    for ( let [adj_seg, offset] of this.adj ) if ( !(adj_seg in merged.adj) )
-      merged.adjacent(adj_seg, mod4(offset + original_len, 4));
+    for ( let [adj_seg, offset] of this.adj ) {
+      this._adj_unlink(adj_seg);
+      if ( !merged.adj.has(adj_seg) )
+        merged._adj_link(adj_seg, mod4(offset + original_len, 4));
+    }
 
     if ( merged.next === merged ) {
       merged.length = 4;
@@ -536,24 +543,24 @@ class SphSeg
 class SphElem
 {
   constructor() {
-    this.segments = [];
+    this.children = [];
   }
 
-  add(...segments) {
-    for ( let seg of segments ) if ( !this.segments.includes(seg) ) {
-      this.segments.push(seg);
+  _aff_add(...segments) {
+    for ( let seg of segments ) if ( !this.children.includes(seg) ) {
+      this.children.push(seg);
       seg.parent = this;
     }
   }
-  delete(...segments) {
-    for ( let seg of segments ) if ( this.segments.includes(seg) ) {
-      this.segments.splice(this.segments.indexOf(seg), 1);
+  _aff_delete(...segments) {
+    for ( let seg of segments ) if ( this.children.includes(seg) ) {
+      this.children.splice(this.children.indexOf(seg), 1);
       seg.parent = undefined;
     }
   }
 
   *loops() {
-    var segments = new Set(this.segments);
+    var segments = new Set(this.children);
     for ( let seg0 of segments ) {
       yield seg0;
       for ( let seg of seg0.loop() )
@@ -562,12 +569,12 @@ class SphElem
   }
 
   mergeTrivialVertex(exceptions=[]) {
-    for ( let seg of this.segments )
+    for ( let seg of this.children )
       if ( !exceptions.includes(seg)
            && seg !== seg.prev
            && fzy_cmp(seg.angle, 2) == 0
            && fzy_cmp(seg.radius, seg.prev.radius) == 0 )
-        this.delete(seg.mergePrev());
+        seg.mergePrev();
   }
   /**
    * Find meet point between this element and circle.
@@ -616,11 +623,11 @@ class SphElem
    * @returns {boolean} True if point is in this element.
    */
   contains(point) {
-    if ( this.segments.length == 0 )
+    if ( this.children.length == 0 )
       return true;
 
     // make a circle passing through this point and a vertex of element
-    var vertex = this.segments[0].vertex;
+    var vertex = this.children[0].vertex;
     var q = q_align(point, vertex);
     var radius = angleTo(point, vertex)/2/Q;
     var center = rotate([Math.sin(radius*Q), 0, Math.cos(radius*Q)], q);
@@ -666,7 +673,6 @@ class SphElem
       let seg = meet[1], offset = meet[2];
       meet[1] = seg.interpolate(offset);
       meet[2] = 0;
-      this.add(meet[1]);
     }
 
     // SLICE
@@ -688,7 +694,7 @@ class SphElem
                                   orientation:q_spin(circle.orientation, theta1*Q)});
         let out_seg = new SphSeg({radius:circle_.radius, length,
                                   orientation:q_spin(circle_.orientation, (4-theta2)*Q)});
-        in_seg.adjacent(out_seg, length);
+        in_seg._adj_link(out_seg, length);
         in_dash.push(in_seg);
         out_dash.unshift(out_seg);
 
@@ -742,16 +748,15 @@ class SphElem
           if ( seg2.prev === undefined ) { // connect two dash
             console.assert(seg1.next === undefined);
 
-            seg2.prev = seg1;
-            seg1.next = seg2;
+            seg1._loop_connect(seg2);
             seg2.angle = 2;
 
           } else if ( seg2.prev.next !== seg2 ) { // complete double link
             if ( seg2.prev.next === seg1.next ) {
               // kissing cut case
               console.assert(seg2.angle == 0);
-              seg2.prev.next = seg2;
-              seg1.next.prev = seg1;
+              seg2.prev._loop_connect(seg2);
+              seg1._loop_connect(seg1.next);
               seg1.next.angle = 0;
 
             } else {
@@ -759,8 +764,8 @@ class SphElem
               let [seg3, offset] = [...seg2.adj].find(e => seg2.prev.next===e[0].next) || [];
               console.assert(seg3 !== undefined && fzy_cmp(offset, seg3.length) == 0);
 
-              seg2.prev.next = seg2;
-              seg3.next.prev = seg3;
+              seg2.prev._loop_connect(seg2);
+              seg3._loop_connect(seg3.next);
               seg3.next.angle = seg3.next.angle - seg2.angle;
             }
           }
@@ -779,9 +784,9 @@ class SphElem
                                   orientation:circle.orientation});
         let out_seg = new SphSeg({radius:circle_.radius, length:4, angle:2,
                                   orientation:circle_.orientation});
-        in_seg.adjacent(out_seg, 4);
-        in_seg.next = in_seg.prev = in_seg;
-        out_seg.next = out_seg.prev = out_seg;
+        in_seg._adj_link(out_seg, 4);
+        in_seg._loop_connect(in_seg);
+        out_seg._loop_connect(out_seg);
         in_dash.push(in_seg);
         out_dash.unshift(out_seg);
       }
@@ -808,7 +813,7 @@ class SphElem
         side = circle.relationTo(touchs[0][1].circle)[0] == 2;
 
       } else { // no touch
-        side = circle.contains(this.segments[0].vertex);
+        side = circle.contains(this.children[0].vertex);
 
       }
 
@@ -824,9 +829,9 @@ class SphElem
         in_elems.push(elem);
 
         for ( let seg of seg0.loop() ) {
-          this.delete(seg);
           in_dash.delete(seg);
-          elem.add(seg);
+          this._aff_delete(seg);
+          elem._aff_add(seg);
         }
       }
 
@@ -836,21 +841,21 @@ class SphElem
         out_elems.push(elem);
 
         for ( let seg of seg0.loop() ) {
-          this.delete(seg);
           out_dash.delete(seg);
-          elem.add(seg);
+          this._aff_delete(seg);
+          elem._aff_add(seg);
         }
       }
 
-      for ( let seg0 of this.segments ) {
+      for ( let seg0 of this.children ) {
         let elem;
         for ( elem of [...in_elems, ...out_elems] )
           if ( elem.contains(seg0.vertex) )
             break;
 
         for ( let seg of seg0.loop() ) {
-          this.delete(seg);
-          elem.add(seg);
+          this._aff_delete(seg);
+          elem._aff_add(seg);
         }
       }
 
@@ -872,25 +877,42 @@ class SphLock
     this.offset = 0;
     this.passwords = [];
   }
-  lock() {
+  _lock() {
     for ( let seg of this.left_segments )
-      seg.twist = this;
+      seg.lock = this;
     for ( let seg of this.right_segments )
-      seg.twist = this;
+      seg.lock = this;
   }
-  unlock() {
+  _unlock() {
     for ( let seg of this.left_segments )
-      seg.twist = undefined;
+      seg.lock = undefined;
     for ( let seg of this.right_segments )
-      seg.twist = undefined;
+      seg.lock = undefined;
   }
-  twist(theta) {
+  get circle() {
+    return this.left_segments[0].circle;
+  }
+
+  elementsOfSide(side=+1) {
+    var bd = side > 0 ? this.left_segments : this.right_segments;
+    var elems = new Set(bd.map(seg => seg.parent));
+    for ( let elem of elems ) for ( let seg of elem.children )
+      if ( !bd.includes(seg) ) for ( let adj_seg of seg.adj.keys() )
+        elems.add(adj_seg.parent);
+    return elems;
+  }
+  twist(theta, side=+1) {
     for ( let segs of [this.left_segments, this.right_segments] )
       for ( let seg0 of segs )
         for ( let [angle, seg, offset] of SphLock.turn(seg0) )
           if ( offset == 0 && angle != 0 && fzy_cmp(angle, 2) != 0 )
-            if ( seg.lock ) seg.lock.unlock();
+            if ( seg.lock ) seg.lock._unlock();
 
+    var bd = side > 0 ? this.left_segments : this.right_segments;
+    var q = quaternion(bd[0].circle.center, theta*Q);
+    for ( let elem of this.elementsOfSide(side) )
+      for ( let seg of elem.children )
+        q_mul(q, seg.orientation, seg.orientation);
     this.offset = mod4(this.offset-theta, 0);
     this.passwords = this.passwords.map(offset => mod4(offset-theta, 0));
 
@@ -904,7 +926,7 @@ class SphLock
       for ( let seg2 of this.right_segments ) {
         let offset = mod4(this.offset-offset1-offset2, 4);
         if ( fzy_cmp(offset, seg1.length+seg2.length) <= 0 )
-          seg1.adjacent(seg2, offset);
+          seg1._adj_link(seg2, offset);
         offset2 += seg2.length;
       }
       offset1 += seg1.length;
@@ -928,12 +950,12 @@ class SphLock
       if ( offset == 0 ) {
         let adj = [...seg.prev.adj.entries()];
         adj = adj.map(([seg_, th]) => [seg_, mod4(th-seg.prev.length, 0)]);
-        [seg, offset] = adj.find(([seg_, v_th]) => fzy_cmp(seg_.length, v_th) > 0);
         angle += seg.angle;
+        [seg, offset] = adj.find(([seg_, v_th]) => fzy_cmp(seg_.length, v_th) > 0);
 
       } else {
         let adj = [...seg.adj.entries()];
-        let [seg] = adj.find(([seg_, th]) => fzy_cmp(offset, th) == 0);
+        [seg] = adj.find(([seg_, th]) => fzy_cmp(offset, th) == 0);
         angle += 2;
         offset = 0;
       }
@@ -949,6 +971,7 @@ class SphLock
     } else {
       var subticks = [], pre = [], post = [];
 
+      var backward;
       for ( let [ang, seg] of SphLock.turn(segment) ) {
         let side = fzy_cmp([ang, 2-seg.radius], [2, segment.radius]);
         if ( side == 0 ) break;
@@ -960,9 +983,9 @@ class SphLock
           post.push(seg);
         else
           subticks.push({angle:ang, segment:seg});
+        backward = seg.prev;
       }
 
-      var backward = post[post.length-1].prev;
       var is_free = false;
       for ( let seg1 of pre )
         if ( post.find(seg2 => fzy_cmp(2-seg1.radius, seg2.radius) == 0) ) {
@@ -980,7 +1003,7 @@ class SphLock
                                    [right_ticks, right_latches]] ) {
       // find latches (center of possible intercuting circle)
       // find all free latches
-      let free_ind = ticks.flatmap(({is_free}, i) => is_free ? [i] : []);
+      let free_ind = ticks.flatMap(({is_free}, i) => is_free ? [i] : []);
       for ( let i of free_ind ) for ( let j of free_ind ) if ( i < j ) {
         let length = ticks[j].offset - ticks[i].offset;
         let offset = mod4(ticks[i].offset+length/2, 0);
@@ -1008,7 +1031,7 @@ class SphLock
       }
 
       // find normal latches
-      let normal_ind = ticks.flatmap(({is_free}, i) => is_free ? [] : [i]);
+      let normal_ind = ticks.flatMap(({is_free}, i) => is_free ? [] : [i]);
       for ( let i of normal_ind ) {
         while ( ticks[i].subticks.length ) {
           let {angle, segment:{radius}} = ticks[i].subticks.pop();
@@ -1025,13 +1048,14 @@ class SphLock
             ticks[j].subticks.splice(y, 1);
           }
           
-          switch ( fzy_cmp(length, 2) ) {
+          switch ( fzy_cmp([length, angle], [2, 1]) ) {
             case -1:
               latches.push({length, angle, offset, i, j});
               break;
 
             case +1:
               length = 4 - length;
+              angle = 2 - angle;
               offset = mod4(offset+2, 0);
               [i, j] = [j, i];
               latches.push({length, angle, offset, i, j});
@@ -1039,6 +1063,7 @@ class SphLock
 
             case 0:
               length = 2;
+              angle = 1;
               latches.push({length, angle, offset, i, j});
               offset = mod4(offset+2, 0);
               [i, j] = [j, i];
@@ -1049,7 +1074,6 @@ class SphLock
       }
     }
 
-
     // match left and right latches
     var passwords = [];
     for ( let latch1 of left_latches ) for ( let latch2 of right_latches )
@@ -1059,6 +1083,7 @@ class SphLock
         if ( offset_ === undefined )
           passwords.push(offset);
       }
+    passwords.sort();
 
     return passwords;
   }
@@ -1085,7 +1110,7 @@ class SphLock
     lock.left_segments = ticks1.map(tick => tick.segment);
     lock.right_segments = ticks2.map(tick => tick.segment);
     lock.passwords = SphLock.decipher(ticks1, ticks2, offset);
-    lock.lock();
+    lock._lock();
 
     return lock;
   }
