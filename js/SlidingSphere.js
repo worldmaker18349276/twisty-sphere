@@ -1,30 +1,64 @@
 "use strict";
 
+/**
+ * Fuzzy compare two values.
+ * It will compare array of numbers by lexical order.
+ * 
+ * @param {*} v1 - The first value to compare.
+ * @param {*} v2 - The second value to compare.
+ * @param {number} tol - Tolerance of comparing.
+ * @returns {number} `0` if `v1` is almost equal to `v2`; `+1` if `v1` is
+ *   greater than `v2`; `-1` if `v1` is less than `v2`.
+ */
 function fzy_cmp(v1, v2, tol=1e-5) {
-  if ( v1 === v2 )
+  if ( v1 === v2 ) {
     return 0;
 
-  if ( !Array.isArray(v1) )
+  } else if ( (typeof v1 == "string" || v1 instanceof String)
+           && (typeof v2 == "string" || v2 instanceof String) ) {
+    return ((v1>v2)-(v2>v1))/2;
+
+  } else if ( (typeof v1 == "number" || v1 instanceof Number)
+           && (typeof v2 == "number" || v2 instanceof Number) ) {
     return Math.abs(v1-v2) < tol ? 0 : Math.sign(v1-v2);
 
-  for ( let i=0, len=Math.min(v1.length, v2.length); i<len; i++ ) {
-    if ( Math.abs(v1[i]-v2[i]) < tol )
-      continue;
-    return Math.sign(v1[i]-v2[i]);
-  }
+  } else if ( Array.isArray(v1) && Array.isArray(v2) ) {
+    for ( let i=0, len=Math.min(v1.length, v2.length); i<len; i++ ) {
+      switch ( fzy_cmp(v1[i], v2[i], tol) ) {
+        case  0: continue;
+        case +1: return +1;
+        case -1: return -1;
+      }
+    }
+    return Math.sign(v1.length-v2.length);
 
-  return Math.sign(v1.length-v2.length);
+  } else {
+    throw new Error("incomparable");
+  }
 }
-function mod4(val, snap) {
+function fzy_snap(val, snaps=[], tol) {
+  for ( let snap of snaps )
+    if ( fzy_cmp(val, snap, tol) == 0 )
+      return snap;
+  return val;
+}
+/**
+ * Modulo 4 with snapping.
+ * 
+ * @param {number} val - The value to mod.
+ * @param {number[]} snaps - The values to snap.  Snapping occur when they are
+ *   roughly congruent modulo 4.
+ * @param {number} tol - Tolerance of snapping.
+ * @returns {number} Modulus.
+ */
+function mod4(val, snaps=[], tol) {
   if ( val < 0 || val >= 4 )
     val = (val % 4 + 4) % 4;
-  if ( snap == 0 || snap == 4 ) {
-    if ( fzy_cmp(val, 0) == 0 || fzy_cmp(val, 4) == 0 )
-      val = snap;
-  } else {
-    if ( fzy_cmp(val, snap) == 0 )
-      val = snap;
-  }
+
+  for ( let snap of snaps )
+    if ( fzy_cmp(mod4(val-snap+2), 2, tol) == 0 )
+      return snap;
+
   return val;
 }
 
@@ -61,18 +95,6 @@ function angleTo(a, b, axis) {
     let c = dot(a, b);
     return Math.atan2(s, c);
   }
-}
-function toSpherical([x, y, z], out=[]) {
-  out[0] = norm([x,y,z]); // radius
-  out[1] = Math.atan2(y, x); // theta
-  out[2] = Math.acos(z/out[0]); // phi
-  return out;
-}
-function toVector([radius, theta, phi], out=[]) {
-  out[0] = radius*Math.sin(phi)*Math.cos(theta);
-  out[1] = radius*Math.sin(phi)*Math.sin(theta);
-  out[2] = radius*Math.cos(phi);
-  return out;
 }
 
 // quaternion
@@ -126,8 +148,7 @@ function q_align([x, y, z], v_xz, out=[]) {
   return out;
 }
 function q_spin(q, theta, out=[]) {
-  q_mul(q, quaternion([0,0,1], theta), out);
-  return out;
+  return q_mul(q, quaternion([0,0,1], theta), out);
 }
 
 
@@ -169,7 +190,7 @@ class SphCircle
   }
   thetaOf(vector) {
     var [x, y] = rotate(vector, q_inv(this.orientation));
-    return mod4(Math.atan2(y, x)/Q);
+    return Math.atan2(y, x)/Q;
   }
   vectorAt(theta) {
     var vec = [
@@ -246,14 +267,30 @@ class SphCircle
       return [0, 4, 0, 1]; // kissing anti-exclude
     else if ( distance < this.radius + circle.radius ) {
       // intersect
-      var [radius1, radius2] = [this.radius, circle.radius];
-      var distaince = angleTo(circle.center, this.center)/Q;
-      var [angle, length1, length2] = SphCircle._intersect(radius1, radius2, distance);
-      return [angle, length1, length2, 2];
+      var [ang, len1, len2] = SphCircle._intersect(this.radius, circle.radius, distance);
+      return [ang, len1, len2, 2];
     }
     else
       throw `unknown case: distance=${distance}, radius1=${this.radius}, radius2=${circle.radius}`;
   }
+  /**
+   * Compute intersection between two circles.
+   * 
+   * @param {number} radius1 - Radius of the first circle to intersect, with
+   *   unit of quadrant.
+   * @param {number} radius2 - Radius of the second circle to intersect, with
+   *   unit of quadrant.
+   * @param {number} distance - Distance between centers of two circles, with
+   *   unit of quadrant.
+   * @returns {number[]} Information about intersection, which has values
+   *   `[ang, len1, len2]`;
+   *   `ang` is angle between their directed tangent vectors at meet point,
+   *   range in (0, 2), with unit of quadrant;
+   *   `len1` is length of the first circle under the second circle, range in
+   *   (0, 4), with unit of quadrant;
+   *   `len2` is length of the second circle under the first circle, range in
+   *   (0, 4), with unit of quadrant.
+   */
   static _intersect(radius1, radius2, distance) {
     var a = radius2*Q;
     var b = radius1*Q;
@@ -275,6 +312,17 @@ class SphCircle
 
     return [angle, length1, length2];
   }
+  /**
+   * Given tip angle and radius of edges of leaf shape, compute length of edges.
+   * 
+   * @param {number} angle - Tip angle of leaf shape, with unit of quadrant.
+   * @param {number} radius1 - Radius of left edge of leaf shape, with unit of
+   *   quadrant.  Notice that center of curvature is at the right of edge.
+   * @param {number} radius2 - Radius of right edge of leaf shape, with unit of
+   *   quadrant.  Notice that center of curvature is at the left of edge.
+   * @returns {number[]} The lengths of left edge and right edge, which has
+   *   values `[len1, len2]`, with unit of quadrant.
+   */
   static _leaf(angle, radius1, radius2) {
     var a = radius1*Q;
     var b = radius2*Q;
@@ -322,10 +370,6 @@ class SphSeg
     this.parent = undefined;
     this.lock = undefined;
   }
-  toJSON() {
-    var {length, angle, radius} = this;
-    return {length, angle, radius};
-  }
   get vertex() {
     var vec = [Math.sin(this.radius*Q), 0, Math.cos(this.radius*Q)];
     return rotate(vec, this.orientation);
@@ -333,28 +377,6 @@ class SphSeg
   get circle() {
     var {radius, orientation} = this;
     return new SphCircle({radius, orientation});
-  }
-
-  *loop() {
-    var seg = this;
-    do {
-      yield seg;
-      seg = seg.next;
-    } while ( seg !== this );
-  }
-  reachable() {
-    var path = [];
-    var queue = [this];
-    while ( queue.length != 0 ) {
-      let seg0 = queue.pop();
-      if ( path.includes(seg0) )
-        continue;
-      for ( let seg of seg0.loop() ) {
-        queue.push(...seg.adj.keys());
-        path.push(seg);
-      }
-    }
-    return path;
   }
 
   _loop_connect(seg) {
@@ -371,17 +393,26 @@ class SphSeg
     return this;
   }
 
+  *walk(stop) {
+    var seg = this;
+    do {
+      yield seg;
+      seg = seg.next;
+    } while ( ![undefined, this, stop].includes(seg) );
+  }
+
   /**
    * Split this segment into two segments.
    * this segment will be in-place modified as the first part, and create new
    * object as the second part.
    * 
    * @param {number} theta - The position to split.
-   *   It must range in (0, `this.length`).
    * @returns {SphSeg} The second part segment after splitting.
    */
   interpolate(theta) {
-    console.assert(theta > 0 && this.length - theta > 0);
+    theta = mod4(theta);
+    if ( theta <= 0 || this.length - theta <= 0 )
+      throw new Error("out of range of interpolation");
 
     // make next segment started from point of interpolation
     var next_seg = new SphSeg({
@@ -405,7 +436,7 @@ class SphSeg
         this._adj_unlink(adj_seg);
 
       // add adjacent of next_seg
-      let offset_ = mod4(offset - this.length, 4);
+      let offset_ = mod4(offset - this.length, [4, next_seg.length, adj_seg.length]);
       if ( fzy_cmp(offset_, next_seg.length + adj_seg.length) < 0 )
         next_seg._adj_link(adj_seg, offset_);
     }
@@ -420,9 +451,11 @@ class SphSeg
    * @returns {SphSeg} The removed segment `this`.
    */
   mergePrev() {
-    console.assert(fzy_cmp(this.radius, this.prev.radius) == 0);
-    console.assert(fzy_cmp(this.circle.center, this.prev.circle.center) == 0);
-    console.assert(this !== this.prev);
+    if ( fzy_cmp(this.angle, 2) != 0
+         || fzy_cmp(this.radius, this.prev.radius) != 0
+         || fzy_cmp(this.circle.center, this.prev.circle.center) != 0
+         || this === this.prev )
+      throw new Error("unable to merge segments");
 
     // merge segment
     var merged = this.prev;
@@ -440,8 +473,10 @@ class SphSeg
     // merge adjacent
     for ( let [adj_seg, offset] of this.adj ) {
       this._adj_unlink(adj_seg);
-      if ( !merged.adj.has(adj_seg) )
-        merged._adj_link(adj_seg, mod4(offset + original_len, 4));
+      if ( !merged.adj.has(adj_seg) ) {
+        let offset_ = mod4(offset + original_len, [4, merged.length, adj_seg.length]);
+        merged._adj_link(adj_seg, offset_);
+      }
     }
 
     if ( merged.next === merged ) {
@@ -454,91 +489,177 @@ class SphSeg
 
   /**
    * Find meet point between this segment and circle.
-   * They can meet at start point of segment, but not at end point of segment.
+   * They can meet at the start point of segment, but not at the end point of segment.
    * 
    * @param {SphCircle} circle - The circle wanted to meet with.
-   * @param {string} pre_side - Side of previous segment with respect to `circle`.
-   * @yields {Array} Information about meet point, which has values
-   *   `[ang, offset, theta, dir, dir_]`.
-   *   `ang` is angle between `this` and `circle` at meet point (angle between
+   * @yields {object} Information about meet point, which has values
+   *   `{angle, segment, offset, theta}`.
+   *   `angle` is angle between `this` and `circle` at meet point (angle between
    *   two directed tangent vector), with unit of quadrant;
+   *   `segment` is the segment meeting with circle;
    *   `offset` is offset of meet point along `this.circle`, with unit of quadrant;
-   *   `theta` is offset of meet point along `circle`, with unit of quadrant;
-   *   `dir` and `dir_` are directions of meet point along this segment and circle,
-   *   which have format "[+-0][+-0]": the first is from-side, and the second is
-   *   to-side; "+" means inside, "-" means outside, and "0" means on the edge.
+   *   `theta` is offset of meet point along `circle`, with unit of quadrant.
    */
-  *meetWith(circle, pre_side) {
-    // the map from direction of segment to direction of circle,
-    // where we assume this.angle < 2
-    const dir_map = {
-      "++": "--", "+-": "-+", "+0": "-0",
-      "-+": "+-", "--": "--", "-0": "0-",
-      "0+": "0-", "0-": "-0", "00": "00",
-    };
+  *meetWith(circle) {
     var seg_circ = this.circle;
-    var [ang, len, len_, meeted] = seg_circ.relationTo(circle);
+    var [angle, len, len_, meeted] = seg_circ.relationTo(circle);
+    var segment = this, offset = 0, theta = 0;
 
     if ( meeted === undefined ) {
-      let theta = circle.thetaOf(this.vertex);
+      theta = mod4(circle.thetaOf(this.vertex));
 
-      let dir  = pre_side+"0";
-      let dir_ = dir_map[dir];
+      if ( angle == 0 ) angle = +0;
+      if ( angle == 2 ) angle = -2;
 
-      yield [ang, 0, theta, dir, dir_];
+      yield {angle, segment, offset, theta};
 
     } else if ( meeted == 0 ) {
-      console.assert(pre_side == (len == 4 ? "+" : "-"));
       return;
 
     } else if ( meeted == 1 ) {
-      let offset = mod4(seg_circ.thetaOf(circle.center)-len/2, 0);
-      let theta = mod4(circle.thetaOf(seg_circ.center)+len_/2, 0);
-      if ( fzy_cmp(offset, this.length) >= 0 ) return;
+      theta = mod4(circle.thetaOf(seg_circ.center)+len_/2);
+      offset = mod4(seg_circ.thetaOf(circle.center)-len/2, [0, this.length]);
 
-      let side = len == 4 ? "+" : "-";
-      let dir, dir_;
-      console.assert(len_ == 0 ? pre_side == side : true);
-      if ( offset > 0 || len_ == 0 ) {
-        dir  = len  == 4 ? "++" : "--";
-        dir_ = len_ == 4 ? "++" : "--";
-      } else if ( pre_side != side ) {
-        dir  = pre_side+side;
-        dir_ = dir_map[dir];
-      } else {
-        console.assert(this.angle == 0 || this.angle == 2);
-        dir  = pre_side+side;
-        dir_ = this.angle == 2 ? "++" : "--";
-      }
+      if ( angle == 0 && len == 4 ) angle = +0;
+      if ( angle == 0 && len == 0 ) angle = -0;
+      if ( angle == 2 && len == 4 ) angle = +2;
+      if ( angle == 2 && len == 0 ) angle = -2;
 
-      yield [ang, offset, theta, dir, dir_];
+      if ( offset < this.length )
+        yield {angle, segment, offset, theta};
 
     } else if ( meeted == 2 ) {
-      let offset1 = mod4(seg_circ.thetaOf(circle.center)-len/2, 0);
-      let theta1 = mod4(circle.thetaOf(seg_circ.center)+len_/2, 0);
-      let dir1 = offset1 == 0 ? pre_side+"+" : "-+";
+      theta = mod4(circle.thetaOf(seg_circ.center)+len_/2);
+      offset = mod4(seg_circ.thetaOf(circle.center)-len/2, [0, this.length]);
+      let meet1 = {angle, segment, offset, theta};
 
-      let offset2 = mod4(seg_circ.thetaOf(circle.center)+len/2, 0);
-      let theta2 = mod4(circle.thetaOf(seg_circ.center)-len_/2, 0);
-      let dir2 = offset2 == 0 ? pre_side+"-" : "+-";
+      theta = mod4(circle.thetaOf(seg_circ.center)-len_/2);
+      offset = mod4(seg_circ.thetaOf(circle.center)+len/2, [0, this.length]);
+      angle = -angle;
+      let meet2 = {angle, segment, offset, theta};
 
-      if ( offset2 < offset1 )
-        [offset1, theta1, dir1, offset2, theta2, dir2]
-        = [offset2, theta2, dir2, offset1, theta1, dir1];
-      if ( fzy_cmp(offset1, this.length) < 0 )
-        yield [ang, offset1, theta1, dir1, dir_map[dir1]];
-      if ( fzy_cmp(offset2, this.length) < 0 )
-        yield [ang, offset2, theta2, dir2, dir_map[dir2]];
+      if ( meet2.offset < meet1.offset )
+        [meet1, meet2] = [meet2, meet1];
+      if ( meet1.offset < this.length )
+        yield meet1;
+      if ( meet2.offset < this.length )
+        yield meet2;
 
     }
+  }
+  // classify type of meet and sort
+  static solveScattering(meets, circle) {
+    // convert to beams: [angle, curvature, pseudo_index]
+    var post_beams = meets.map(({angle, segment, offset}, index) =>
+        [          angle,      1-segment.radius, +(index+1)]);
+    var  pre_beams = meets.map(({angle, segment, offset}, index) =>
+      offset == 0
+      ? [seg.angle+angle, segment.prev.radius-1, -(index+1)]
+      : [        2+angle,      segment.radius-1, -(index+1)]);
+    var post_field = [0, 1-circle.radius, +0];
+    var  pre_field = [2, circle.radius-1, -0];
+
+    // mod angle into range [-2, 2] and deal with boundary case
+    post_beams = post_beams.map(([ang, cur, i]) =>
+      fzy_cmp([mod4(ang), cur, i], pre_field) <= 0
+      ? [+mod4(+ang), cur, i] : [-mod4(-ang), cur, i]);
+    pre_beams = pre_beams.map(([ang, cur, i]) =>
+      fzy_cmp([mod4(ang), cur, i], pre_field) <= 0
+      ? [+mod4(+ang), cur, i] : [-mod4(-ang), cur, i]);
+
+    // separate as in and out of field
+    var in_beams = [], out_beams = [];
+    for ( let beams of [pre_beams, post_beams] ) for ( let beam of beams ) {
+      if ( fzy_cmp(beam, post_field) >= 0 )
+        in_beams.push(beam);
+      else
+        out_beams.push(beam);
+    }
+    in_beams.sort(fzy_cmp);
+    out_beams.sort(fzy_cmp);
+
+    // parse structure
+    // type = [start_side, turn_dir]
+    //   start_side: in circle = +1; out of circle = -1
+    //   turn_dir: pass through circle = 0; left U-turn: +1; right U-turn: -1
+    const types = {
+      [[+1,-1]]: "+-", [[+1,0]]: "+0", [[+1,+1]]: "++",
+      [[-1,-1]]: "--", [[-1,0]]: "-0", [[-1,+1]]: "-+"
+    };
+    function parseTouch(beams, start, end, meet, side, side_) {
+      meet.type = types[[side_, side*side_]];
+      meet.submeets = [];
+
+      var subside = -side;
+      for ( let i=start+1; i<=end-1; i++ ) {
+        console.assert(Math.sign(beams[i]) == subside);
+        let submeet = meets[Math.abs(beams[i])-1];
+
+        let j = beams.indexOf(-beams[i]);
+        console.assert(j != -1 && j > i && j < end);
+        parseTouch(beams, i, j, submeet, subside, side_);
+        submeet.super = meet;
+        meet.submeets.push(submeet);
+        i = j;
+      }
+    }
+
+    var in_parsed = [], out_parsed = [];
+    for ( let [beams, parsed, side_] of [[ in_beams,  in_parsed, +1],
+                                         [out_beams, out_parsed, -1]] ) {
+      let side = Math.sign(beams[0]);
+      for ( let i=0; i<beams.length; i++ ) {
+        console.assert(Math.sign(beams[i]) == side);
+        let meet = meets[Math.abs(beams[i])-1];
+        let j = beams.indexOf(-beams[i]);
+
+        if ( j == -1 ) {
+          console.assert(!meet.type || meet.type == types[[side_,0]]);
+          meet.type = types[[side_,0]];
+          parsed.push(meet);
+          side = -side;
+
+        } else {
+          console.assert(j > i);
+          parseTouch(beams, i, j, meet, side, side_);
+          parsed.push(meet);
+          i = j;
+        }
+      }
+    }
+
+    // merge parsed
+    var parsed = [];
+    in_parsed.reverse();
+    while ( true ) {
+      let  in_i =  in_parsed.findIndex(meet => meet.type[1] == "0");
+      let out_i = out_parsed.findIndex(meet => meet.type[1] == "0");
+
+      if ( in_i != -1 ) {
+        console.assert(in_parsed[in_i] === out_parsed[out_i]);
+        parsed.push(...in_parsed.splice(0, in_i));
+        parsed.push(...out_parsed.splice(0, out_i));
+        let meet = in_parsed.shift();
+        out_parsed.shift();
+        parsed.push(meet);
+
+      } else {
+        console.assert(out_i == -1);
+        parsed.push(...in_parsed);
+        parsed.push(...out_parsed);
+        break;
+      }
+     }
+
+    return parsed;
   }
 }
 
 /**
- * Element of sliding sphere
+ * Element of sliding sphere.
  * 
  * @class
- * @property {SphSeg[]} segments - Segments of this element.
+ * @property {SphSeg[]} children - Segments of boundaries.
  */
 class SphElem
 {
@@ -562,62 +683,17 @@ class SphElem
   *loops() {
     var segments = new Set(this.children);
     for ( let seg0 of segments ) {
-      yield seg0;
-      for ( let seg of seg0.loop() )
+      let loop = [];
+      for ( let seg of seg0.walk() ) {
         segments.delete(seg);
+        loop.push(seg);
+      }
+      yield loop;
     }
   }
 
-  mergeTrivialVertex(exceptions=[]) {
-    for ( let seg of this.children )
-      if ( !exceptions.includes(seg)
-           && seg !== seg.prev
-           && fzy_cmp(seg.angle, 2) == 0
-           && fzy_cmp(seg.radius, seg.prev.radius) == 0 )
-        seg.mergePrev();
-  }
   /**
-   * Find meet point between this element and circle.
-   * 
-   * @param {SphCircle} circle - The circle wanted to meet with.
-   * @yields {Array} Information about meet point, which has values
-   *   `[ang, seg, offset, theta, dir, dir_]`.
-   *   `ang` is angle between segment and circle, with unit of quadrant;
-   *   `seg` is the segment meeting with circle;
-   *   `offset` is offset of meet point along `seg.circle`, with unit of quadrant;
-   *   `theta` is offset of meet point along `circle`, with unit of quadrant;
-   *   `dir` and `dir_` are directions of meet point along this segment and circle,
-   *   which have format "[+-0][+-0]": the first is from-side, and the second is
-   *   to-side; "+" means inside, "-" means outside, and "0" means on the edge.
-   */
-  *meetWith(circle) {
-    for ( let seg0 of this.loops() ) {
-      // compute pre_side
-      let pre_side;
-
-      let pre_circ = seg0.prev.circle;
-      let [, len,, meeted] = pre_circ.relationTo(circle);
-
-      if ( meeted === undefined ) {
-        pre_side = "0";
-      } else if ( meeted < 1 ) {
-        pre_side = len == 4 ? "+" : "-";
-      } else {
-        // offset of first meet point along `pre_circ` with respect to `seg0.vertex`
-        let pre_offset = mod4(pre_circ.thetaOf(circle.center)-len/2-seg0.prev.length, 0);
-        pre_side = fzy_cmp(pre_offset+len, 4) >= 0 ? "+" : "-";
-      }
-
-      for ( let seg of seg0.loop() ) {
-        for ( let [ang, offset, theta, dir, dir_] of seg.meetWith(circle, pre_side) ) {
-          pre_side = dir[1];
-          yield [ang, seg, offset, theta, dir, dir_];
-        }
-      }
-    }
-  }
-  /**
-   * Check if point is inside this element
+   * Check if point is inside this element.
    * 
    * @param {number[]} point - The point to check.
    * @returns {boolean} True if point is in this element.
@@ -628,87 +704,148 @@ class SphElem
 
     // make a circle passing through this point and a vertex of element
     var vertex = this.children[0].vertex;
-    var q = q_align(point, vertex);
     var radius = angleTo(point, vertex)/2/Q;
-    var center = rotate([Math.sin(radius*Q), 0, Math.cos(radius*Q)], q);
-    var circle = new SphCircle({center, radius});
-    var theta0 = circle.thetaOf(point);
+    if ( fzy_cmp(radius, 0) == 0 )
+      return false;
 
-    var meets = [...this.meetWith(circle)].map(([,,, th,, dir_]) => [th, dir_]);
-    // sorting meet points with `theta`
-    // direction compare only occurs when meeting at widthless bridge,
-    // so we only need to know "--" == "--", "-+" > "+-"
-    meets.sort(([th1,dir1], [th2,dir2]) => fzy_cmp(th1, th2) || ((dir1>dir2)-(dir2>dir1)));
-    // find the meet point which is just next of `point` along circle
-    var [th1, dir1] = meets.find(([th, dir]) => th>theta0) || meets[0];
+    var orientation = q_mul(q_align(vertex, point), quaternion([0,1,0], radius*Q));
+    var circle = new SphCircle({orientation, radius});
 
-    return dir1[0] == "+";
+    var meets = [];
+    for ( let seg of this.children ) for ( let meet of seg.meetWith(circle) ) {
+      if ( mod4(meet.theta, [0]) == 0 )
+        return false;
+
+      let i, sgn;
+      for ( i=0; i<meets.length; i++ ) {
+        let theta = meets[i][0].theta;
+        meet.theta = mod4(meet.theta, [theta]);
+        sgn = Math.sign(meet.theta-theta);
+        if ( sgn > 0 ) continue;
+        else           break;
+      }
+
+      if ( sgn == 0 )
+        meets[i].push(meet);
+      else if ( sgn < 0 )
+        meets.splice(i, 0, [meet]);
+      else
+        meets.push([meet]);
+    }
+    meets = meets.flatMap(mmeet => SphSeg.solveScattering(mmeet, circle));
+
+    var side = ["-0", "+-", "--"].includes(meets[0].type);
+    console.assert(side == ["+0", "+-", "--"].includes(meets[meets.length-1].type));
+
+    return side;
   }
   /**
    * Slice element by circle.
    * 
    * @param {SphCircle} circle - The knife for slicing.
-   * @returns {SphElem[][]} Sliced elements of both sides of `circle`, have
-   *    values `[[inside_elem, ...], [outside_elem, ...]]`.
+   * @returns {SphSeg[]} Sliced segments of both sides of `circle`.
    */
   slice(circle) {
     var circle_ = circle.complement();
 
     // INTERPOLATE
-    // find meet points and classify them
-    var meets = [];
-    var touchs = [];
-    const TOUCH_DIR_ = ["--", "0-", "-0", "00"];
-    for ( let meet of this.meetWith(circle) ) {
-      if ( TOUCH_DIR_.includes(meet[5]) )
-        touchs.push(meet);
-      else
-        meets.push(meet);
+    // find meet points and sort by `theta`
+    var paths = [];
+    for ( let loop of this.loops() ) {
+      let path = [];
+      paths.push(path);
+      for ( let seg of loop )
+        for ( let meet of seg.meetWith(circle) )
+          path.push(meet);
     }
-    console.assert(touchs.some(meet => meet[5][0]=="0") ? meets.length==0 : true);
 
-    // interpolate meet points
-    meets.reverse(); // to deal with double interpolation at one segment
-    for ( let meet of meets ) if ( meet[2] != 0 ) { // offset != 0
-      let seg = meet[1], offset = meet[2];
-      meet[1] = seg.interpolate(offset);
-      meet[2] = 0;
+    var meets = [];
+    for ( let path of paths ) for ( let meet of path ) {
+      let i, sgn;
+      for ( i=0; i<meets.length; i++ ) {
+        let theta = meets[i][0].theta;
+        meet.theta = mod4(meet.theta, [theta]);
+        sgn = Math.sign(meet.theta-theta);
+        if ( sgn > 0 ) continue;
+        else           break;
+      }
+
+      if ( sgn == 0 )
+        meets[i].push(meet);
+      else if ( sgn < 0 )
+        meets.splice(i, 0, [meet]);
+      else
+        meets.push([meet]);
+    }
+    meets = meets.flatMap(mmeet => SphSeg.solveScattering(mmeet, circle));
+
+    // interpolate
+    for ( let meet of meets ) if ( meet.type[1] != "+" && meet.offset != 0 ) {
+      while ( meet.offset > meet.segment.length ) {
+        meet.offset = meet.offset - meet.segment.length;
+        meet.segment = meet.segment.next;
+      }
+      meet.segment = meet.segment.interpolate(meet.offset);
+      meet.offset = 0;
+    }
+
+    // BIPARTITE
+    var in_segs = new Set(), out_segs = new Set();
+    var lost_children = new Set(this.children);
+    for ( let path of paths ) for ( let i=0; i<path.length; i++ ) {
+      let meet1 = path[i];
+      let meet2 = path[i+1] || path[0];
+
+      let side = ["-0", "++", "+-"].includes(meet1.type);
+      console.assert(side == ["+0", "++", "+-"].includes(meet2.type));
+      let segs = side ? in_segs : out_segs;
+
+      for ( let seg of meet1.segment.walk(meet2.segment) ) {
+        segs.add(seg);
+        lost_children.delete(seg);
+      }
+    }
+
+    for ( let seg0 of lost_children ) {
+      let side = circle.contains(seg0.vertex);
+      let segs = side ? in_segs : out_segs;
+
+      for ( let seg of seg0.walk() ) {
+        segs.add(seg);
+        lost_children.delete(seg);
+      }
     }
 
     // SLICE
     var in_dash = [], out_dash = [];
     if ( meets.length != 0 ) {
-      // sort meet points with `theta`
-      // direction comparing only occurs when meeting at widthless bridge,
-      // so we only need to know "--" == "--", "-+" > "+-"
-      meets.sort(([,,,th1,,d1], [,,,th2,,d2]) => fzy_cmp(th1, th2) || ((d1>d2)-(d2>d1)));
-
       // draw dash
-      for ( let i in meets ) if ( meets[i][5] != "-+" ) { // dir2_ != "-+"
-        let [ang1, seg1,, theta1, dir1,] = meets[i-1] || meets[meets.length-1];
-        let [ang2, seg2,, theta2, dir2,] = meets[i];
+      for ( let i=0; i<meets.length; i++ ) if ( ["+0", "+-", "--"].includes(meets[i].type) ) {
+        let meet1 = meets[i];
+        let meet2 = meets[i+1] || Object.assign({}, meets[0], {theta: meets[0].theta+4});
+        console.assert(["-0", "--", "+-"].includes(meet2.type));
 
         // make segments between `seg1.vertex` and `seg2.vertex`
-        let length = mod4(theta2-theta1, 4);
+        let length = fzy_snap(meet2.theta - meet1.theta, [0, 4]);
         let in_seg  = new SphSeg({radius:circle.radius,  length,
-                                  orientation:q_spin(circle.orientation, theta1*Q)});
+                                  orientation:q_spin(circle.orientation, meet1.theta*Q)});
         let out_seg = new SphSeg({radius:circle_.radius, length,
-                                  orientation:q_spin(circle_.orientation, (4-theta2)*Q)});
+                                  orientation:q_spin(circle_.orientation, -meet2.theta*Q)});
         in_seg._adj_link(out_seg, length);
         in_dash.push(in_seg);
         out_dash.unshift(out_seg);
 
         // link to `seg1`, `seg2` singly
-        switch ( dir1 ) {
-          case "+-":
-            in_seg.prev = seg1.prev;
-            in_seg.angle = seg1.angle-ang1;
-            out_seg.next = seg1;
+        switch ( meet1.type ) {
+          case "+0":
+            in_seg.prev = meet1.segment.prev;
+            out_seg.next = meet1.segment;
+            in_seg.angle = meet1.segment.angle + meet1.angle;
             break;
 
-          case "++":
-            in_seg.prev = seg1.prev;
-            in_seg.angle = 0;
+          case "+-":
+            in_seg.prev = meet1.segment.prev;
+            in_seg.angle = meet1.segment.angle + meet1.angle - 4;
             break;
 
           case "--":
@@ -718,20 +855,20 @@ class SphElem
           default:
             console.assert(false);
         }
-        switch ( dir2 ) {
-          case "-+":
-            in_seg.next = seg2;
-            out_seg.prev = seg2.prev;
-            out_seg.angle = seg2.angle-(2-ang2);
+        switch ( meet2.type ) {
+          case "-0":
+            in_seg.next = meet2.segment;
+            out_seg.prev = meet2.segment.prev;
+            out_seg.angle = meet2.segment.angle + meet2.angle - 2;
             break;
 
-          case "++":
-            in_seg.next = seg2;
+          case "+-":
+            in_seg.next = meet2.segment;
             break;
 
           case "--":
-            out_seg.prev = seg2.prev;
-            out_seg.angle = 0;
+            out_seg.prev = meet2.segment.prev;
+            out_seg.angle = meet2.segment.angle + meet2.angle - 2;
             break;
 
           default:
@@ -740,132 +877,168 @@ class SphElem
       }
 
       // link dash
-      for ( let dash of [in_dash, out_dash] ) {
-        for ( let i=0; i<dash.length; i++ ) {
-          let seg1 = dash[i-1] || dash[dash.length-1];
-          let seg2 = dash[i];
+      var reducible = [];
+      for ( let dash of [in_dash, out_dash] ) for ( let i=0; i<dash.length; i++ ) {
+        let seg1 = dash[i];
+        let seg2 = dash[i+1] || dash[0];
 
-          if ( seg2.prev === undefined ) { // connect two dash
-            console.assert(seg1.next === undefined);
+        if ( seg2.prev === undefined || seg2.length == 0 )
+          reducible.push(seg2);
 
-            seg1._loop_connect(seg2);
-            seg2.angle = 2;
+        if ( seg2.prev === undefined ) { // trivial vertex case
+          console.assert(seg1.next === undefined);
 
-          } else if ( seg2.prev.next !== seg2 ) { // complete double link
-            if ( seg2.prev.next === seg1.next ) {
-              // kissing cut case
-              console.assert(seg2.angle == 0);
-              seg2.prev._loop_connect(seg2);
-              seg1._loop_connect(seg1.next);
-              seg1.next.angle = 0;
+          seg1._loop_connect(seg2);
+          seg2.angle = 2;
 
-            } else {
-              // intercut case
-              let [seg3, offset] = [...seg2.adj].find(e => seg2.prev.next===e[0].next) || [];
-              console.assert(seg3 !== undefined && fzy_cmp(offset, seg3.length) == 0);
+        } else if ( seg2.prev.next === seg1.next ) { // kissing cut case
+          seg2.prev._loop_connect(seg2);
+          seg1._loop_connect(seg1.next);
+          seg1.next.angle = seg1.next.angle - seg2.angle - 2;
 
-              seg2.prev._loop_connect(seg2);
-              seg3._loop_connect(seg3.next);
-              seg3.next.angle = seg3.next.angle - seg2.angle;
-            }
-          }
+        } else { // intercut case
+          let seg3 = seg2.adj.keys().next().value;
+          console.assert(seg2.prev.next === seg3.next);
+
+          seg2.prev._loop_connect(seg2);
+          seg3._loop_connect(seg3.next);
+          seg3.next.angle = seg3.next.angle - seg2.angle;
         }
       }
 
-    } else if ( touchs.length != 0 ) {
-      // only touch: no slice
+      // merge trivial dash
+      for ( let seg of reducible ) {
+        if ( seg.length == 0 ) {
+          seg.next.angle = seg.prev.angle + seg.next.angle - 2;
+          seg.prev._loop_connect(seg.next);
+          for ( let [adj_seg,] of seg.adj )
+            adj_seg._adj_unlink(seg);
+
+        } else if ( seg.prev !== seg ) {
+          seg.mergePrev();
+
+        } else {
+            continue;
+        }
+
+        let i = in_dash.indexOf(seg);
+        if ( i != -1 ) in_dash.splice(i, 1);
+        let j = out_dash.indexOf(seg);
+        if ( j != -1 ) out_dash.splice(j, 1);
+      }
 
     } else {
       // no meet
 
-      let v0 = circle.vectorAt(0);
-      if ( this.contains(v0) ) {
-        let in_seg  = new SphSeg({radius:circle.radius,  length:4, angle:2,
+      if ( this.contains(circle.vectorAt(0)) ) {
+        let in_seg  = new SphSeg({length:4, angle:2, radius:circle.radius,
                                   orientation:circle.orientation});
-        let out_seg = new SphSeg({radius:circle_.radius, length:4, angle:2,
+        let out_seg = new SphSeg({length:4, angle:2, radius:circle_.radius,
                                   orientation:circle_.orientation});
-        in_seg._adj_link(out_seg, 4);
         in_seg._loop_connect(in_seg);
         out_seg._loop_connect(out_seg);
+        in_seg._adj_link(out_seg, 4);
         in_dash.push(in_seg);
         out_dash.unshift(out_seg);
       }
-
     }
 
-    // BIPARTITE
-    if ( in_dash.length == 0 ) { // no dash => one side cases
-      console.assert(out_dash.length == 0);
-      const INSIDE_DIR  = ["++", "0+", "+0"];
-      const OUTSIDE_DIR = ["--", "0-", "-0"];
-
-      let side;
-      if ( touchs.some(meet => INSIDE_DIR.includes(meet[4])) ) { // have inside touch
-        console.assert(touchs.every(meet => INSIDE_DIR.includes(meet[4]) || meet[4]=="00"));
-        side = true;
-
-      } else if ( touchs.some(meet => OUTSIDE_DIR.includes(meet[4])) ) { // have outside touch
-        console.assert(touchs.every(meet => OUTSIDE_DIR.includes(meet[4]) || meet[4]=="00"));
-        side = false;
-
-      } else if ( touchs.length != 0 ) { // have full circle touch
-        console.assert(touchs.every(meet => meet[4]=="00"));
-        side = circle.relationTo(touchs[0][1].circle)[0] == 2;
-
-      } else { // no touch
-        side = circle.contains(this.children[0].vertex);
-
-      }
-
-      return side ? [[this], []] : [[], [this]];
-
-    } else { // two side cases
-      let in_elems = [];
-      let out_elems = [];
-
-      in_dash = new Set(in_dash);
-      for ( let seg0 of in_dash ) {
-        let elem = new SphElem();
-        in_elems.push(elem);
-
-        for ( let seg of seg0.loop() ) {
-          in_dash.delete(seg);
-          this._aff_delete(seg);
-          elem._aff_add(seg);
-        }
-      }
-
-      out_dash = new Set(out_dash);
-      for ( let seg0 of out_dash ) {
-        let elem = new SphElem();
-        out_elems.push(elem);
-
-        for ( let seg of seg0.loop() ) {
-          out_dash.delete(seg);
-          this._aff_delete(seg);
-          elem._aff_add(seg);
-        }
-      }
-
-      for ( let seg0 of this.children ) {
-        let elem;
-        for ( elem of [...in_elems, ...out_elems] )
-          if ( elem.contains(seg0.vertex) )
-            break;
-
-        for ( let seg of seg0.loop() ) {
-          this._aff_delete(seg);
-          elem._aff_add(seg);
-        }
-      }
-
-      // merge trivial vertex
-      for ( let elem of [...in_elems, ...out_elems] )
-        elem.mergeTrivialVertex();
-
-      return [in_elems, out_elems];
+    for ( let seg of in_dash ) {
+      this._aff_add(seg);
+      in_segs.add(seg);
+    }
+    for ( let seg of out_dash ) {
+      this._aff_add(seg);
+      out_segs.add(seg);
     }
 
+    in_segs = [...in_segs];
+    out_segs = [...out_segs];
+    return [in_segs, out_segs];
+
+    // if ( in_dash.length == 0 ) { // no dash => one side cases
+    //   console.assert(out_dash.length == 0);
+    //   const INTOUCH_DIR  = ["++", "0+", "+0"];
+    //   const OUTTOUCH_DIR = ["--", "0-", "-0"];
+    // 
+    //   let side;
+    //   if ( touches.some(meet => INTOUCH_DIR.includes(meet[4])
+    //                             || (meet[4]=="00" && meet[0]==0)) ) { // touch inside
+    //     side = true;
+    // 
+    //   } else if ( touches.some(meet => OUTTOUCH_DIR.includes(meet[4])
+    //                                    || (meet[4]=="00" && meet[0]==2)) ) { // touch outside
+    //     side = false;
+    // 
+    //   } else if ( touches.length != 0 ) { // have full circle touch
+    //     console.assert(touches.every(meet => meet[4]=="00"));
+    //     side = circle.relationTo(touches[0][1].circle)[0] == 2;
+    // 
+    //   } else { // no touch
+    //     side = circle.contains(this.children[0].vertex);
+    // 
+    //   }
+    // 
+    //   return side ? [[this], []] : [[], [this]];
+    // 
+    // } else { // two side cases
+    //   let in_elems = [];
+    //   let out_elems = [];
+    // 
+    //   in_dash = new Set(in_dash);
+    //   for ( let seg0 of in_dash ) {
+    //     let elem = new SphElem();
+    //     in_elems.push(elem);
+    // 
+    //     for ( let seg of seg0.walk() ) {
+    //       in_dash.delete(seg);
+    //       this._aff_delete(seg);
+    //       elem._aff_add(seg);
+    //     }
+    //   }
+    // 
+    //   out_dash = new Set(out_dash);
+    //   for ( let seg0 of out_dash ) {
+    //     let elem = new SphElem();
+    //     out_elems.push(elem);
+    // 
+    //     for ( let seg of seg0.walk() ) {
+    //       out_dash.delete(seg);
+    //       this._aff_delete(seg);
+    //       elem._aff_add(seg);
+    //     }
+    //   }
+    // 
+    //   for ( let seg0 of this.children ) {
+    //     let elem;
+    //     for ( elem of [...in_elems, ...out_elems] )
+    //       if ( elem.contains(seg0.vertex) )
+    //         break;
+    // 
+    //     for ( let seg of seg0.walk() ) {
+    //       this._aff_delete(seg);
+    //       elem._aff_add(seg);
+    //     }
+    //   }
+    // 
+    //   return [in_elems, out_elems];
+    // }
+
+  }
+
+  /**
+   * Merge trivial vertices.
+   * 
+   * @param {SphSeg[]} exceptions - Exceptions of removing vertices.
+   */
+  mergeTrivialVertices(exceptions=[]) {
+    for ( let seg of this.children )
+      if ( !exceptions.includes(seg)
+           && seg !== seg.prev
+           && fzy_cmp(seg.angle, 2) == 0
+           && fzy_cmp(seg.radius, seg.prev.radius) == 0
+           && fzy_cmp(seg.circle.center, seg.prev.circle.center) == 0 )
+        seg.mergePrev();
   }
 }
 
@@ -877,6 +1050,10 @@ class SphLock
     this.offset = 0;
     this.passwords = [];
   }
+  get circle() {
+    return this.left_segments[0].circle;
+  }
+
   _lock() {
     for ( let seg of this.left_segments )
       seg.lock = this;
@@ -888,9 +1065,6 @@ class SphLock
       seg.lock = undefined;
     for ( let seg of this.right_segments )
       seg.lock = undefined;
-  }
-  get circle() {
-    return this.left_segments[0].circle;
   }
 
   elementsOfSide(side=+1) {
@@ -913,8 +1087,8 @@ class SphLock
     for ( let elem of this.elementsOfSide(side) )
       for ( let seg of elem.children )
         q_mul(q, seg.orientation, seg.orientation);
-    this.offset = mod4(this.offset-theta, 0);
-    this.passwords = this.passwords.map(offset => mod4(offset-theta, 0));
+    this.offset = mod4(this.offset-theta, [0]);
+    this.passwords = this.passwords.map(offset => mod4(offset-theta, [0]));
 
     for ( let segs of [this.left_segments, this.right_segments] )
       for ( let seg0 of segs )
@@ -924,7 +1098,7 @@ class SphLock
     for ( let seg1 of this.left_segments ) {
       offset2 = 0;
       for ( let seg2 of this.right_segments ) {
-        let offset = mod4(this.offset-offset1-offset2, 4);
+        let offset = mod4(this.offset-offset1-offset2, [4]);
         if ( fzy_cmp(offset, seg1.length+seg2.length) <= 0 )
           seg1._adj_link(seg2, offset);
         offset2 += seg2.length;
@@ -949,7 +1123,7 @@ class SphLock
 
       if ( offset == 0 ) {
         let adj = [...seg.prev.adj.entries()];
-        adj = adj.map(([seg_, th]) => [seg_, mod4(th-seg.prev.length, 0)]);
+        adj = adj.map(([seg_, th]) => [seg_, mod4(th-seg.prev.length, [0])]);
         angle += seg.angle;
         [seg, offset] = adj.find(([seg_, v_th]) => fzy_cmp(seg_.length, v_th) > 0);
 
@@ -1006,7 +1180,7 @@ class SphLock
       let free_ind = ticks.flatMap(({is_free}, i) => is_free ? [i] : []);
       for ( let i of free_ind ) for ( let j of free_ind ) if ( i < j ) {
         let length = ticks[j].offset - ticks[i].offset;
-        let offset = mod4(ticks[i].offset+length/2, 0);
+        let offset = mod4(ticks[i].offset+length/2, [0]);
 
         switch ( fzy_cmp(length, 2) ) {
           case -1:
@@ -1015,7 +1189,7 @@ class SphLock
 
           case +1:
             length = 4 - length;
-            offset = mod4(offset+2, 0);
+            offset = mod4(offset+2, [0]);
             [i, j] = [j, i];
             latches.push({length, offset, i, j});
             break;
@@ -1023,7 +1197,7 @@ class SphLock
           case 0:
             length = 2;
             latches.push({length, offset, i, j});
-            offset = mod4(offset+2, 0);
+            offset = mod4(offset+2, [0]);
             [i, j] = [j, i];
             latches.push({length, offset, i, j});
             break;
@@ -1036,10 +1210,10 @@ class SphLock
         while ( ticks[i].subticks.length ) {
           let {angle, segment:{radius}} = ticks[i].subticks.pop();
           let [length] = SphCircle._leaf(angle, ticks[i].segment.radius, 2-radius);
-          let offset = mod4(ticks[i].offset+length/2, 0);
+          let offset = mod4(ticks[i].offset+length/2, [0]);
 
           let j = ticks.findIndex(
-            ({offset}) => mod4(ticks[i].offset+length-offset, 0) == 0);
+            ({offset}) => mod4(ticks[i].offset+length-offset, 0) == [0]);
           if ( j == -1 ) continue;
           if ( !ticks[j].is_free ) {
             let y = ticks[j].subticks.findIndex(
@@ -1056,7 +1230,7 @@ class SphLock
             case +1:
               length = 4 - length;
               angle = 2 - angle;
-              offset = mod4(offset+2, 0);
+              offset = mod4(offset+2, [0]);
               [i, j] = [j, i];
               latches.push({length, angle, offset, i, j});
               break;
@@ -1065,7 +1239,7 @@ class SphLock
               length = 2;
               angle = 1;
               latches.push({length, angle, offset, i, j});
-              offset = mod4(offset+2, 0);
+              offset = mod4(offset+2, [0]);
               [i, j] = [j, i];
               latches.push({length, angle, offset, i, j});
               break;
@@ -1078,7 +1252,7 @@ class SphLock
     var passwords = [];
     for ( let latch1 of left_latches ) for ( let latch2 of right_latches )
       if ( fzy_cmp([latch1.length, latch1.angle], [latch2.length, 2-latch2.angle]) == 0 ) {
-        let offset = mod4(offset0-latch1.offset-latch2.offset, 0);
+        let offset = mod4(offset0-latch1.offset-latch2.offset, [0]);
         let offset_ = passwords.find(offset_ => fzy_cmp(offset_, offset) == 0);
         if ( offset_ === undefined )
           passwords.push(offset);
