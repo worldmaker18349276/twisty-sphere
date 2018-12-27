@@ -493,7 +493,7 @@ class SphSeg
    * 
    * @param {SphCircle} circle - The circle wanted to meet with.
    * @yields {object} Information about meet point, which has values
-   *   `{angle, segment, offset, theta}`.
+   *   `{angle, segment, offset, circle, theta}`.
    *   `angle` is angle between `this` and `circle` at meet point (angle between
    *   two directed tangent vector), with unit of quadrant;
    *   `segment` is the segment meeting with circle;
@@ -511,7 +511,7 @@ class SphSeg
       if ( angle == 0 ) angle = +0;
       if ( angle == 2 ) angle = -2;
 
-      yield {angle, segment, offset, theta};
+      yield {angle, segment, offset, circle, theta};
 
     } else if ( meeted == 0 ) {
       return;
@@ -526,17 +526,17 @@ class SphSeg
       if ( angle == 2 && len == 0 ) angle = -2;
 
       if ( offset < this.length )
-        yield {angle, segment, offset, theta};
+        yield {angle, segment, offset, circle, theta};
 
     } else if ( meeted == 2 ) {
       theta = mod4(circle.thetaOf(seg_circ.center)+len_/2);
       offset = mod4(seg_circ.thetaOf(circle.center)-len/2, [0, this.length]);
-      let meet1 = {angle, segment, offset, theta};
+      let meet1 = {angle, segment, offset, circle, theta};
 
       theta = mod4(circle.thetaOf(seg_circ.center)-len_/2);
       offset = mod4(seg_circ.thetaOf(circle.center)+len/2, [0, this.length]);
       angle = -angle;
-      let meet2 = {angle, segment, offset, theta};
+      let meet2 = {angle, segment, offset, circle, theta};
 
       if ( meet2.offset < meet1.offset )
         [meet1, meet2] = [meet2, meet1];
@@ -548,16 +548,20 @@ class SphSeg
     }
   }
   // classify type of meet and sort
-  static solveScattering(meets, circle) {
+  static solveScattering(meets) {
+    if ( !meets.every(({circle, theta}) => circle === meets[0].circle
+                                        && mod4(theta-meets[0].theta, [0]) == 0) )
+      throw new Error("not scattering at the same position");
+
     // convert to beams: [angle, curvature, pseudo_index]
     var post_beams = meets.map(({angle, segment, offset}, index) =>
-        [          angle,      1-segment.radius, +(index+1)]);
+        [              angle,      1-segment.radius, +(index+1)]);
     var  pre_beams = meets.map(({angle, segment, offset}, index) =>
       offset == 0
-      ? [seg.angle+angle, segment.prev.radius-1, -(index+1)]
-      : [        2+angle,      segment.radius-1, -(index+1)]);
-    var post_field = [0, 1-circle.radius, +0];
-    var  pre_field = [2, circle.radius-1, -0];
+      ? [segment.angle+angle, segment.prev.radius-1, -(index+1)]
+      : [            2+angle,      segment.radius-1, -(index+1)]);
+    var post_field = [0, 1-meets[0].circle.radius, +0];
+    var  pre_field = [2, meets[0].circle.radius-1, -0];
 
     // mod angle into range [-2, 2] and deal with boundary case
     post_beams = post_beams.map(([ang, cur, i]) =>
@@ -577,6 +581,8 @@ class SphSeg
     }
     in_beams.sort(fzy_cmp);
     out_beams.sort(fzy_cmp);
+    in_beams = in_beams.map(e => e[2]);
+    out_beams = out_beams.map(e => e[2]);
 
     // parse structure
     // type = [start_side, turn_dir]
@@ -587,7 +593,7 @@ class SphSeg
       [[-1,-1]]: "--", [[-1,0]]: "-0", [[-1,+1]]: "-+"
     };
     function parseTouch(beams, start, end, meet, side, side_) {
-      meet.type = types[[side_, side*side_]];
+      meet.type = types[[side_, side]];
       meet.submeets = [];
 
       var subside = -side;
@@ -598,7 +604,7 @@ class SphSeg
         let j = beams.indexOf(-beams[i]);
         console.assert(j != -1 && j > i && j < end);
         parseTouch(beams, i, j, submeet, subside, side_);
-        submeet.super = meet;
+        submeet.supermeet = meet;
         meet.submeets.push(submeet);
         i = j;
       }
@@ -614,8 +620,8 @@ class SphSeg
         let j = beams.indexOf(-beams[i]);
 
         if ( j == -1 ) {
-          console.assert(!meet.type || meet.type == types[[side_,0]]);
-          meet.type = types[[side_,0]];
+          console.assert(!meet.type || meet.type == types[[-side*side_,0]]);
+          meet.type = types[[-side*side_,0]];
           parsed.push(meet);
           side = -side;
 
@@ -849,7 +855,7 @@ class SphElem
             break;
 
           case "--":
-            out_seg.next = seg1;
+            out_seg.next = meet1.segment;
             break;
 
           default:
