@@ -786,7 +786,7 @@ class SphElem
     meets = meets.flatMap(mmeet => SphSeg.solveScattering(mmeet, circle));
 
     // interpolate
-    for ( let meet of meets ) if ( meet.type[1] != "+" && meet.offset != 0 ) {
+    for ( let meet of meets ) if ( meet.type[1] == "0" && meet.offset != 0 ) {
       while ( meet.offset > meet.segment.length ) {
         meet.offset = meet.offset - meet.segment.length;
         meet.segment = meet.segment.next;
@@ -795,7 +795,7 @@ class SphElem
       meet.offset = 0;
     }
 
-    // BIPARTITE
+    // bipartite
     var in_segs = new Set(), out_segs = new Set();
     var lost_children = new Set(this.children);
     for ( let path of paths ) for ( let i=0; i<path.length; i++ ) {
@@ -823,120 +823,67 @@ class SphElem
     }
 
     // SLICE
-    var in_dash = [], out_dash = [];
-    if ( meets.length != 0 ) {
+    var dash = meets.filter(meet => meet.type[1] == "0");
+    if ( dash.length != 0 ) {
+      if ( dash[0].type != "+0" ) {
+        let meet = dash.shift();
+        meet.theta = meet.theta + 4;
+        dash.push(meet);
+      }
+      console.assert(dash.length % 2 == 0
+        && dash.every(({type},i) => i%2==0 ? type[0]=="+" : type[0]=="-"));
+
       // draw dash
-      for ( let i=0; i<meets.length; i++ ) if ( ["+0", "+-", "--"].includes(meets[i].type) ) {
-        let meet1 = meets[i];
-        let meet2 = meets[i+1] || Object.assign({}, meets[0], {theta: meets[0].theta+4});
-        console.assert(["-0", "--", "+-"].includes(meet2.type));
+      for ( let i=0; i<dash.length; i+=2 ) {
+        let meet1 = dash[i];
+        let meet2 = dash[i+1];
 
-        // make segments between `seg1.vertex` and `seg2.vertex`
         let length = fzy_snap(meet2.theta - meet1.theta, [0, 4]);
-        let in_seg  = new SphSeg({radius:circle.radius,  length,
-                                  orientation:q_spin(circle.orientation, meet1.theta*Q)});
-        let out_seg = new SphSeg({radius:circle_.radius, length,
-                                  orientation:q_spin(circle_.orientation, -meet2.theta*Q)});
-        in_seg._adj_link(out_seg, length);
-        in_dash.push(in_seg);
-        out_dash.unshift(out_seg);
+        if ( length == 0 ) {
+          // connect two meets
+          let diff = meet2.angle - meet1.angle;
+          let ang1 = meet1.segment.angle;
+          let ang2 = meet2.segment.angle;
+          meet2.segment.angle = ang1 - diff;
+          meet1.segment.angle = ang2 + diff - 4;
 
-        // link to `seg1`, `seg2` singly
-        switch ( meet1.type ) {
-          case "+0":
-            in_seg.prev = meet1.segment.prev;
-            out_seg.next = meet1.segment;
-            in_seg.angle = meet1.segment.angle + meet1.angle;
-            break;
-
-          case "+-":
-            in_seg.prev = meet1.segment.prev;
-            in_seg.angle = meet1.segment.angle + meet1.angle - 4;
-            break;
-
-          case "--":
-            out_seg.next = meet1.segment;
-            break;
-
-          default:
-            console.assert(false);
-        }
-        switch ( meet2.type ) {
-          case "-0":
-            in_seg.next = meet2.segment;
-            out_seg.prev = meet2.segment.prev;
-            out_seg.angle = meet2.segment.angle + meet2.angle - 2;
-            break;
-
-          case "+-":
-            in_seg.next = meet2.segment;
-            break;
-
-          case "--":
-            out_seg.prev = meet2.segment.prev;
-            out_seg.angle = meet2.segment.angle + meet2.angle - 2;
-            break;
-
-          default:
-            console.assert(false);
-        }
-      }
-
-      // link dash
-      var reducible = [];
-      for ( let dash of [in_dash, out_dash] ) for ( let i=0; i<dash.length; i++ ) {
-        let seg1 = dash[i];
-        let seg2 = dash[i+1] || dash[0];
-
-        if ( seg2.prev === undefined || seg2.length == 0 )
-          reducible.push(seg2);
-
-        if ( seg2.prev === undefined ) { // trivial vertex case
-          console.assert(seg1.next === undefined);
-
-          seg1._loop_connect(seg2);
-          seg2.angle = 2;
-
-        } else if ( seg2.prev.next === seg1.next ) { // kissing cut case
-          seg2.prev._loop_connect(seg2);
-          seg1._loop_connect(seg1.next);
-          seg1.next.angle = seg1.next.angle - seg2.angle - 2;
-
-        } else { // intercut case
-          let seg3 = seg2.adj.keys().next().value;
-          console.assert(seg2.prev.next === seg3.next);
-
-          seg2.prev._loop_connect(seg2);
-          seg3._loop_connect(seg3.next);
-          seg3.next.angle = seg3.next.angle - seg2.angle;
-        }
-      }
-
-      // merge trivial dash
-      for ( let seg of reducible ) {
-        if ( seg.length == 0 ) {
-          seg.next.angle = seg.prev.angle + seg.next.angle - 2;
-          seg.prev._loop_connect(seg.next);
-          for ( let [adj_seg,] of seg.adj )
-            adj_seg._adj_unlink(seg);
-
-        } else if ( seg.prev !== seg ) {
-          seg.mergePrev();
+          let seg1 = meet1.segment.prev;
+          let seg2 = meet2.segment.prev;
+          seg1._loop_connect(meet2.segment);
+          seg2._loop_connect(meet1.segment);
 
         } else {
-            continue;
-        }
+          // make segments between two meets
+          let in_seg  = new SphSeg({radius:circle.radius,  length,
+                                    orientation:q_spin(circle.orientation, meet1.theta*Q)});
+          let out_seg = new SphSeg({radius:circle_.radius, length,
+                                    orientation:q_spin(circle_.orientation, -meet2.theta*Q)});
 
-        let i = in_dash.indexOf(seg);
-        if ( i != -1 ) in_dash.splice(i, 1);
-        let j = out_dash.indexOf(seg);
-        if ( j != -1 ) out_dash.splice(j, 1);
+          in_seg.angle = meet1.segment.angle + meet1.angle;
+          meet1.segment.angle = - meet1.angle;
+          out_seg.angle = meet2.segment.angle + meet2.angle - 2;
+          meet2.segment.angle = 2 - meet2.angle;
+
+          meet1.segment.prev._loop_connect(in_seg);
+          out_seg._loop_connect(meet1.segment);
+          meet2.segment.prev._loop_connect(out_seg);
+          in_seg._loop_connect(meet2.segment);
+
+          in_seg._adj_link(out_seg, length);
+          this._aff_add(in_seg);
+          this._aff_add(out_seg);
+
+          in_segs.add(in_seg);
+          out_segs.add(out_seg);
+
+        }
       }
 
     } else {
-      // no meet
+      // no cross meet
+      if ( meets.find(({type}) => type[1] == "-")
+           || this.contains(circle.vectorAt(0)) ) {
 
-      if ( this.contains(circle.vectorAt(0)) ) {
         let in_seg  = new SphSeg({length:4, angle:2, radius:circle.radius,
                                   orientation:circle.orientation});
         let out_seg = new SphSeg({length:4, angle:2, radius:circle_.radius,
@@ -944,92 +891,17 @@ class SphElem
         in_seg._loop_connect(in_seg);
         out_seg._loop_connect(out_seg);
         in_seg._adj_link(out_seg, 4);
-        in_dash.push(in_seg);
-        out_dash.unshift(out_seg);
-      }
-    }
+        this._aff_add(in_seg);
+        this._aff_add(out_seg);
 
-    for ( let seg of in_dash ) {
-      this._aff_add(seg);
-      in_segs.add(seg);
-    }
-    for ( let seg of out_dash ) {
-      this._aff_add(seg);
-      out_segs.add(seg);
+        in_segs.add(in_seg);
+        out_segs.add(out_seg);
+      }
     }
 
     in_segs = [...in_segs];
     out_segs = [...out_segs];
     return [in_segs, out_segs];
-
-    // if ( in_dash.length == 0 ) { // no dash => one side cases
-    //   console.assert(out_dash.length == 0);
-    //   const INTOUCH_DIR  = ["++", "0+", "+0"];
-    //   const OUTTOUCH_DIR = ["--", "0-", "-0"];
-    // 
-    //   let side;
-    //   if ( touches.some(meet => INTOUCH_DIR.includes(meet[4])
-    //                             || (meet[4]=="00" && meet[0]==0)) ) { // touch inside
-    //     side = true;
-    // 
-    //   } else if ( touches.some(meet => OUTTOUCH_DIR.includes(meet[4])
-    //                                    || (meet[4]=="00" && meet[0]==2)) ) { // touch outside
-    //     side = false;
-    // 
-    //   } else if ( touches.length != 0 ) { // have full circle touch
-    //     console.assert(touches.every(meet => meet[4]=="00"));
-    //     side = circle.relationTo(touches[0][1].circle)[0] == 2;
-    // 
-    //   } else { // no touch
-    //     side = circle.contains(this.children[0].vertex);
-    // 
-    //   }
-    // 
-    //   return side ? [[this], []] : [[], [this]];
-    // 
-    // } else { // two side cases
-    //   let in_elems = [];
-    //   let out_elems = [];
-    // 
-    //   in_dash = new Set(in_dash);
-    //   for ( let seg0 of in_dash ) {
-    //     let elem = new SphElem();
-    //     in_elems.push(elem);
-    // 
-    //     for ( let seg of seg0.walk() ) {
-    //       in_dash.delete(seg);
-    //       this._aff_delete(seg);
-    //       elem._aff_add(seg);
-    //     }
-    //   }
-    // 
-    //   out_dash = new Set(out_dash);
-    //   for ( let seg0 of out_dash ) {
-    //     let elem = new SphElem();
-    //     out_elems.push(elem);
-    // 
-    //     for ( let seg of seg0.walk() ) {
-    //       out_dash.delete(seg);
-    //       this._aff_delete(seg);
-    //       elem._aff_add(seg);
-    //     }
-    //   }
-    // 
-    //   for ( let seg0 of this.children ) {
-    //     let elem;
-    //     for ( elem of [...in_elems, ...out_elems] )
-    //       if ( elem.contains(seg0.vertex) )
-    //         break;
-    // 
-    //     for ( let seg of seg0.walk() ) {
-    //       this._aff_delete(seg);
-    //       elem._aff_add(seg);
-    //     }
-    //   }
-    // 
-    //   return [in_elems, out_elems];
-    // }
-
   }
 
   /**
@@ -1038,12 +910,11 @@ class SphElem
    * @param {SphSeg[]} exceptions - Exceptions of removing vertices.
    */
   mergeTrivialVertices(exceptions=[]) {
-    for ( let seg of this.children )
+    for ( let seg of new Set(this.children) )
       if ( !exceptions.includes(seg)
            && seg !== seg.prev
            && fzy_cmp(seg.angle, 2) == 0
-           && fzy_cmp(seg.radius, seg.prev.radius) == 0
-           && fzy_cmp(seg.circle.center, seg.prev.circle.center) == 0 )
+           && fzy_cmp(seg.radius, seg.prev.radius) == 0 )
         seg.mergePrev();
   }
 }
