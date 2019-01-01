@@ -486,6 +486,84 @@ class SphSeg
 
     return this;
   }
+  /**
+   * Glue adjacent together.
+   * 
+   * @param {SphSeg} seg - The adjacent segment to glue.
+   */
+  glueAdjacent(segment) {
+    if ( !this.adj.has(segment) || this.parent !== segment.parent )
+      throw new Error("unable to glue segments");
+
+    // find contact points
+    var contacts = [];
+    var offset = this.adj.get(segment);
+    if ( fzy_cmp(offset, segment.length) <= 0 )
+      contacts.push([0, offset]);
+    if ( fzy_cmp(offset, this.length) <= 0 )
+      contacts.push([offset, 0]);
+    var offset2 = mod4(offset-segment.length, [0, this.length, offset]);
+    if ( offset2 != 0 && offset2 < this.length )
+      contacts.push([offset2, segment.length]);
+    var offset2_ = mod4(offset-this.length, [0, segment.length, offset]);
+    if ( offset2_ != 0 && offset2_ < segment.length )
+      contacts.push([this.length, offset2_]);
+    contacts.sort();
+    console.assert(contacts.length % 2 == 0);
+
+    // interpolate
+    var zippers = [];
+    for ( let [theta1, theta2] of contacts ) {
+      let seg1 = this;
+      let ang1 = 0;
+      while ( fzy_cmp(theta1, seg1.length) >= 0 ) {
+        theta1 = theta1 - seg1.length;
+        seg1 = seg1.next;
+        if ( fzy_cmp(seg1.angle, 2) != 0 )
+          ang1 = ang1 + 2 - seg1.angle;
+      }
+      if ( fzy_cmp(theta1, 0) > 0 ) {
+        seg1 = seg1.interpolate(theta1);
+        theta1 = 0;
+      }
+      console.assert(fzy_cmp(theta1, 0) == 0);
+      
+      let seg2 = segment;
+      let ang2 = 0;
+      while ( fzy_cmp(theta2, seg2.length) >= 0 ) {
+        theta2 = theta2 - seg2.length;
+        seg2 = seg2.next;
+        if ( fzy_cmp(seg2.angle, 2) != 0 )
+          ang2 = ang2 + 2 - seg2.angle;
+      }
+      if ( fzy_cmp(theta2, 0) > 0 ) {
+        seg2 = seg2.interpolate(theta2);
+        theta2 = 0;
+      }
+      console.assert(fzy_cmp(theta2, 0) == 0);
+
+      zippers.push([seg1, seg2, ang1-ang2+2]);
+    }
+
+    // zip
+    var parent = this.parent;
+    for ( let i=0; i<zippers.length; i++ ) {
+      let [seg1, seg2, ang] = zippers[i];
+      let [seg1_prev, seg2_prev] = [seg1.prev, seg2.prev];
+      let [seg1_ang, seg2_ang] = [seg1.angle, seg2.angle];
+
+      seg2_prev._loop_connect(seg1);
+      seg1_prev._loop_connect(seg2);
+      seg1.angle = seg2_ang + 4-ang;
+      seg2.angle = seg1_ang + ang;
+
+      if ( i % 2 == 1 ) {
+        console.assert(seg2.next.next === seg2 && fzy_cmp(seg2.angle, 4) == 0);
+        parent._aff_delete(seg2);
+        parent._aff_delete(seg2.prev);
+      }
+    }
+  }
 
   /**
    * Find meet point between this segment and circle.
@@ -547,10 +625,22 @@ class SphSeg
 
     }
   }
-  // classify type of meet and sort
+  /**
+   * Classify type of meets and sort.
+   * This function will add type property to meet.  Type has format "[+-][0+-]".
+   * The first character is start side respect to circle: "+" means in circle;
+   * "-" means out of circle.  The second character is direction of U-turn: "+"
+   * means left U-turn; "-" means right U-turn; "0" means no turn, pass through
+   * circle.  Cross-meets have type "[+-]0", and touch-meets have type "[+-][+-]".
+   * If two touch-meets has inclusion relation, properties submeet/supermeet
+   * will be added to meet object.
+   * 
+   * @param {object[]} meets - The meets to solve, which are at the same point.
+   * @returns {object[]} Sorted meets.
+   */
   static solveScattering(meets) {
     if ( !meets.every(({circle, theta}) => circle === meets[0].circle
-                                        && mod4(theta-meets[0].theta, [0]) == 0) )
+                                           && mod4(theta-meets[0].theta, [0]) == 0) )
       throw new Error("not scattering at the same position");
 
     // convert to beams: [angle, curvature, pseudo_index]
@@ -585,9 +675,6 @@ class SphSeg
     out_beams = out_beams.map(e => e[2]);
 
     // parse structure
-    // type = [start_side, turn_dir]
-    //   start_side: in circle = +1; out of circle = -1
-    //   turn_dir: pass through circle = 0; left U-turn: +1; right U-turn: -1
     const types = {
       [[+1,-1]]: "+-", [[+1,0]]: "+0", [[+1,+1]]: "++",
       [[-1,-1]]: "--", [[-1,0]]: "-0", [[-1,+1]]: "-+"
@@ -685,6 +772,20 @@ class SphElem
       seg.parent = undefined;
     }
   }
+  split(...groups) {
+    var elements = [];
+    for ( let group of groups ) if ( group.length ) {
+      let elem = new SphElem();
+      elements.push(elem);
+      for ( let seg of group )
+        elem._aff_add(seg);
+    }
+    return elements;
+  }
+  merge(...elements) {
+    for ( let element of elements ) if ( element !== this )
+      this._aff_add(...element.children);
+  }
 
   *loops() {
     var segments = new Set(this.children);
@@ -717,32 +818,21 @@ class SphElem
     var orientation = q_mul(q_align(vertex, point), quaternion([0,1,0], radius*Q));
     var circle = new SphCircle({orientation, radius});
 
-    var meets = [];
+    var min_meets;
     for ( let seg of this.children ) for ( let meet of seg.meetWith(circle) ) {
-      if ( mod4(meet.theta, [0]) == 0 )
+      let min_theta = min_meets ? min_meets[0].theta : 4;
+
+      meet.theta = mod4(meet.theta, [0, min_theta]);
+      if ( meet.theta == 0 )
         return false;
-
-      let i, sgn;
-      for ( i=0; i<meets.length; i++ ) {
-        let theta = meets[i][0].theta;
-        meet.theta = mod4(meet.theta, [theta]);
-        sgn = Math.sign(meet.theta-theta);
-        if ( sgn > 0 ) continue;
-        else           break;
-      }
-
-      if ( sgn == 0 )
-        meets[i].push(meet);
-      else if ( sgn < 0 )
-        meets.splice(i, 0, [meet]);
-      else
-        meets.push([meet]);
+      else if ( meet.theta == min_theta )
+        min_meets.push(meet);
+      else if ( meet.theta <  min_theta )
+        min_meets = [meet];
     }
-    meets = meets.flatMap(mmeet => SphSeg.solveScattering(mmeet, circle));
+    min_meets = SphSeg.solveScattering(min_meets, circle);
 
-    var side = ["-0", "+-", "--"].includes(meets[0].type);
-    console.assert(side == ["+0", "+-", "--"].includes(meets[meets.length-1].type));
-
+    var side = ["-0", "+-", "--"].includes(min_meets[0].type);
     return side;
   }
   /**
@@ -916,6 +1006,20 @@ class SphElem
            && fzy_cmp(seg.angle, 2) == 0
            && fzy_cmp(seg.radius, seg.prev.radius) == 0 )
         seg.mergePrev();
+  }
+  mergeTrivialEdges() {
+    while ( true ) {
+      var adj = [];
+      for ( let seg of this.children )
+        for ( let adj_seg of seg.adj.keys() )
+          if ( adj_seg.parent === this )
+            adj.push([seg, adj_seg]);
+
+      if ( adj.length == 0 )
+        break;
+      else
+        adj[0][0].glueAdjacent(adj[0][1]);
+    }
   }
 }
 
