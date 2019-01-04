@@ -400,6 +400,34 @@ class SphSeg
       seg = seg.next;
     } while ( ![undefined, this, stop].includes(seg) );
   }
+  *turn(offset=0, region) {
+    var seg = this;
+    var angle = 0;
+
+    do {
+      yield [angle, seg, offset];
+
+      let adj = [...seg.adj.entries()];
+      adj = adj.map(([seg_, th]) => [seg_, mod4(th-offset, [4, seg_.length])]);
+      [seg, offset] = adj.find(([seg_, th_]) => seg_.length >= th_) || [];
+
+      if ( seg !== undefined ) {
+        if ( seg.length > offset )
+          angle += 2;
+        else if ( seg.length == offset )
+          [seg, offset, angle] = [seg.next, 0, angle+seg.angle];
+        else
+          console.assert(false);
+      }
+
+      if ( seg === undefined )
+        break;
+      if ( region && !region.includes(seg) )
+        break;
+
+    } while ( seg !== this );
+    console.assert(seg !== this || fzy_cmp(angle, 4) == 0);
+  }
 
   /**
    * Split this segment into two segments.
@@ -489,7 +517,7 @@ class SphSeg
   /**
    * Glue adjacent together.
    * 
-   * @param {SphSeg} seg - The adjacent segment to glue.
+   * @param {SphSeg} segment - The adjacent segment to glue; they must have same parent.
    */
   glueAdjacent(segment) {
     if ( !this.adj.has(segment) || this.parent !== segment.parent )
@@ -835,6 +863,94 @@ class SphElem
     var side = ["-0", "+-", "--"].includes(min_meets[0].type);
     return side;
   }
+  // find boundaries of this element
+  boundaries() {
+    var profile = [];
+    for ( let seg of this.children ) {
+      // find contact points of adjacent segment
+      let contacts = [];
+      for ( let [adj_seg, offset] of seg.adj ) {
+        if ( fzy_cmp(offset, adj_seg.length) <= 0 )
+          contacts.push([0, +1]);
+        if ( fzy_cmp(offset, seg.length) <= 0 )
+          contacts.push([offset, -1]);
+        let offset2 = mod4(offset-adj_seg.length, [0, seg.length, offset]);
+        if ( offset2 != 0 && offset2 < seg.length )
+          contacts.push([offset2, +1]);
+        let offset2_ = mod4(offset-seg.length, [0, adj_seg.length, offset]);
+        if ( offset2_ != 0 && offset2_ < adj_seg.length )
+          contacts.push([seg.length, -1]);
+      }
+      contacts.unshift([0, -1]);
+      contacts.push([seg.length, +1]);
+      contacts.sort(fzy_cmp);
+
+      // find uncovered interval
+      console.assert(contacts.length % 2 == 0);
+      for ( let i=0; i<contacts.length; i+=2 ) {
+        let [th1, s1] = contacts[i];
+        let [th2, s2] = contacts[i+1];
+        console.assert(s1>0 && s2<0);
+
+        if ( fzy_cmp(th1, th2) != 0 )
+          profile.push([seg, th1, th2]);
+      }
+    }
+
+    // build boundaries and connect them
+    var loops = [];
+    while ( profile.length ) {
+      let i = 0, next;
+      let seg_, th1_;
+      let loop = [];
+      do {
+        let [[seg, th1, th2]] = profile.splice(i, 1);
+        let bd = new SphSeg({radius:2-seg.radius, length:th2-th1});
+        bd.adj.set(seg, th2);
+        loop.push(bd);
+        if ( next ) bd._loop_connect(next);
+        next = bd;
+
+        [bd.angle, seg_, th1_] = [...bd.turn(0, this.children)].pop();
+        i = profile.findIndex(([seg, th1]) => seg === seg_ && fzy_cmp(th1, th1_) == 0);
+      } while ( i != -1 );
+      console.assert(fzy_cmp(loop[0].adj.get(seg_)-loop[0].length, th1_) == 0);
+
+      loop[0]._loop_connect(loop[loop.length-1]);
+      loops.push(loop);
+    }
+
+    return loops;
+  }
+
+  /**
+   * Merge trivial vertices.
+   * 
+   * @param {SphSeg[]} exceptions - Exceptions of removing vertices.
+   */
+  mergeTrivialVertices(exceptions=[]) {
+    for ( let seg of new Set(this.children) )
+      if ( !exceptions.includes(seg)
+           && seg !== seg.prev
+           && fzy_cmp(seg.angle, 2) == 0
+           && fzy_cmp(seg.radius, seg.prev.radius) == 0 )
+        seg.mergePrev();
+  }
+  mergeTrivialEdges() {
+    while ( true ) {
+      var adj = [];
+      for ( let seg of this.children )
+        for ( let adj_seg of seg.adj.keys() )
+          if ( adj_seg.parent === this )
+            adj.push([seg, adj_seg]);
+
+      if ( adj.length == 0 )
+        break;
+      else
+        adj[0][0].glueAdjacent(adj[0][1]);
+    }
+  }
+
   /**
    * Slice element by circle.
    * 
@@ -993,34 +1109,6 @@ class SphElem
     out_segs = [...out_segs];
     return [in_segs, out_segs];
   }
-
-  /**
-   * Merge trivial vertices.
-   * 
-   * @param {SphSeg[]} exceptions - Exceptions of removing vertices.
-   */
-  mergeTrivialVertices(exceptions=[]) {
-    for ( let seg of new Set(this.children) )
-      if ( !exceptions.includes(seg)
-           && seg !== seg.prev
-           && fzy_cmp(seg.angle, 2) == 0
-           && fzy_cmp(seg.radius, seg.prev.radius) == 0 )
-        seg.mergePrev();
-  }
-  mergeTrivialEdges() {
-    while ( true ) {
-      var adj = [];
-      for ( let seg of this.children )
-        for ( let adj_seg of seg.adj.keys() )
-          if ( adj_seg.parent === this )
-            adj.push([seg, adj_seg]);
-
-      if ( adj.length == 0 )
-        break;
-      else
-        adj[0][0].glueAdjacent(adj[0][1]);
-    }
-  }
 }
 
 class SphLock
@@ -1059,7 +1147,7 @@ class SphLock
   twist(theta, side=+1) {
     for ( let segs of [this.left_segments, this.right_segments] )
       for ( let seg0 of segs )
-        for ( let [angle, seg, offset] of SphLock.turn(seg0) )
+        for ( let [angle, seg, offset] of seg0.turn() )
           if ( offset == 0 && angle != 0 && fzy_cmp(angle, 2) != 0 )
             if ( seg.lock ) seg.lock._unlock();
 
@@ -1089,35 +1177,11 @@ class SphLock
 
     for ( let segs of [this.left_segments, this.right_segments] )
       for ( let seg0 of segs )
-        for ( let [angle, seg, offset] of SphLock.turn(seg0) )
+        for ( let [angle, seg, offset] of seg0.turn() )
           if ( offset == 0 && angle != 0 && fzy_cmp(angle, 2) != 0 )
             if ( !seg.lock ) SphLock.build(seg);
   }
 
-  static *turn(seg0) {
-    var seg = seg0;
-    var angle = 0;
-    var offset = 0;
-
-    do {
-      yield [angle, seg, offset];
-
-      if ( offset == 0 ) {
-        let adj = [...seg.prev.adj.entries()];
-        adj = adj.map(([seg_, th]) => [seg_, mod4(th-seg.prev.length, [0])]);
-        angle += seg.angle;
-        [seg, offset] = adj.find(([seg_, v_th]) => fzy_cmp(seg_.length, v_th) > 0);
-
-      } else {
-        let adj = [...seg.adj.entries()];
-        [seg] = adj.find(([seg_, th]) => fzy_cmp(offset, th) == 0);
-        angle += 2;
-        offset = 0;
-      }
-
-    } while ( seg != seg0 );
-    console.assert(fzy_cmp(angle, 4) == 0);
-  }
   static makeTick(segment) {
     if ( segment.angle == 2 ) {
       console.assert(fzy_cmp(segment.radius, segment.prev.radius) == 0);
@@ -1127,7 +1191,7 @@ class SphLock
       var subticks = [], pre = [], post = [];
 
       var backward;
-      for ( let [ang, seg] of SphLock.turn(segment) ) {
+      for ( let [ang, seg] of segment.turn() ) {
         let side = fzy_cmp([ang, 2-seg.radius], [2, segment.radius]);
         if ( side == 0 ) break;
         if ( side >  0 ) return {};
