@@ -1128,7 +1128,7 @@ class SphElem
     var lost = new Set(this.boundaries);
     while ( lost.size ) {
       let seg0 = lost.values().next().value;
-      let network = {loops:[]};
+      let network = {loops:[], profile:[], joints:[]};
 
       let queue = new Set([seg0]);
       while ( queue.size ) {
@@ -1140,7 +1140,7 @@ class SphElem
           loop.push(seg);
 
           for ( let adj_seg of seg.adj.keys() )
-            if ( !lost.has(adj_seg) )
+            if ( lost.has(adj_seg) )
               queue.add(adj_seg);
         }
 
@@ -1274,30 +1274,30 @@ class SphElem
 class SphLock
 {
   constructor() {
-    this.left_segments = [];
-    this.right_segments = [];
+    this.left = [];
+    this.right = [];
     this.offset = 0;
-    this.passwords = [];
+    this.passwords = new Map();
   }
   get circle() {
-    return this.left_segments[0].circle;
+    return this.left[0].circle;
   }
 
   _lock() {
-    for ( let seg of this.left_segments )
+    for ( let seg of this.left )
       seg.lock = this;
-    for ( let seg of this.right_segments )
+    for ( let seg of this.right )
       seg.lock = this;
   }
   _unlock() {
-    for ( let seg of this.left_segments )
+    for ( let seg of this.left )
       seg.lock = undefined;
-    for ( let seg of this.right_segments )
+    for ( let seg of this.right )
       seg.lock = undefined;
   }
 
   elementsOfSide(side=+1) {
-    var bd = side > 0 ? this.left_segments : this.right_segments;
+    var bd = side > 0 ? this.left : this.right;
     var elems = new Set(bd.map(seg => seg.affiliation));
     for ( let elem of elems ) for ( let seg of elem.boundaries )
       if ( !bd.includes(seg) ) for ( let adj_seg of seg.adj.keys() )
@@ -1305,190 +1305,225 @@ class SphLock
     return elems;
   }
   twist(theta, side=+1) {
-    for ( let segs of [this.left_segments, this.right_segments] )
+    // unlock
+    for ( let segs of [this.left, this.right] )
       for ( let seg0 of segs )
         for ( let [angle, seg, offset] of seg0.turn() )
           if ( offset == 0 && angle != 0 && fzy_cmp(angle, 2) != 0 )
             if ( seg.lock ) seg.lock._unlock();
 
-    var bd = side > 0 ? this.left_segments : this.right_segments;
+    // twist and shift passwords
+    var bd = side > 0 ? this.left : this.right;
     var q = quaternion(bd[0].circle.center, theta*Q);
     for ( let elem of this.elementsOfSide(side) )
       for ( let seg of elem.boundaries )
         q_mul(q, seg.orientation, seg.orientation);
-    this.offset = mod4(this.offset-theta, [0]);
-    this.passwords = this.passwords.map(offset => mod4(offset-theta, [0]));
+    this.offset = mod4(this.offset-theta);
+    var matches = this.passwords.get(theta);
+    var new_passwords = new Map();
+    for ( let [key, matches] of this.passwords )
+      new_passwords.set(mod4(key-theta), matches);
 
-    for ( let segs of [this.left_segments, this.right_segments] )
+    // relink adjacent segments
+    for ( let segs of [this.left, this.right] )
       for ( let seg0 of segs )
         seg0.adj.clear();
 
     var offset1 = 0, offset2 = 0;
-    for ( let seg1 of this.left_segments ) {
+    for ( let seg1 of this.left ) {
       offset2 = 0;
-      for ( let seg2 of this.right_segments ) {
+      for ( let seg2 of this.right ) {
         let offset = mod4(this.offset-offset1-offset2, [4]);
-        if ( fzy_cmp(offset, seg1.length+seg2.length) <= 0 )
+        if ( fzy_cmp(offset, seg1.length+seg2.length) < 0 )
           seg1._adj_link(seg2, offset);
         offset2 += seg2.length;
       }
       offset1 += seg1.length;
     }
 
-    for ( let segs of [this.left_segments, this.right_segments] )
-      for ( let seg0 of segs )
-        for ( let [angle, seg, offset] of seg0.turn() )
-          if ( offset == 0 && angle != 0 && fzy_cmp(angle, 2) != 0 )
-            if ( !seg.lock ) SphLock.build(seg);
-  }
+    // lock
+    if ( matches ) {
+      for ( let [latch1, latch2] of matches ) {
+        if ( latch1.radius !== undefined ) {
+          let seg0 = this.left[latch1.j-1] || this.left[this.left.length-1];
+          let tick = SphLock.rollOn(seg0);
+          for ( let {angle, segment} of tick.subticks )
+            if ( fzy_cmp(angle, latch1.angle) == 0
+                 && fzy_cmp(segment.radius, latch1.radius) == 0 ) {
+              let lock = SphLock.build(segment);
+              console.assert(lock !== undefined);
+            }
 
-  static makeTick(segment) {
-    if ( segment.angle == 2 ) {
-      console.assert(fzy_cmp(segment.radius, segment.prev.radius) == 0);
-      return {segment, subticks:[], is_free:false, backward:segment.prev};
+        } else if ( latch2.radius !== undefined ) {
+          let seg0 = this.right[latch2.j-1] || this.right[this.right.length-1];
+          for ( let {subticks} of SphLock.rollOn(seg0) )
+            for ( let {angle, segment} of subticks )
+              if ( fzy_cmp(angle, latch2.angle) == 0
+                   && fzy_cmp(segment.radius, latch2.radius) == 0 ) {
+                let lock = SphLock.build(segment);
+                console.assert(lock !== undefined);
+              }
 
-    } else {
-      var subticks = [], pre = [], post = [];
+        } else {
+          let seg0 = this.left[latch1.j-1] || this.left[this.left.length-1];
+          for ( let {subticks} of SphLock.rollOn(seg0) )
+            for ( let {angle, segment} of subticks ) {
+              let lock = SphLock.build(segment);
+            }
 
-      var backward;
-      for ( let [ang, seg] of segment.turn() ) {
-        let side = fzy_cmp([ang, 2-seg.radius], [2, segment.radius]);
-        if ( side == 0 ) break;
-        if ( side >  0 ) return {};
-
-        if ( ang == 0 )
-          pre.push(seg);
-        else if ( fzy_cmp(ang, 2) == 0 )
-          post.push(seg);
-        else
-          subticks.push({angle:ang, segment:seg});
-        backward = seg.prev;
-      }
-
-      var is_free = false;
-      for ( let seg1 of pre )
-        if ( post.find(seg2 => fzy_cmp(2-seg1.radius, seg2.radius) == 0) ) {
-          is_free = true;
-          subticks = [];
-          break;
         }
-
-      return {segment, subticks, is_free, backward};
+      }
     }
   }
-  static decipher(left_ticks, right_ticks, offset0) {
-    var left_latches = [], right_latches = []; // [{length, angle, offset, i, j}, ...]
-    for ( let [ticks, latches] of [[ left_ticks,  left_latches],
-                                   [right_ticks, right_latches]] ) {
-      // find latches (center of possible intercuting circle)
-      // find all free latches
-      let free_ind = ticks.flatMap(({is_free}, i) => is_free ? [i] : []);
-      for ( let i of free_ind ) for ( let j of free_ind ) if ( i < j ) {
-        let length = ticks[j].offset - ticks[i].offset;
-        let offset = mod4(ticks[i].offset+length/2, [0]);
 
-        switch ( fzy_cmp(length, 2) ) {
+  static rollOn(segment) {
+    var [segment0, offset0] = [...segment.adj.entries()]
+      .map(([seg, th]) => [seg, mod4(th-segment.length, [0, seg.length])])
+      .find(([seg, th_]) => th_ < seg.length);
+
+    var subticks = [], pre = [], post = [], angle;
+    for ( [angle, segment] of segment0.turn(offset0) ) {
+      let side = fzy_cmp([angle, segment.radius-1], [2, 1-segment0.radius]);
+      if ( side == 0 ) break;
+      if ( side >  0 ) return;
+
+      angle = fzy_snap(angle, [0, 2]);
+      if ( angle == 0 )
+        pre.push(segment);
+      else if ( angle == 0 )
+        post.push(segment);
+      else
+        subticks.push({angle, segment});
+    }
+
+    var is_free = false;
+    for ( let seg1 of pre )
+      if ( post.find(seg2 => fzy_cmp(2-seg1.radius, seg2.radius) == 0) ) {
+        is_free = true;
+        break;
+      }
+
+    return {segment, subticks, is_free};
+  }
+  static detectLatches(ticks) {
+    var latches = []; // [{length, radius, center, angle, i, j}, ...]
+
+    // find latches (center of possible intercuting circle)
+    // find all free latches
+    var free_ind = ticks.flatMap(({is_free}, i) => is_free ? [i] : []);
+    for ( let i of free_ind ) for ( let j of free_ind ) if ( i < j ) {
+      let length = ticks[j].theta - ticks[i].theta;
+      let center = mod4(ticks[i].theta+length/2);
+
+      switch ( fzy_cmp(length, 2) ) {
+        case -1:
+          latches.push({length, center, i, j});
+          break;
+
+        case +1:
+          length = 4 - length;
+          center = mod4(center+2);
+          [i, j] = [j, i];
+          latches.push({length, center, i, j});
+          break;
+
+        case 0:
+          length = 2;
+          latches.push({length, center, i, j});
+          center = mod4(center+2);
+          [i, j] = [j, i];
+          latches.push({length, center, i, j});
+          break;
+      }
+    }
+
+    // find normal latches
+    var normal_ind = ticks.flatMap(({is_free}, i) => is_free ? [] : [i]);
+    for ( let i of normal_ind ) {
+      while ( ticks[i].subticks.length ) {
+        let {angle, segment:{radius}} = ticks[i].subticks.pop();
+        let [length] = SphCircle._leaf(2-angle, ticks[i].segment.radius, 2-radius);
+        let center = mod4(ticks[i].theta+length/2);
+
+        let theta2 = mod4(ticks[i].theta+length);
+        let j = ticks.findIndex(tick => mod4(theta2-tick.theta, [0]) == 0);
+        if ( j == -1 ) continue;
+        if ( !ticks[j].is_free ) {
+          let y = ticks[j].subticks.findIndex(({angle:a, segment:{radius:r}}) =>
+                                              fzy_cmp([2-a, 2-r], [angle, radius]) == 0);
+          if ( y == -1 ) continue;
+          ticks[j].subticks.splice(y, 1);
+        }
+
+        angle = 2 - angle;
+        switch ( fzy_cmp([length, radius], [2, 1]) ) {
           case -1:
-            latches.push({length, offset, i, j});
+            latches.push({length, radius, center, angle, i, j});
             break;
 
           case +1:
             length = 4 - length;
-            offset = mod4(offset+2, [0]);
+            radius = 2 - radius;
+            angle = 2 - angle;
+            center = mod4(center+2);
             [i, j] = [j, i];
-            latches.push({length, offset, i, j});
+            latches.push({length, radius, center, angle, i, j});
             break;
 
           case 0:
             length = 2;
-            latches.push({length, offset, i, j});
-            offset = mod4(offset+2, [0]);
+            radius = 1;
+            angle = 1;
+            latches.push({length, radius, center, angle, i, j});
+            center = mod4(center+2);
             [i, j] = [j, i];
-            latches.push({length, offset, i, j});
+            latches.push({length, radius, center, angle, i, j});
             break;
-        }
-      }
-
-      // find normal latches
-      let normal_ind = ticks.flatMap(({is_free}, i) => is_free ? [] : [i]);
-      for ( let i of normal_ind ) {
-        while ( ticks[i].subticks.length ) {
-          let {angle, segment:{radius}} = ticks[i].subticks.pop();
-          let [length] = SphCircle._leaf(angle, ticks[i].segment.radius, 2-radius);
-          let offset = mod4(ticks[i].offset+length/2, [0]);
-
-          let j = ticks.findIndex(
-            ({offset}) => mod4(ticks[i].offset+length-offset, 0) == [0]);
-          if ( j == -1 ) continue;
-          if ( !ticks[j].is_free ) {
-            let y = ticks[j].subticks.findIndex(
-              ({angle:a, segment:{radius:r}}) => fzy_cmp([2-a, 2-r], [angle, radius]) == 0);
-            if ( y == -1 ) continue;
-            ticks[j].subticks.splice(y, 1);
-          }
-          
-          switch ( fzy_cmp([length, angle], [2, 1]) ) {
-            case -1:
-              latches.push({length, angle, offset, i, j});
-              break;
-
-            case +1:
-              length = 4 - length;
-              angle = 2 - angle;
-              offset = mod4(offset+2, [0]);
-              [i, j] = [j, i];
-              latches.push({length, angle, offset, i, j});
-              break;
-
-            case 0:
-              length = 2;
-              angle = 1;
-              latches.push({length, angle, offset, i, j});
-              offset = mod4(offset+2, [0]);
-              [i, j] = [j, i];
-              latches.push({length, angle, offset, i, j});
-              break;
-          }
         }
       }
     }
 
+    return latches;
+  }
+  static decipher(latches1, latches2, offset) {
     // match left and right latches
-    var passwords = [];
-    for ( let latch1 of left_latches ) for ( let latch2 of right_latches )
-      if ( fzy_cmp([latch1.length, latch1.angle], [latch2.length, 2-latch2.angle]) == 0 ) {
-        let offset = mod4(offset0-latch1.offset-latch2.offset, [0]);
-        let offset_ = passwords.find(offset_ => fzy_cmp(offset_, offset) == 0);
-        if ( offset_ === undefined )
-          passwords.push(offset);
+    var passwords = new Map();
+    var keys = new Set([0]);
+    for ( let latch1 of latches1 ) for ( let latch2 of latches2 )
+      if ( fzy_cmp([latch1.length, latch1.radius], [latch2.length, latch2.radius]) == 0 ) {
+        let key = mod4(offset-latch1.center-latch2.center, keys);
+        keys.add(key);
+        if ( !passwords.has(key) )
+          passwords.set(key, []);
+        passwords.get(key).push([latch1, latch2]);
       }
-    passwords.sort();
-
     return passwords;
   }
   static build(segment) {
     var [segment2, offset] = segment.adj.entries().next().value;
     var ticks1 = [], ticks2 = [];
     for ( let [seg0, ticks] of [[segment, ticks1], [segment2, ticks2]] ) {
+
       let seg = seg0;
-
       do {
-        let {backward, ...tick} = SphLock.makeTick(seg);
-        if ( !backward ) return;
-        ticks.unshift(tick);
-        seg = backward;
+        let tick = SphLock.rollOn(seg);
+        if ( !tick ) return;
+        ticks.push(tick);
+        seg = tick.segment;
       } while ( seg != seg0 );
-
       ticks.unshift(ticks.pop());
-      let full_len = ticks.reduce((acc, tick) => (tick.offset=acc)+tick.segment.length, 0);
+
+      let full_len = ticks.reduce((acc, tick) => (tick.theta=acc)+tick.segment.length, 0);
       console.assert(fzy_cmp(full_len, 4) == 0);
     }
 
     var lock = new SphLock();
     lock.offset = offset;
-    lock.left_segments = ticks1.map(tick => tick.segment);
-    lock.right_segments = ticks2.map(tick => tick.segment);
-    lock.passwords = SphLock.decipher(ticks1, ticks2, offset);
+    lock.left = ticks1.map(tick => tick.segment);
+    lock.right = ticks2.map(tick => tick.segment);
+    var latches1 = SphLock.detectLatches(ticks1);
+    var latches2 = SphLock.detectLatches(ticks2);
+    lock.passwords = SphLock.decipher(latches1, latches2, offset);
     lock._lock();
 
     return lock;
