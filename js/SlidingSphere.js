@@ -367,7 +367,7 @@ class SphSeg
     this.next = undefined;
     this.prev = undefined;
     this.adj = new Map();
-    this.parent = undefined;
+    this.affiliation = undefined;
     this.lock = undefined;
   }
   get vertex() {
@@ -415,7 +415,7 @@ class SphSeg
         if ( seg.length > offset )
           angle += 2;
         else if ( seg.length == offset )
-          [seg, offset, angle] = [seg.next, 0, angle+seg.angle];
+          [seg, offset, angle] = [seg.next, 0, angle+seg.next.angle];
         else
           console.assert(false);
       }
@@ -455,8 +455,8 @@ class SphSeg
     if ( this.next )
       next_seg._loop_connect(this.next);
     this._loop_connect(next_seg);
-    if ( this.parent )
-      this.parent._aff_add(next_seg);
+    if ( this.affiliation )
+      this.affiliation._aff_add(next_seg);
 
     for ( let [adj_seg, offset] of this.adj ) {
       // remove adjacent of this
@@ -495,8 +495,8 @@ class SphSeg
       this.prev._loop_connect(this.next);
     else
       this.prev.next = undefined;
-    if ( this.parent )
-      this.parent._aff_delete(this);
+    if ( this.affiliation )
+      this.affiliation._aff_delete(this);
 
     // merge adjacent
     for ( let [adj_seg, offset] of this.adj ) {
@@ -517,10 +517,11 @@ class SphSeg
   /**
    * Glue adjacent together.
    * 
-   * @param {SphSeg} segment - The adjacent segment to glue; they must have same parent.
+   * @param {SphSeg} segment - The adjacent segment to glue; they must have same
+   *   affiliation.
    */
   glueAdjacent(segment) {
-    if ( !this.adj.has(segment) || this.parent !== segment.parent )
+    if ( !this.adj.has(segment) || this.affiliation !== segment.affiliation )
       throw new Error("unable to glue segments");
 
     // find contact points
@@ -574,7 +575,7 @@ class SphSeg
     }
 
     // zip
-    var parent = this.parent;
+    var affiliation = this.affiliation;
     for ( let i=0; i<zippers.length; i++ ) {
       let [seg1, seg2, ang] = zippers[i];
       let [seg1_prev, seg2_prev] = [seg1.prev, seg2.prev];
@@ -587,8 +588,8 @@ class SphSeg
 
       if ( i % 2 == 1 ) {
         console.assert(seg2.next.next === seg2 && fzy_cmp(seg2.angle, 4) == 0);
-        parent._aff_delete(seg2);
-        parent._aff_delete(seg2.prev);
+        affiliation._aff_delete(seg2);
+        affiliation._aff_delete(seg2.prev);
       }
     }
   }
@@ -780,24 +781,24 @@ class SphSeg
  * Element of sliding sphere.
  * 
  * @class
- * @property {SphSeg[]} children - Segments of boundaries.
+ * @property {SphSeg[]} boundaries - Segments of boundaries.
  */
 class SphElem
 {
   constructor() {
-    this.children = [];
+    this.boundaries = [];
   }
 
   _aff_add(...segments) {
-    for ( let seg of segments ) if ( !this.children.includes(seg) ) {
-      this.children.push(seg);
-      seg.parent = this;
+    for ( let seg of segments ) if ( !this.boundaries.includes(seg) ) {
+      this.boundaries.push(seg);
+      seg.affiliation = this;
     }
   }
   _aff_delete(...segments) {
-    for ( let seg of segments ) if ( this.children.includes(seg) ) {
-      this.children.splice(this.children.indexOf(seg), 1);
-      seg.parent = undefined;
+    for ( let seg of segments ) if ( this.boundaries.includes(seg) ) {
+      this.boundaries.splice(this.boundaries.indexOf(seg), 1);
+      seg.affiliation = undefined;
     }
   }
   split(...groups) {
@@ -812,11 +813,11 @@ class SphElem
   }
   merge(...elements) {
     for ( let element of elements ) if ( element !== this )
-      this._aff_add(...element.children);
+      this._aff_add(...element.boundaries);
   }
 
   *loops() {
-    var segments = new Set(this.children);
+    var segments = new Set(this.boundaries);
     for ( let seg0 of segments ) {
       let loop = [];
       for ( let seg of seg0.walk() ) {
@@ -834,11 +835,11 @@ class SphElem
    * @returns {boolean} True if point is in this element.
    */
   contains(point) {
-    if ( this.children.length == 0 )
+    if ( this.boundaries.length == 0 )
       return true;
 
     // make a circle passing through this point and a vertex of element
-    var vertex = this.children[0].vertex;
+    var vertex = this.boundaries[0].vertex;
     var radius = angleTo(point, vertex)/2/Q;
     if ( fzy_cmp(radius, 0) == 0 )
       return false;
@@ -847,7 +848,7 @@ class SphElem
     var circle = new SphCircle({orientation, radius});
 
     var min_meets;
-    for ( let seg of this.children ) for ( let meet of seg.meetWith(circle) ) {
+    for ( let seg of this.boundaries ) for ( let meet of seg.meetWith(circle) ) {
       let min_theta = min_meets ? min_meets[0].theta : 4;
 
       meet.theta = mod4(meet.theta, [0, min_theta]);
@@ -863,13 +864,13 @@ class SphElem
     var side = ["-0", "+-", "--"].includes(min_meets[0].type);
     return side;
   }
-  // find boundaries of this element
-  boundaries() {
+  // find profile of this element
+  findProfile() {
     var profile = [];
-    for ( let seg of this.children ) {
+    for ( let seg of this.boundaries ) {
       // find contact points of adjacent segment
       let contacts = [];
-      for ( let [adj_seg, offset] of seg.adj ) {
+      for ( let [adj_seg, offset] of seg.adj ) if ( this.boundaries.includes(adj_seg) ) {
         if ( fzy_cmp(offset, adj_seg.length) <= 0 )
           contacts.push([0, +1]);
         if ( fzy_cmp(offset, seg.length) <= 0 )
@@ -890,33 +891,34 @@ class SphElem
       for ( let i=0; i<contacts.length; i+=2 ) {
         let [th1, s1] = contacts[i];
         let [th2, s2] = contacts[i+1];
-        console.assert(s1>0 && s2<0);
+        console.assert(s1<0 && s2>0);
 
         if ( fzy_cmp(th1, th2) != 0 )
           profile.push([seg, th1, th2]);
       }
     }
 
-    // build boundaries and connect them
+    // build segments of profile and connect them
     var loops = [];
     while ( profile.length ) {
-      let i = 0, next;
-      let seg_, th1_;
+      let i = 0;
+      let ang_, seg_, th1_;
       let loop = [];
       do {
         let [[seg, th1, th2]] = profile.splice(i, 1);
-        let bd = new SphSeg({radius:2-seg.radius, length:th2-th1});
+        let orientation = q_mul(q_spin(seg.orientation, th2*Q), [1,0,0,0]);
+        let bd = new SphSeg({radius:2-seg.radius, length:th2-th1, orientation});
         bd.adj.set(seg, th2);
         loop.push(bd);
-        if ( next ) bd._loop_connect(next);
-        next = bd;
 
-        [bd.angle, seg_, th1_] = [...bd.turn(0, this.children)].pop();
+        [ang_, seg_, th1_] = [...bd.turn(0, this.boundaries)].pop();
+        bd.angle = 4-ang_;
         i = profile.findIndex(([seg, th1]) => seg === seg_ && fzy_cmp(th1, th1_) == 0);
       } while ( i != -1 );
       console.assert(fzy_cmp(loop[0].adj.get(seg_)-loop[0].length, th1_) == 0);
 
-      loop[0]._loop_connect(loop[loop.length-1]);
+      for ( let j=0; j<loop.length; j++ )
+        loop[j]._loop_connect(loop[j-1] || loop[loop.length-1]);
       loops.push(loop);
     }
 
@@ -929,7 +931,7 @@ class SphElem
    * @param {SphSeg[]} exceptions - Exceptions of removing vertices.
    */
   mergeTrivialVertices(exceptions=[]) {
-    for ( let seg of new Set(this.children) )
+    for ( let seg of new Set(this.boundaries) )
       if ( !exceptions.includes(seg)
            && seg !== seg.prev
            && fzy_cmp(seg.angle, 2) == 0
@@ -939,9 +941,9 @@ class SphElem
   mergeTrivialEdges() {
     while ( true ) {
       var adj = [];
-      for ( let seg of this.children )
+      for ( let seg of this.boundaries )
         for ( let adj_seg of seg.adj.keys() )
-          if ( adj_seg.parent === this )
+          if ( adj_seg.affiliation === this )
             adj.push([seg, adj_seg]);
 
       if ( adj.length == 0 )
@@ -1003,7 +1005,7 @@ class SphElem
 
     // bipartite
     var in_segs = new Set(), out_segs = new Set();
-    var lost_children = new Set(this.children);
+    var lost_boundaries = new Set(this.boundaries);
     for ( let path of paths ) for ( let i=0; i<path.length; i++ ) {
       let meet1 = path[i];
       let meet2 = path[i+1] || path[0];
@@ -1014,17 +1016,17 @@ class SphElem
 
       for ( let seg of meet1.segment.walk(meet2.segment) ) {
         segs.add(seg);
-        lost_children.delete(seg);
+        lost_boundaries.delete(seg);
       }
     }
 
-    for ( let seg0 of lost_children ) {
+    for ( let seg0 of lost_boundaries ) {
       let side = circle.contains(seg0.vertex);
       let segs = side ? in_segs : out_segs;
 
       for ( let seg of seg0.walk() ) {
         segs.add(seg);
-        lost_children.delete(seg);
+        lost_boundaries.delete(seg);
       }
     }
 
@@ -1109,6 +1111,164 @@ class SphElem
     out_segs = [...out_segs];
     return [in_segs, out_segs];
   }
+  separateConnectedPart() {
+    // network = {
+    //   loops: [loop, ...],
+    //   profile: [loop, ...],
+    //   joints: [joint, ...],
+    // },
+    // joint = {
+    //   networks: [network, ...],
+    //   loops: [loop, ...],
+    //   side: +1/-1,
+    // },
+
+    // find all connected networks
+    var networks = [];
+    var lost = new Set(this.boundaries);
+    while ( lost.size ) {
+      let seg0 = lost.values().next().value;
+      let network = {loops:[]};
+
+      let queue = new Set([seg0]);
+      while ( queue.size ) {
+        let seg0 = queue.values().next().value;
+        let loop = [];
+        for ( let seg of seg0.walk() ) {
+          lost.delete(seg);
+          queue.delete(seg);
+          loop.push(seg);
+
+          for ( let adj_seg of seg.adj.keys() )
+            if ( !lost.has(adj_seg) )
+              queue.add(adj_seg);
+        }
+
+        network.loops.push(loop);
+      }
+
+      networks.push(network);
+    }
+
+    // find profile of networks
+    for ( let network of networks ) {
+      let virtual = new SphElem();
+      virtual.boundaries = network.loops.flatMap(loop => loop);
+      network.profile = virtual.findProfile();
+    }
+
+    // determine relation between networks
+    var vertex0 = networks[0].loops[0][0].vertex;
+    var locals = new Set(networks.slice(1));
+    while ( locals.size ) {
+      // build circle pass through multiple networks (start from the first network)
+      let network = locals.values().next().value;
+      let vertex = network.loops[0][0].vertex;
+      let radius = 1;
+      let orientation = q_mul(q_align(vertex0, vertex), [0.5, -0.5, 0.5, 0.5]);
+      let circle = new SphCircle({orientation, radius});
+
+      // find and sort meets
+      let meets = [];
+      for ( let network of networks ) for ( let loops of [network.loops, network.profile] )
+        for ( let loop of loops ) for ( let seg of loop )
+          for ( let meet of seg.meetWith(circle) ) {
+            let i, sgn;
+            for ( i=0; i<meets.length; i++ ) {
+              let theta = meets[i][0].theta;
+              meet.theta = mod4(meet.theta, [theta]);
+              sgn = Math.sign(meet.theta-theta);
+              if ( sgn > 0 ) continue;
+              else           break;
+            }
+
+            if ( sgn == 0 )
+              meets[i].push(meet);
+            else if ( sgn < 0 )
+              meets.splice(i, 0, [meet]);
+            else
+              meets.push([meet]);
+          }
+      meets = meets.flatMap(mmeet => SphSeg.solveScattering(mmeet, circle));
+      // make sure meeting starts from the first network
+      while ( meets[0].segment !== networks[0].loops[0][0] )
+        meets.push(meets.shift());
+
+      // build joints
+      for ( let i=0; i<meets.length; i++ )
+        if ( ["+0", "+-", "--"].includes(meets[i].type) ) {
+          let meet1 = meets[i];
+          let meet2 = meets[i+1] || meets[0];
+          console.assert(["-0", "+-", "--"].includes(meet2.type));
+
+          // find joint loops
+          let subjoint1 = [], subjoint2 = [];
+          for ( let network of networks ) {
+            let loop = network.loops.find(loop => loop.includes(meet1.segment));
+            if ( loop ) {
+              subjoint1 = [network, loop, +1];
+              break;
+            }
+            loop = network.profile.find(loop => loop.includes(meet1.segment));
+            if ( loop ) {
+              subjoint1 = [network, loop, -1];
+              break;
+            }
+          }
+          for ( let network of networks ) {
+            let loop = network.loops.find(loop => loop.includes(meet2.segment));
+            if ( loop ) {
+              subjoint2 = [network, loop, +1];
+              break;
+            }
+            loop = network.profile.find(loop => loop.includes(meet2.segment));
+            if ( loop ) {
+              subjoint2 = [network, loop, -1];
+              break;
+            }
+          }
+          console.assert(subjoint1.length && subjoint2.length && subjoint1[2]==subjoint2[2]);
+
+          if ( subjoint1[0] === subjoint2[0] ) {
+            console.assert(subjoint1[1] === subjoint2[1]);
+            continue;
+          }
+
+          // connect networks
+          let joint1 = subjoint1[0].joints.find(joint => joint.loops.includes(subjoint1[1]));
+          let joint2 = subjoint2[0].joints.find(joint => joint.loops.includes(subjoint2[1]));
+          console.assert(joint1&&joint2 ? joint1===joint2 : true);
+
+          let joint = joint1 || joint2 || {networks:[], loops:[], side:subjoint1[2]};
+          if ( !joint.loops.includes(subjoint1[1]) ) {
+            joint.networks.push(subjoint1[0]);
+            joint.loops.push(subjoint1[1]);
+            locals.delete(subjoint1[0]);
+          }
+          if ( !joint.loops.includes(subjoint2[1]) ) {
+            joint.networks.push(subjoint2[0]);
+            joint.loops.push(subjoint2[1]);
+            locals.delete(subjoint2[0]);
+          }
+          if ( !subjoint1[0].joints.includes(joint) )
+            subjoint1[0].joints.push(joint);
+          if ( !subjoint2[0].joints.includes(joint) )
+            subjoint2[0].joints.push(joint);
+        }
+    }
+
+    // separate connected part
+    var joints = new Set(networks.flatMap(network => network.joints));
+    var loops = new Set(networks.flatMap(network => network.loops));
+    for ( let joint of joints ) for ( let loop of joint.loops )
+      loops.delete(loop);
+    var res = [];
+    for ( let joint of joints ) if ( joint.side > 0 )
+      res.push(joint.loops.flatMap(loop => loop));
+    for ( let loop of loops )
+      res.push(loop);
+    return res;
+  }
 }
 
 class SphLock
@@ -1138,10 +1298,10 @@ class SphLock
 
   elementsOfSide(side=+1) {
     var bd = side > 0 ? this.left_segments : this.right_segments;
-    var elems = new Set(bd.map(seg => seg.parent));
-    for ( let elem of elems ) for ( let seg of elem.children )
+    var elems = new Set(bd.map(seg => seg.affiliation));
+    for ( let elem of elems ) for ( let seg of elem.boundaries )
       if ( !bd.includes(seg) ) for ( let adj_seg of seg.adj.keys() )
-        elems.add(adj_seg.parent);
+        elems.add(adj_seg.affiliation);
     return elems;
   }
   twist(theta, side=+1) {
@@ -1154,7 +1314,7 @@ class SphLock
     var bd = side > 0 ? this.left_segments : this.right_segments;
     var q = quaternion(bd[0].circle.center, theta*Q);
     for ( let elem of this.elementsOfSide(side) )
-      for ( let seg of elem.children )
+      for ( let seg of elem.boundaries )
         q_mul(q, seg.orientation, seg.orientation);
     this.offset = mod4(this.offset-theta, [0]);
     this.passwords = this.passwords.map(offset => mod4(offset-theta, [0]));

@@ -135,7 +135,7 @@ class SSphPuzzle
     obj.userData.data = elem;
     elem.view = obj;
 
-    for ( let seg of elem.children )
+    for ( let seg of elem.boundaries )
       obj.add(...this.buildSegView(seg, dq, color));
 
     return obj;
@@ -231,7 +231,7 @@ class SSphPuzzle
   }
   build_twist() {
     for ( let elem of this.elements )
-      for ( let seg of elem.children )
+      for ( let seg of elem.boundaries )
         SphLock.build(seg);
   }
 }
