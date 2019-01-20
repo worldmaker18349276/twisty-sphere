@@ -1,15 +1,6 @@
 "use strict";
 
-/**
- * Fuzzy compare two values.
- * It will compare array of numbers by lexical order.
- * 
- * @param {*} v1 - The first value to compare.
- * @param {*} v2 - The second value to compare.
- * @param {number} tol - Tolerance of comparing.
- * @returns {number} `0` if `v1` is almost equal to `v2`; `+1` if `v1` is
- *   greater than `v2`; `-1` if `v1` is less than `v2`.
- */
+// fuzzy operation
 function fzy_cmp(v1, v2, tol=1e-5) {
   if ( v1 === v2 ) {
     return 0;
@@ -36,36 +27,18 @@ function fzy_cmp(v1, v2, tol=1e-5) {
     throw new Error("incomparable");
   }
 }
-/**
- * Snap to some values by fuzzy comparing.
- * 
- * @param {number} val - The value to snap.
- * @param {number[]} snaps - The values to snap.
- * @param {number} tol - Tolerance of snapping.
- * @returns {number} The closest value in `snaps`, or original value if not close
- *   enough.
- */
 function fzy_snap(val, snaps=[], tol=1e-5) {
   for ( let snap of snaps )
     if ( fzy_cmp(val, snap, tol) == 0 )
       return snap;
   return val;
 }
-/**
- * Modulo 4 with snapping.
- * 
- * @param {number} val - The value to mod.
- * @param {number[]} snaps - The values to snap.  Snapping occur when they are
- *   roughly congruent modulo 4.
- * @param {number} tol - Tolerance of snapping.
- * @returns {number} Modulus.
- */
-function fzy_mod4(val, snaps=[], tol=1e-5) {
-  if ( val < 0 || val >= 4 )
-    val = (val % 4 + 4) % 4;
+function fzy_mod(val, mod, snaps=[], tol=1e-5) {
+  if ( val < 0 || val >= mod )
+    val = (val % mod + mod) % mod;
 
   for ( let snap of snaps )
-    if ( fzy_cmp(fzy_mod4(val-snap+2), 2, tol) == 0 )
+    if ( fzy_cmp(fzy_mod(val-snap+mod/2, mod), mod/2, tol) == 0 )
       return snap;
 
   return val;
@@ -163,6 +136,8 @@ function q_spin(q, theta, out=[]) {
 
 /**
  * Quadrant; unit of angle and arc.  One quadrant is one quarter of a circle.
+ * The method in {@link SphCircle}, {@link SphSeg}, {@link SphElem} and
+ * {@link SlidingSphere} will use this unit for angle and arc.
  * @const
  * @type {number}
  */
@@ -174,23 +149,19 @@ const Q = Math.PI/2;
  * @class
  * @property {number[]} center - Center of spherical circle.
  *   It must be normalized vector.
- * @property {number} radius - Radius of spherical circle.
- *   It is under the unit of quadrant, and range in (0, 2).
+ * @property {number} radius - Radius of spherical circle, in the range of (0, 2).
  * @property {number[]} orientation - Orientation of spherical circle.
  *   It will rotate `[0,0,1]` to center of this circle, and rotate `[s,0,c]` to
  *   the point on this circle, which is origin of coordinate on the circle.
  */
 class SphCircle
 {
-  constructor({center, radius, orientation}) {
-    if ( orientation === undefined )
-      orientation = q_align(center);
-    if ( center === undefined )
-      center = rotate([0,0,1], orientation);
-
-    this.center = [...center];
+  constructor({radius, orientation}) {
     this.radius = radius;
-    this.orientation = [...orientation];
+    this.orientation = orientation.slice(0);
+  }
+  get center() {
+    return rotate([0,0,1], this.orientation);
   }
 
   shift(theta) {
@@ -198,7 +169,6 @@ class SphCircle
     return this;
   }
   complement() {
-    this.center = this.center.map(a => -a);
     this.radius = 2-this.radius;
     q_mul(this.orientation, [1,0,0,0], this.orientation);
     return this;
@@ -213,7 +183,7 @@ class SphCircle
    * 
    * @param {number[]} vector - The vector to project.
    * @returns {number} The coordinate of projected vector.
-   *   It has unit of quadrant (not modulus).
+   *   Notice that it may not modulus of 4.
    */
   thetaOf(vector) {
     var [x, y] = rotate(vector, q_inv(this.orientation));
@@ -223,7 +193,6 @@ class SphCircle
    * Get vector of on this circle with given coordinate.
    * 
    * @param {number} theta - The coordinate of point on this circle.
-   *   It should have unit of quadrant.
    * @returns {number[]} The vector on this circle with coordinate `theta`.
    */
   vectorAt(theta) {
@@ -242,13 +211,10 @@ class SphCircle
  * spherical arc, vertex, connection of segments, adjacency, etc.
  * 
  * @class
- * @property {number} length - Length of segment.
- *   It has unit of quadrant, and should range in (0, 4].
+ * @property {number} length - Length of segment, in the range of (0, 4].
  * @property {number} angle - Angle bewteen this segment and previous segment.
- *   The direction is from this segment to previous segment.
- *   It has unit of quadrant, and should range in [0, 4].
- * @property {number} radius - Radius of curvature of segment.
- *   It has unit of quadrant, and should range in (0, 2).
+ *   The direction is from this segment to previous segment, in the range of [0, 4].
+ * @property {number} radius - Radius of curvature of segment, in the range of (0, 2).
  * @property {number[]} orientation - Orientation of this segment.
  *   It will rotate `[0,0,1]` to center of curvature of this segment, and rotate
  *   `[s,0,c]` to the starting vertex of this segment.
@@ -257,8 +223,8 @@ class SphCircle
  * @property {SphSeg} next - The next segment.
  * @property {SphSeg} prev - The previous segment.
  * @property {Map<SphSeg,number>} adj - The map of adjacent segments.
- *  where key is adjacent segment, and value is offset between vertices, range
- *  in (0, 4].
+ *   where key is adjacent segment, and value is offset between vertices, in the
+ *   range of (0, 4].
  * @property {SphElem} affiliation - The affiliation of this segment.
  * @property {SphLock} lock - The lock of this segment.
  */
@@ -268,7 +234,7 @@ class SphSeg
     this.length = length;
     this.angle = angle;
     this.radius = radius;
-    this.orientation = [...orientation];
+    this.orientation = orientation.slice(0);
 
     this.next = undefined;
     this.prev = undefined;
@@ -296,7 +262,6 @@ class SphSeg
       this.adj.set(seg, offset);
       seg.adj.set(this, offset);
     }
-    return this;
   }
 
   rotate(q) {
@@ -311,31 +276,31 @@ class SphSeg
  * boundary indicate full space of spherical surface.
  * 
  * @class
- * @property {SphSeg[]} boundaries - Segments of boundaries.
+ * @property {Set<SphSeg>} boundaries - Segments of boundaries.
  */
 class SphElem
 {
   constructor() {
-    this.boundaries = [];
+    this.boundaries = new Set();
   }
 
   accept(...segments) {
-    for ( let seg of segments ) if ( !this.boundaries.includes(seg) ) {
-      this.boundaries.push(seg);
+    for ( let seg of segments ) {
+      this.boundaries.add(seg);
       seg.affiliation = this;
     }
   }
   withdraw(...segments) {
-    for ( let seg of segments ) if ( this.boundaries.includes(seg) ) {
-      this.boundaries.splice(this.boundaries.indexOf(seg), 1);
-      seg.affiliation = undefined;
-    }
+    for ( let seg of segments )
+      if ( this.boundaries.delete(seg) )
+        seg.affiliation = undefined;
   }
   split(...groups) {
     var type = Object.getPrototypeOf(this).constructor;
     var elements = [];
     for ( let group of groups ) if ( group.length ) {
       let elem = new type();
+      this.withdraw(...group);
       elem.accept(...group);
       elements.push(elem);
     }
@@ -343,9 +308,10 @@ class SphElem
   }
   merge(...elements) {
     for ( let element of elements ) if ( element !== this ) {
-      let segs = element.boundaries.splice(0, element.boundaries.length);
-      this.accept(...segs);
+      this.accept(...element.boundaries);
+      element.boundaries.clear();
     }
+    return this;
   }
 
   rotate(q) {
@@ -362,39 +328,51 @@ class SphElem
  * @class
  * @property {SphSeg[]} dash - Segments of boundaries.
  * @property {number} offset - Offset between the first segments in `dash`.
- * @property {SphCircle} circle - Circle of lock (left is inside).
- * @property {Map<number,object[]>} passwords - Possible nontrivial twist angle
- *   with possible matches.
- *   Where key is twist angle, value is corresponding matches.
+ *   Notice that it may not modulus of 4.
+ * @property {SphCircle} circle - Circle of lock.
  */
 class SphLock
 {
-  constructor(dash=[]) {
-    this.dash = [...dash];
+  constructor() {
+    this.teeth = [];
     this.dual = undefined;
     this.offset = 0;
-    this.passwords = undefined;
   }
   get circle() {
-    return this.dash[0].circle;
+    return this.teeth[0].circle;
   }
 
-  pair(lock, offset) {
+  lock(segs) {
+    this.teeth = segs.slice(0);
+    for ( let seg of segs )
+      seg.lock = this;
+    return this;
+  }
+  unlock() {
+    for ( let seg of this.teeth )
+      seg.lock = undefined;
+    return this;
+  }
+  pairWith(lock, offset) {
     this.dual = lock;
     lock.dual = this;
     this.offset = lock.offset = offset;
   }
-  lock() {
-    for ( let seg of this.dash )
-      seg.lock = this;
-    for ( let seg of this.dual.dash )
-      seg.lock = this.dual;
+  insertAfter(seg, seg0) {
+    let i = this.teeth.indexOf(seg0);
+    if ( i == -1 )
+      return;
+    this.teeth.splice(i, 0, seg);
+    seg.lock = this;
   }
-  unlock() {
-    for ( let seg of this.dash )
-      seg.lock = undefined;
-    for ( let seg of this.dual.dash )
-      seg.lock = undefined;
+  remove(seg) {
+    let i = this.teeth.indexOf(seg);
+    if ( i == -1 )
+      return;
+    this.teeth.splice(i, 1);
+    seg.lock = undefined;
+    if ( i == 0 )
+      this.offset = this.dual.offset = this.offset - seg.length;
   }
 }
 
@@ -423,14 +401,39 @@ class SlidingSphere
     return new SphLock(...args);
   }
 
+  /**
+   * Fuzzy compare two values with tolerance `this.tol`.
+   * It will compare array of numbers by lexical order.
+   * 
+   * @param {*} v1 - The first value to compare.
+   * @param {*} v2 - The second value to compare.
+   * @returns {number} `0` if `v1` is almost equal to `v2`; `+1` if `v1` is
+   *   greater than `v2`; `-1` if `v1` is less than `v2`.
+   */
   _cmp(v1, v2) {
     return fzy_cmp(v1, v2, this.tol);
   }
+  /**
+   * Snap to some values by fuzzy comparing.
+   * 
+   * @param {number} val - The value to snap.
+   * @param {number[]} snaps - The values to snap.
+   * @returns {number} The closest value in `snaps`, or original value if not
+   *   close enough.
+   */
   _snap(val, snaps=[]) {
     return fzy_snap(val, snaps, this.tol);
   }
+  /**
+   * Modulo 4 with snapping.
+   * 
+   * @param {number} val - The value to mod.
+   * @param {number[]} snaps - The values to snap.
+   *   Snapping occur when they are roughly congruent modulo 4.
+   * @returns {number} Modulus.
+   */
   _mod4(val, snaps=[]) {
-    return fzy_mod4(val, snaps, this.tol);
+    return fzy_mod(val, 4, snaps, this.tol);
   }
 
   /**
@@ -455,11 +458,9 @@ class SlidingSphere
    * @returns {number[]} Information about meet points between circles, which
    *   has values `[ang, len1, len2, meeted]`.
    *   `ang` is absolute angle between their directed tangent vectors at meet
-   *   point, range in [0, 2], with unit of quadrant;
-   *   `len1` is length of `circle1` under `circle2`, range in [0, 4], with unit
-   *   of quadrant;
-   *   `len2` is length of `circle2` under `circle1`, range in [0, 4], with unit
-   *   of quadrant.
+   *   point, in the range of [0, 2];
+   *   `len1` is length of `circle1` under `circle2`, in the range of [0, 4];
+   *   `len2` is length of `circle2` under `circle1`, in the range of [0, 4].
    *   `meeted` is number of meet points between circles.
    */
   _relationTo(circle1, circle2) {
@@ -482,13 +483,13 @@ class SlidingSphere
       return [2, 0, 0, 0]; // exclude
     else if ( this._cmp(distance, radius1 + radius2) == 0 )
       return [2, 0, 0, 1]; // kissing exclude
-    else if ( this._cmp(4-distance, radius1 + radius2) <  0 )
+    else if ( this._cmp(2-distance, radius1 - (2-radius2)) <  0 )
       return [2, 4, 4, 0]; // anti-include
-    else if ( this._cmp(4-distance, radius1 + radius2) == 0 )
+    else if ( this._cmp(2-distance, radius1 - (2-radius2)) == 0 )
       return [2, 4, 4, 1]; // kissing anti-include
-    else if ( this._cmp(distance, radius2 - radius1) <  0 )
+    else if ( this._cmp(2-distance, radius1 + (2-radius2)) >  0 )
       return [0, 4, 0, 0]; // anti-exclude
-    else if ( this._cmp(distance, radius2 - radius1) == 0 )
+    else if ( this._cmp(2-distance, radius1 + (2-radius2)) == 0 )
       return [0, 4, 0, 1]; // kissing anti-exclude
     else if ( distance < radius1 + radius2 )
       return [...this._intersect(radius1, radius2, distance), 2]; // intersect
@@ -498,14 +499,11 @@ class SlidingSphere
   /**
    * Compute intersection between two circles.
    * 
-   * @param {number} radius1 - Radius of the first circle to intersect, with
-   *   unit of quadrant.
-   * @param {number} radius2 - Radius of the second circle to intersect, with
-   *   unit of quadrant.
-   * @param {number} distance - Distance between centers of two circles, with
-   *   unit of quadrant.
+   * @param {number} radius1 - Radius of the first circle to intersect.
+   * @param {number} radius2 - Radius of the second circle to intersect.
+   * @param {number} distance - Distance between centers of two circles.
    * @returns {number[]} Information about intersection, which has values
-   *   `[ang, len1, len2]` (see method `_relationTo`).
+   *   `[ang, len1, len2]` (see method {@link SlidingSphere#_relationTo}).
    */
   _intersect(radius1, radius2, distance) {
     var a = radius2*Q;
@@ -532,13 +530,13 @@ class SlidingSphere
    * Compute length of leaf shape.
    * Given tip angle and radius of edges, compute length of edges.
    * 
-   * @param {number} angle - Tip angle of leaf shape, with unit of quadrant.
-   * @param {number} radius1 - Radius of left edge of leaf shape, with unit of
-   *   quadrant.  Center of curvature is at the right of edge.
-   * @param {number} radius2 - Radius of right edge of leaf shape, with unit of
-   *   quadrant.  Center of curvature is at the left of edge.
+   * @param {number} angle - Tip angle of leaf shape.
+   * @param {number} radius1 - Radius of left edge of leaf shape.
+   *   Center of curvature is at the right of edge.
+   * @param {number} radius2 - Radius of right edge of leaf shape.
+   *   Center of curvature is at the left of edge.
    * @returns {number[]} The lengths of left edge and right edge, which has
-   *   values `[len1, len2]`, with unit of quadrant.
+   *   values `[len1, len2]`.
    */
   _leaf(angle, radius1, radius2) {
     var a = radius1*Q;
@@ -601,8 +599,8 @@ class SlidingSphere
    * Jump from a point on the segment to same point on adjacent segment.
    * 
    * @param {SphSeg} seg0 - The starting segment.
-   * @param {number} offset - Offset of point respect to vertex of `seg0`, with
-   *   unit of quadrant, range in [0, `seg0.length`].
+   * @param {number} offset - Offset of point respect to vertex of `seg0`,
+   *   in the range of [0, `seg0.length`].
    * @param {number=} prefer - The prefer side when jumping to end point of segment.
    *   `+1` (default) means upper limit of offset; `-1` means lower limit of offset.
    * @returns {object[]} Segment and corresponding offset after jump, or empty
@@ -630,7 +628,7 @@ class SlidingSphere
    * 
    * @param {SphSeg} seg0 - The segment passing through center.
    * @param {number=} offset - Offset of center respect to vertex of `seg0`,
-   *   with unit of quadrant, range in [0, `seg0.length`).
+   *   in the range of [0, `seg0.length`).
    * @yields {object[]} Information when spinning to segment, which has value
    *   `[angle, seg, offset]`:
    *   `angle` is spinning angle with unit of quadrant, which will snap to 0, 2;
@@ -672,10 +670,10 @@ class SlidingSphere
     do {
       yield seg;
       
-      let [adj_seg, adj_th] = this._jump(seg, seg.length, -1);
+      let [ang1, seg1] = [seg.next.angle, seg.next];
       let ang;
-      for ( [ang, seg] of this._spin(adj_seg, adj_th) ) {
-        let sgn = this._cmp([ang, seg.radius-1], [2, 1-adj_seg.radius]);
+      for ( [ang, seg] of this._spin(seg1) ) {
+        let sgn = this._cmp([ang, seg.radius-1], [2-ang1, seg0.radius-1]);
         if ( sgn == 0 ) break;
         if ( sgn >  0 ) return false;
       }
@@ -704,12 +702,13 @@ class SlidingSphere
    * 
    * @param {SphSeg} seg1 - The first segment to swap.
    * @param {SphSeg} seg2 - The second segment to swap.
-   * @param {number} ang1 - angle from `seg1` to `seg2`, with unit of quadrant.
-   *   It must range in [0, 4] for merge case, and must range in [-4, 0] for
-   *   split case.
-   * @param {number} ang2 - angle from `seg2` to `seg1`, with unit of quadrant.
-   *   It must range in [0, 4] for merge case, and must range in [-4, 0] for
-   *   split case.
+   * @param {number} ang1 - angle from `seg1` to `seg2`.
+   *   It must in the range of [0, 4] for merge case; in the range of [-4, 0]
+   *   for split case.
+   * @param {number} ang2 - angle from `seg2` to `seg1`.
+   *   It must in the range of [0, 4] for merge case; in the range of [-4, 0]
+   *   for split case.  And with constraint `ang1+ang2 == 4` for merge case;
+   *   with constraint `ang1+ang2 == -4` for split case.
    */
   _swap(seg1, seg2, ang1, ang2) {
     var [seg1_prev, seg2_prev] = [seg1.prev, seg2.prev];
@@ -749,13 +748,8 @@ class SlidingSphere
     seg.connect(next_seg);
     if ( seg.affiliation )
       seg.affiliation.accept(next_seg);
-
-    if ( seg.lock ) {
-      let i = seg.lock.dash.indexOf(seg);
-      console.assert(i != -1);
-      seg.lock.dash.splice(i, 0, next_seg);
-      next_seg.lock = seg.lock;
-    }
+    if ( seg.lock )
+      seg.lock.insertAfter(next_seg, seg);
 
     for ( let [adj_seg, offset] of seg.adj ) {
       // remove adjacent of segment
@@ -797,16 +791,8 @@ class SlidingSphere
       seg.prev.next = undefined;
     if ( seg.affiliation )
       seg.affiliation.withdraw(seg);
-
-    if ( seg.lock ) {
-      let i = seg.lock.dash.indexOf(seg);
-      console.assert(i != -1);
-      seg.lock.dash.splice(i, 1);
-      if ( i == 0 ) {
-        seg.lock.dash.unshift(seg.lock.dash.pop());
-        seg.lock.offset += original_len;
-      }
-    }
+    if ( seg.lock )
+      seg.lock.remove(seg);
 
     // merge adjacent
     for ( let [adj_seg, offset] of seg.adj ) {
@@ -839,6 +825,8 @@ class SlidingSphere
   
     if ( segment1.lock )
       segment1.lock.unlock();
+    if ( segment2.lock )
+      segment2.lock.unlock();
 
     // find end points of covers between segments
     var brackets = [];
@@ -855,7 +843,7 @@ class SlidingSphere
     var offset2_ = this._mod4(offset-segment1.length, [0, segment2.length, offset2]);
     if ( offset2_ != 0 && offset2_ < segment2.length )
       brackets.push([segment1.length, offset2_, -1]);
-    brackets.sort(this._cmp.bind(this));
+    brackets.sort();
     console.assert(brackets.length%2==0 && brackets.every((c,i) => c[2]==(-1)**i));
 
     // interpolate
@@ -865,7 +853,7 @@ class SlidingSphere
     var contacts2 = new Map();
     for ( let [contacts, segment, offsets] of [[contacts1, segment1, offsets1],
                                                [contacts2, segment2, offsets2]] )
-      for ( let theta of [...offsets].sort(this._cmp.bind(this)).reverse() ) {
+      for ( let theta of Array.from(offsets).sort().reverse() ) {
         if ( theta == segment.length )
           contacts.set(theta, [segment.next, 2-segment.next.angle]);
         else if ( theta == 0 )
@@ -901,12 +889,12 @@ class SlidingSphere
    * @yields {object} Information about meet point, which has values
    *   `{angle, segment, offset, circle, theta}`.
    *   `angle` is angle from `circle` to `segment` at meet point (angle between
-   *   two directed tangent vector), with unit of quadrant, range in [-2, 2].
+   *   two directed tangent vector), in the range of [-2, 2].
    *   `segment` is the segment that meets with circle;
-   *   `offset` is offset of meet point along `segment`, with unit of quadrant,
-   *   range in [0, `segment.length`);
+   *   `offset` is offset of meet point along `segment`,in the range of
+   *   [0, `segment.length`);
    *   `circle` is the circle that segment meets with;
-   *   `theta` is offset of meet point along `circle`, with unit of quadrant.
+   *   `theta` is offset of meet point along `circle`.
    */
   *_meetWith(segment, circle) {
     var circle_ = segment.circle;
@@ -1103,11 +1091,11 @@ class SlidingSphere
    * @returns {boolean} True if point is in this element.
    */
   _contains(elem, point) {
-    if ( elem.boundaries.length == 0 )
+    if ( elem.boundaries.size == 0 )
       return true;
 
     // make a circle passing through this point and a vertex of element
-    var vertex = elem.boundaries[0].vertex;
+    var vertex = elem.boundaries.values().next().value.vertex;
     var radius = angleTo(point, vertex)/2/Q;
     if ( this._cmp(radius, 0) == 0 )
       return false;
@@ -1115,7 +1103,8 @@ class SlidingSphere
     var orientation = q_mul(q_align(vertex, point), quaternion([0,1,0], radius*Q));
     var circle = this.createCircle({orientation, radius});
 
-    var meets = elem.boundaries.flatMap(seg => [...this._meetWith(seg, circle)]);
+    var meets = Array.from(elem.boundaries)
+                     .flatMap(seg => Array.from(this._meetWith(seg, circle)));
     console.assert(meets.length > 0);
     meets = this._sortMeets(meets);
     if ( meets.find(meet => this._mod4(meet.theta, [0]) == 0) )
@@ -1138,11 +1127,11 @@ class SlidingSphere
     // find meet points and sort by `theta`
     var paths = [];
     for ( let loop of this._loops(elem.boundaries) )
-      paths.push(loop.flatMap(seg => [...this._meetWith(seg, circle)]));
+      paths.push(loop.flatMap(seg => Array.from(this._meetWith(seg, circle))));
     var meets = this._sortMeets(paths.flatMap(path => path));
 
     // interpolate
-    for ( let path of paths ) for ( let meet of [...path].reverse() )
+    for ( let path of paths ) for ( let meet of path.slice(0).reverse() )
       if ( meet.type[1] == "0" && meet.offset != 0 ) {
         meet.segment = this._interpolate(meet.segment, meet.offset);
         meet.offset = 0;
@@ -1250,33 +1239,49 @@ class SlidingSphere
       }
     }
 
-    in_segs = [...in_segs];
-    out_segs = [...out_segs];
+    in_segs = Array.from(in_segs);
+    out_segs = Array.from(out_segs);
     return [in_segs, out_segs, in_bd, out_bd];
   }
 
   /**
-   * Find part of elements in a region separated by given boundaries.
+   * Partition by disjoint locks.
    * 
-   * @param {SphSeg[]} bd - the boundaries that separate region.
-   * @param {Array.<SphElem>=} region - The elements to pick, or all reachable
-   *   elements by default.
-   * @returns {Set<SphElem>} All elements divided by given boundaries, or
-   *   `undefined` if given boundaries don't separate region as two parts.
+   * @param {...SphLock} locks - The locks which separate whole space.
+   *   Both of lock and its dual lock should be included simultaneously.
+   * @returns {Array} All part divided by locks, which have entries `{elements, locks}`.
+   *   `elements` is set of elements in this part,
+   *   `locks` is set of locks of boundaries of this part.
    */
-  _sideOf(bd, region) {
-    var elems = new Set();
-    for ( let seg of bd )
-      if ( !region || region.includes(seg.affiliation) )
-        elems.add(seg.affiliation);
+  _partitionBy(...locks) {
+    var bd = locks.flatMap(lock => lock.teeth);
+    locks = new Set(locks);
+    var partition = [];
 
-    for ( let elem of elems ) for ( let seg of elem.boundaries )
-      if ( !bd.includes(seg) ) for ( let adj_seg of seg.adj.keys() ) {
-        if ( bd.includes(adj_seg) ) return;
-        if ( !region || region.includes(adj_seg.affiliation) )
-          elems.add(adj_seg.affiliation);
+    while ( locks.size ) {
+      let group = {locks: new Set(), elements: new Set()};
+
+      let lock = locks.values().next().value;
+      locks.delete(lock);
+      group.locks.add(lock);
+      for ( let seg of lock.teeth )
+        group.elements.add(seg.affiliation);
+
+      for ( let elem of group.elements ) for ( let seg of elem.boundaries ) {
+        if ( !bd.includes(seg) ) {
+          for ( let adj_seg of seg.adj.keys() )
+            group.elements.add(adj_seg.affiliation);
+
+        } else if ( !group.locks.has(seg.lock) ) {
+          locks.delete(seg.lock);
+          group.locks.add(seg.lock);
+          for ( let par_seg of seg.lock.teeth )
+            group.elements.add(par_seg.affiliation);
+        }
       }
-    return elems;
+      partition.push(group);
+    }
+    return partition;
   }
   /**
    * Build Lock along extended circle of given segment.
@@ -1291,50 +1296,71 @@ class SlidingSphere
     var right = this._full(this._ski(seg_));
     if ( !right ) return;
 
-    var left_lock = this.createLock(left);
-    var right_lock = this.createLock(right);
-    left_lock.pair(right_lock, offset);
-    left_lock.lock();
+    var left_lock = this.createLock();
+    var right_lock = this.createLock();
+    left_lock.lock(left);
+    right_lock.lock(right);
+    left_lock.pairWith(right_lock, offset);
     return [left_lock, right_lock];
   }
   /**
-   * Twist lock with given angle.
+   * Twist locks with given angles.
    * 
-   * @param {SphLock} lock - The lock to twist.
-   * @param {number} theta - Twist angle.
-   * @param {number=} side - side of lock to twist, "+1" means left side; "-1"
-   *   means right side.
+   * @param {Map<SphLock,number>} op - The map that tell you which lock should
+   *   twist by what angle.
+   * @param {SphElem=} hold - The element whose orientation should fix.
    */
-  _twist(left_locks, right_locks, theta) {
-    var bd = [...left_locks, ...right_locks].flatMap(lock => lock.dash);
-    var elems = this._sideOf(bd);
-    if ( elems === undefined )
-      return false;
+  _twist(op, hold) {
+    op = new Map(op);
+    for ( let [lock, theta] of op ) {
+      if ( !op.has(lock.dual) )
+        op.set(lock.dual, theta);
+      else
+        console.assert(this._cmp(op.get(lock.dual), theta) == 0);
+    }
 
     // unlock
+    var bd = Array.from(op.keys()).flatMap(lock => lock.teeth);
     for ( let seg0 of bd )
       for ( let [angle, seg, offset] of this._spin(seg0) )
         if ( offset == 0 && angle != 0 && angle != 2 )
           if ( seg.lock ) seg.lock.unlock();
 
     // twist
-    var q = quaternion(left_locks[0].circle.center, theta*Q);
-    for ( let elem of elems )
-      elem.rotate(q);
-    for ( let lock of left_locks )
-      lock.offset = lock.dual.offset = this._mod4(lock.offset-theta);
-    for ( let lock of right_locks )
-      lock.offset = lock.dual.offset = this._mod4(lock.offset+theta);
+    var partition = this._partitionBy(...op.keys());
+    var group0 = partition.find(g => g.elements.has(hold)) || partition[0];
+    group0.rotation = [0,0,0,1];
+    var processed = new Set([group0]);
+
+    for ( let group of processed ) for ( let lock of group.locks ) {
+      let adj_group = partition.find(g => g.locks.has(lock.dual));
+
+      let theta = op.get(lock.dual);
+      let rotation = quaternion(lock.dual.circle.center, theta*Q);
+      q_mul(rotation, group.rotation, rotation);
+
+      if ( !processed.has(adj_group) ) {
+        lock.offset = lock.dual.offset = this._mod4(lock.offset - theta);
+
+        adj_group.rotation = rotation;
+        for ( let elem of adj_group.elements )
+          elem.rotate(rotation);
+        processed.add(adj_group);
+
+      } else {
+        console.assert(this._cmp(adj_group.rotation, rotation) == 0);
+      }
+    }
 
     // relink adjacent segments
     for ( let seg of bd )
       seg.adj.clear();
 
     var offset1 = 0, offset2 = 0;
-    for ( let lock of [...left_locks, ...right_locks] )
-      for ( let seg1 of lock.dash ) {
+    for ( let lock of op.keys() )
+      for ( let seg1 of lock.teeth ) {
         offset2 = 0;
-        for ( let seg2 of lock.dual.dash ) {
+        for ( let seg2 of lock.dual.teeth ) {
           let offset = this._mod4(lock.offset-offset1-offset2, [4, seg1.length, seg2.length]);
           if ( this._cmp(offset, seg1.length+seg2.length) < 0 )
             seg1.adjacent(seg2, offset);
@@ -1350,13 +1376,27 @@ class SlidingSphere
           if ( !seg.lock ) this._buildLock(seg);
   }
 
+  merge(...elements) {
+    for ( let elem of elements ) {
+      let i = this.elements.indexOf(elem);
+      console.assert(i != -1);
+      this.elements.splice(i, 1);
+    }
+    elements[0].merge(...elements);
+    this.elements.push(elements[0]);
+  }
+  split(element, ...groups) {
+    this.elements.splice(this.elements.indexOf(element), 1);
+    var splited = element.split(...groups);
+    this.elements.push(...splited);
+  }
   rotate(q) {
     for ( let elem of this.elements )
       elem.rotate(q);
     return this;
   }
   slice(center, radius) {
-    var circle = this.createCircle({center, radius});
+    var circle = this.createCircle({radius, orientation:q_align(center)});
     var new_elems = [];
     var new_bd = [];
     for ( let elem of this.elements ) {
@@ -1381,9 +1421,10 @@ class SlidingSphere
   mergeTrivialEdges() {
     for ( let elem of this.elements ) {
       while ( true ) {
+        let bd = Array.from(elem.boundaries);
         let seg1, seg2;
-        for ( seg1 of elem.boundaries )
-          if ( seg2 = elem.boundaries.find(seg2 => seg2.adj.has(seg1)) )
+        for ( seg1 of bd )
+          if ( seg2 = bd.find(seg2 => seg2.adj.has(seg1)) )
             break;
 
         if ( seg2 )
@@ -1394,7 +1435,7 @@ class SlidingSphere
     }
   }
   twist(lock, theta) {
-    this._twist([lock], [lock.dual], theta);
+    this._twist([[lock, theta]]);
   }
 }
 
