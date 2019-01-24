@@ -38,7 +38,7 @@ function fzy_mod(val, mod, snaps=[], tol=1e-5) {
     val = (val % mod + mod) % mod;
 
   for ( let snap of snaps )
-    if ( fzy_cmp(fzy_mod(val-snap+mod/2, mod), mod/2, tol) == 0 )
+    if ( fzy_cmp(fzy_mod(val-snap+mod/2, mod, [], 0), mod/2, tol) == 0 )
       return snap;
 
   return val;
@@ -362,7 +362,7 @@ class SphLock
     let i = this.teeth.indexOf(seg0);
     if ( i == -1 )
       return;
-    this.teeth.splice(i, 0, seg);
+    this.teeth.splice(i+1, 0, seg);
     seg.lock = this;
   }
   remove(seg) {
@@ -385,7 +385,7 @@ class SlidingSphere
 {
   constructor(tol=1e-5) {
     this.tol = tol;
-    this.elements = [this.createElem()];
+    this.elements = new Set([this.createElem()]);
   }
 
   createCircle(...args) {
@@ -563,10 +563,13 @@ class SlidingSphere
    * It will stop before returning to the starting segment or has no next segment.
    * 
    * @param {SphSeg} seg0 - The starting segment.
-   * @yields {SphSeg} The segment walked through.
+   * @param {number[]=} compass - The orientation of starting segment, and as a
+   *   buffer for derived orientation of segment after walking.
+   * @yields {SphSeg} The segment walked through.  Its derived orientation will
+   *   be set to buffer `compass`.
    * @returns {boolean} True if it return to the starting segment finally.
    */
-  *_walk(seg0) {
+  *_walk(seg0, compass) {
     var seg = seg0;
     do {
       yield seg;
@@ -574,6 +577,16 @@ class SlidingSphere
 
       if ( seg === undefined )
         return false;
+
+      if ( compass ) {
+        q_spin(compass, seg.prev.length*Q, compass);
+        let vertex = [Math.sin(seg.prev.radius*Q), 0, Math.cos(seg.prev.radius*Q)];
+        rotate(vertex, compass, vertex);
+        let phi = (seg.prev.radius-seg.radius)*Q;
+        q_mul(compass, quaternion([0,1,0], phi), compass);
+        let ang = (2-seg.angle)*Q;
+        q_mul(quaternion(vertex, ang), compass, compass);
+      }
     } while ( seg !== seg0 );
     return true;
   }
@@ -603,20 +616,29 @@ class SlidingSphere
    *   in the range of [0, `seg0.length`].
    * @param {number=} prefer - The prefer side when jumping to end point of segment.
    *   `+1` (default) means upper limit of offset; `-1` means lower limit of offset.
-   * @returns {object[]} Segment and corresponding offset after jump, or empty
-   *   array if no adjacent segment to jump.
+   * @param {number[]=} compass - The orientation of starting segment, and as a
+   *   buffer for derived orientation of segment after jumping.
+   * @returns {object[]} Segment and corresponding offset after jump: `[seg, offset]`,
+   *   or empty array if no adjacent segment to jump.  The derived orientation
+   *   of `seg` will be set to buffer `compass`.
    */
-  _jump(seg0, offset, prefer=+1) {
+  _jump(seg0, offset, prefer=+1, compass) {
     for ( let [adj_seg, theta] of seg0.adj ) {
       let offset_ = this._mod4(theta-offset, [0, adj_seg.length]);
       if ( adj_seg.length == 4 && offset_ == 0 )
-        return prefer < 0 ? [adj_seg, 0] : [adj_seg, 4];
-      if ( offset_ == 0 && prefer > 0 )
+        offset_ = prefer < 0 ? 0 : 4;
+      else if ( offset_ == 0 && prefer > 0 )
         continue;
-      if ( offset_ == adj_seg.length && prefer < 0 )
+      else if ( offset_ == adj_seg.length && prefer < 0 )
         continue;
-      if ( offset_ <= adj_seg.length )
-        return [adj_seg, offset_];
+      else if ( offset_ > adj_seg.length )
+        continue;
+
+      if ( compass ) {
+        q_spin(compass, theta*Q, compass);
+        q_mul(compass, [1,0,0,0], compass);
+      }
+      return [adj_seg, offset_];
     }
     return [];
   }
@@ -629,15 +651,23 @@ class SlidingSphere
    * @param {SphSeg} seg0 - The segment passing through center.
    * @param {number=} offset - Offset of center respect to vertex of `seg0`,
    *   in the range of [0, `seg0.length`).
+   * @param {number[]=} compass - The orientation of starting segment, and as a
+   *   buffer for derived orientation of segment after spinning.
    * @yields {object[]} Information when spinning to segment, which has value
    *   `[angle, seg, offset]`:
    *   `angle` is spinning angle with unit of quadrant, which will snap to 0, 2;
    *   `seg` is segment passing through center;
    *   `offset` is offset of center.
+   *   The orientation of `seg` will be set to buffer `compass`.
    * @returns {boolean} True if it return to the first segment finally.
    */
-  *_spin(seg0, offset=0) {
+  *_spin(seg0, offset=0, compass) {
     var angle = 0, seg = seg0;
+    if ( compass ) {
+      var compass0 = compass.slice();
+      var vertex0 = [Math.sin(seg0.radius*Q), 0, Math.cos(seg0.radius*Q)];
+      rotate(vertex0, compass, vertex0);
+    }
 
     do {
       yield [angle, seg, offset];
@@ -654,6 +684,12 @@ class SlidingSphere
 
       if ( seg === undefined )
         return false;
+
+      if ( compass ) {
+        let phi = (seg0.radius-seg.radius)*Q;
+        q_mul(compass0, quaternion([0,1,0], phi), compass);
+        q_mul(quaternion(vertex0, -angle*Q), compass, compass);
+      }
     } while ( seg !== seg0 );
     console.assert(angle == 4);
     return true;
@@ -1027,7 +1063,7 @@ class SlidingSphere
           let submeet = mmeet[Math.abs(beams[i])-1];
 
           let j = beams.indexOf(-beams[i]);
-          console.assert(j != -1 && j > i && j < end-1);
+          console.assert(j != -1 && j > i && j <= end-1);
           parseTouch(beams, i, j, submeet, subside, side_);
           submeet.supermeet = meet;
           meet.submeets.push(submeet);
@@ -1085,17 +1121,18 @@ class SlidingSphere
     return meets;
   }
   /**
-   * Check if point is inside the element, not including boundaries.
+   * Check if point is inside given region (not including boundaries).
    * 
+   * @param {SphSeg[]} boundaries - The boundaries of the region.
    * @param {number[]} point - The point to check.
    * @returns {boolean} True if point is in this element.
    */
-  _contains(elem, point) {
-    if ( elem.boundaries.size == 0 )
+  _contains(boundaries, point) {
+    if ( boundaries.size == 0 )
       return true;
 
     // make a circle passing through this point and a vertex of element
-    var vertex = elem.boundaries.values().next().value.vertex;
+    var vertex = boundaries.values().next().value.vertex;
     var radius = angleTo(point, vertex)/2/Q;
     if ( this._cmp(radius, 0) == 0 )
       return false;
@@ -1103,7 +1140,7 @@ class SlidingSphere
     var orientation = q_mul(q_align(vertex, point), quaternion([0,1,0], radius*Q));
     var circle = this.createCircle({orientation, radius});
 
-    var meets = Array.from(elem.boundaries)
+    var meets = Array.from(boundaries)
                      .flatMap(seg => Array.from(this._meetWith(seg, circle)));
     console.assert(meets.length > 0);
     meets = this._sortMeets(meets);
@@ -1218,7 +1255,7 @@ class SlidingSphere
       if ( inside === undefined && meets.find(({type}) => type[1] == "-") )
         inside = true;
       if ( inside === undefined )
-        inside = this._contains(elem, circle.vectorAt(0));
+        inside = this._contains(elem.boundaries, circle.vectorAt(0));
 
       if ( inside ) {
 
@@ -1242,6 +1279,277 @@ class SlidingSphere
     in_segs = Array.from(in_segs);
     out_segs = Array.from(out_segs);
     return [in_segs, out_segs, in_bd, out_bd];
+  }
+
+  /**
+   * Check geometry of segment, include length, angle, radius.
+   * 
+   * @param {SphSeg} seg - The segment to check.
+   */
+  _checkGeometry(seg) {
+    console.assert(this._cmp(seg.length, 0) > 0 && this._cmp(seg.length, 4) <= 0);
+    console.assert(this._cmp(seg.radius, 0) > 0 && this._cmp(seg.radius, 2) < 0);
+    console.assert(this._cmp(seg.angle, 0) >= 0 && this._cmp(seg.radius, 4) <= 0);
+    if ( this._cmp(seg.angle, 0) == 0 )
+      console.assert(this._cmp(seg.radius, 2-seg.prev.radius) >  0);
+    if ( this._cmp(seg.angle, 4) == 0 )
+      console.assert(this._cmp(seg.radius, 2-seg.prev.radius) <= 0);
+  }
+  /**
+   * Check orientation of connected segments in this puzzle.
+   */
+  _checkOrientation() {
+    for ( let elem of this.elements ) for ( let loop of this._loops(elem.boundaries) ) {
+      var compass = loop[0].orientation.slice();
+      for ( let seg of this._walk(loop[0], compass) ) {
+        console.assert(this._cmp(compass, seg.orientation) == 0
+                       || this._cmp(compass, seg.orientation.map(x => -x)) == 0);
+
+        for ( let [adj_seg, offset] of seg.adj ) {
+          let adj_compass = seg.orientation.slice();
+          this._jump(seg, offset, -1, adj_compass);
+          console.assert(this._cmp(adj_compass, adj_seg.orientation) == 0
+                         || this._cmp(adj_compass, adj_seg.orientation.map(x => -x)) == 0);
+        }
+      }
+      console.assert(this._cmp(compass, loop[0].orientation) == 0
+                     || this._cmp(compass, loop[0].orientation.map(x => -x)) == 0);
+    }
+  }
+  /**
+   * Check if segment is twistable; element should be intersection of circles.
+   * 
+   * @param {SphSeg} seg0 - The segment to test.
+   * @returns {boolean} True if `seg0` is twistable.
+   */
+  _isTwistable(seg0) {
+    if ( this._cmp(seg0.angle, 2) > 0 )
+      return false;
+    if ( this._cmp(seg0.next.angle, 2) > 0 )
+      return false;
+    if ( this._cmp(seg0.angle, 2) == 0 && this._cmp(seg0.radius, seg0.prev.radius) < 0 )
+      return false;
+    if ( this._cmp(seg0.next.angle, 2) == 0 && this._cmp(seg0.next.radius, seg0.radius) < 0 )
+      return false;
+    if ( Array.from(seg0.adj.keys()).some(seg => seg.affiliation === seg0.affiliation) )
+      return false;
+  
+    var circle = seg0.circle;
+    var meets = Array.from(seg0.affiliation.boundaries)
+                     .flatMap(seg => Array.from(this._meetWith(seg, circle)));
+    meets = this._sortMeets(meets);
+    var types = meets.map(meet => meet.type);
+  
+    if ( types.find(type => type[1] == "0") )
+      return false;
+    console.assert(types.every(type => type[0] == "+"));
+    if ( types.find(type => type[0] == "+") && types.find(type => type[0] == "-") )
+      return false;
+    return true;
+  }
+  
+  /**
+   * Find profile of given segments.
+   * Profile are loops of segments that are adjacent to exposed part of given segments.
+   * 
+   * @param {SphSeg[]} segments
+   * @returns {SphSeg[]} Profile of segments.
+   */
+  _findProfile(segments) {
+    var segments = new Set(segments);
+    var uncovered = [];
+    for ( let seg of segments ) {
+      // find end points of covers between segments
+      let brackets = [];
+      for ( let [adj_seg, offset] of seg.adj ) if ( segments.has(adj_seg) ) {
+        let [segment1, segment2] = [seg, adj_seg];
+  
+        let offset1 = this._mod4(offset, [4, segment1.length]);
+        if ( offset1 <= segment1.length )
+          brackets.push([offset1, -1]);
+        let offset2 = this._mod4(offset, [4, segment2.length]);
+        if ( offset2 <= segment2.length )
+          brackets.push([0, +1]);
+        let offset1_ = this._mod4(offset-segment2.length, [0, segment1.length, offset1]);
+        if ( offset1_ != 0 && offset1_ < segment1.length )
+          brackets.push([offset1_, +1]);
+        let offset2_ = this._mod4(offset-segment1.length, [0, segment2.length, offset2]);
+        if ( offset2_ != 0 && offset2_ < segment2.length )
+          brackets.push([segment1.length, -1]);
+      }
+      brackets.unshift([0, -1]);
+      brackets.push([seg.length, +1]);
+      brackets.sort(this._cmp.bind(this));
+  
+      // find uncovered interval
+      console.assert(brackets.length % 2 == 0);
+      for ( let i=0; i<brackets.length; i+=2 ) {
+        let [th1, s1] = brackets[i];
+        let [th2, s2] = brackets[i+1];
+        console.assert(s1<0 && s2>0);
+  
+        if ( this._cmp(th1, th2) != 0 )
+          uncovered.push([seg, th1, th2]);
+      }
+    }
+  
+    // build segments of profile
+    for ( let interval of uncovered ) {
+      let [seg, th1, th2] = interval;
+      let length = this._snap(th2-th1, [seg.length]);
+      let {radius, orientation} = seg.circle.shift(th2).complement();
+      let bd = this.createSeg({radius, length, orientation});
+      bd.adj.set(seg, th2);
+      interval.push(bd);
+    }
+  
+    // connect segments of profile
+    for ( let [,,,bd] of uncovered ) {
+      let ang_, seg_, th1_;
+      for ( let tick of this._spin(bd) ) {
+        if ( !segments.has(tick[1]) )
+          break;
+        [ang_, seg_, th1_] = tick;
+      }
+      bd.angle = 4-ang_;
+      let [,,,bd_] = uncovered.find(([seg, th1]) => seg===seg_ && this._cmp(th1,th1_) == 0);
+      bd_.connect(bd);
+    }
+  
+    return uncovered.map(([,,,bd]) => bd);
+  }
+  /**
+   * Parse structure of connected network and joint elements of given segments.
+   * ```
+   * network = {
+   *   loops: [loop, ...],
+   *   profile: [loop, ...],
+   *   joints: [joint, ...],
+   * },
+   * joint = {
+   *   networks: [network, ...],
+   *   loops: [loop, ...],
+   *   side: +1/-1,
+   * },
+   * ```
+   * 
+   * @param {SphSeg[]} segments
+   * @returns {object} Networks.
+   */
+  _parseNetworks(segments) {
+  
+    // find all connected networks
+    var networks = [];
+    var lost = new Set(segments);
+    while ( lost.size ) {
+      let network = {loops:[], profile:[], joints:[]};
+  
+      let queue = new Set([lost.values().next().value]);
+      for ( let seg0 of queue ) {
+        let loop = this._full(this._walk(seg0));
+        console.assert(loop);
+        network.loops.push(loop);
+  
+        for ( let seg of loop ) {
+          console.assert(lost.has(seg));
+          lost.delete(seg);
+          queue.delete(seg);
+          for ( let adj_seg of seg.adj.keys() )
+            if ( lost.has(adj_seg) )
+              queue.add(adj_seg);
+        }
+      }
+  
+      let profile = this._findProfile(network.loops.flatMap(loop => loop));
+      network.profile = Array.from(this._loops(profile));
+  
+      networks.push(network);
+    }
+  
+    // determine relation between networks
+    var vertex0 = networks[0].loops[0][0].vertex;
+    var locals = new Set(networks.slice(1));
+    for ( let network of locals ) {
+      // build circle pass through multiple networks
+      // (start from the vertex0 in first network)
+      let vertex = network.loops[0][0].vertex;
+      let radius = 1;
+      let orientation = q_mul(q_align(vertex0, vertex), [-0.5, -0.5, -0.5, 0.5]);
+      let circle = this.createCircle({orientation, radius});
+  
+      // find and sort meets
+      let meets = [];
+      for ( let network of networks )
+        for ( let [loops, side] of [[network.loops, +1], [network.profile, -1]] )
+          for ( let loop of loops ) for ( let seg of loop )
+            for ( let meet of this._meetWith(seg, circle) ) {
+              meet.network = network;
+              meet.loop = loop;
+              meet.side = side;
+              meets.push(meet);
+            }
+      meets = this._sortMeets(meets);
+      while ( meets[0].network !== networks[0] )
+        meets.push(meets.shift());
+  
+      // build joints
+      for ( let i=0; i<meets.length; i++ )
+        if ( ["+0", "+-", "--"].includes(meets[i].type) ) {
+          let meet1 = meets[i];
+          let meet2 = meets[i+1] || meets[0];
+          console.assert(["-0", "+-", "--"].includes(meet2.type));
+          console.assert(meet1.side == meet2.side);
+          if ( meet1.network === meet2.network ) {
+            console.assert(meet1.loop === meet2.loop);
+            continue;
+          }
+  
+          // connect networks
+          let joint1 = meet1.network.joints.find(joint => joint.loops.includes(meet1.loop));
+          let joint2 = meet2.network.joints.find(joint => joint.loops.includes(meet2.loop));
+          console.assert(joint1&&joint2 ? joint1===joint2 : true);
+  
+          let joint = joint1 || joint2 || {networks:[], loops:[], side:meet1.side};
+          if ( !joint.loops.includes(meet1.loop) ) {
+            joint.networks.push(meet1.network);
+            joint.loops.push(meet1.loop);
+            locals.delete(meet1.network);
+          }
+          if ( !joint.loops.includes(meet2.loop) ) {
+            joint.networks.push(meet2.network);
+            joint.loops.push(meet2.loop);
+            locals.delete(meet2.network);
+          }
+          if ( !meet1.network.joints.includes(joint) )
+            meet1.network.joints.push(joint);
+          if ( !meet2.network.joints.includes(joint) )
+            meet2.network.joints.push(joint);
+        }
+    }
+  
+    return networks;
+  }
+  /**
+   * separate joint part of given segments.
+   * 
+   * @param {SphSeg[]} segments
+   * @returns {SphSeg[][]} Set of joint Segments.
+   */
+  _separateJointPart(segments) {
+    var networks = this._parseNetworks(segments);
+  
+    // separate connected part
+    var joints = new Set(networks.flatMap(network => network.joints)
+                                 .filter(joint => joint.side > 0));
+    var loops = new Set(networks.flatMap(network => network.loops));
+    for ( let joint of joints ) for ( let loop of joint.loops )
+      loops.delete(loop);
+    var res = [];
+    for ( let joint of joints )
+      res.push(joint.loops.flatMap(loop => loop));
+    for ( let loop of loops )
+      res.push(loop);
+    return res;
   }
 
   /**
@@ -1375,20 +1683,229 @@ class SlidingSphere
         if ( offset == 0 && angle != 0 && angle != 2 )
           if ( !seg.lock ) this._buildLock(seg);
   }
-
-  merge(...elements) {
-    for ( let elem of elements ) {
-      let i = this.elements.indexOf(elem);
-      console.assert(i != -1);
-      this.elements.splice(i, 1);
+  /**
+   * Make tick at end point of segment.
+   * 
+   * @param {SphSeg} prev_seg
+   * @returns {object} Tick at `prev_seg.next.vertex`, which have value
+   *   `{segment, subticks, is_free}`, and `subticks = [{angle, segment}, ...]`:
+   *   `segment` is next segment along extending circle of this segment;
+   *   `subtick.angle` is rolling angle, with unit of quadrant, range in (0, 2);
+   *   `subtick.segment` is segment of subtick, which has vertex at tick center;
+   *   `is_free` indicate subticks are free or not.
+   */
+  _makeTick(prev_seg) {
+    var [ang1, seg1] = [prev_seg.next.angle, prev_seg.next];
+    var subticks = [], pre = [], post = [];
+    var angle, segment, offset;
+    for ( [angle, segment, offset] of this._spin(seg1) ) {
+      angle = this._snap(angle+ang1, [0, 2, 4]);
+      let sgn = this._cmp([angle, segment.radius-1], [2, prev_seg.radius-1]);
+      if ( sgn == 0 ) break;
+      if ( sgn >  0 ) return {};
+  
+      if ( angle == 0 )
+        pre.push(segment);
+      else if ( angle == 2 )
+        post.push(segment);
+      else
+        subticks.push({angle, segment});
     }
-    elements[0].merge(...elements);
-    this.elements.push(elements[0]);
+  
+    var is_free = false;
+    for ( let seg1 of pre )
+      if ( post.find(seg2 => this._cmp(2-seg1.radius, seg2.radius) == 0) ) {
+        is_free = true;
+        break;
+      }
+  
+    return {segment, subticks, is_free};
   }
-  split(element, ...groups) {
-    this.elements.splice(this.elements.indexOf(element), 1);
-    var splited = element.split(...groups);
-    this.elements.push(...splited);
+  /**
+   * Detect latches by given ticks; Latch has information about twistable circle.
+   * 
+   * @param {object[]} ticks
+   * @returns {object[]} Array of latches, which has entries `{length, center, segment}`
+   *   or `{length, center, segment0}` (free latch):
+   *   `length` is length of shadow under twistable circle;
+   *   `center` is center of twistable circle;
+   *   `segment` is locked segment;
+   *   `segment0` is segment in which `segment0.next.vertex` is point of twistable
+   *   circle.
+   */
+  _detectLatches(ticks) {
+    var latches = [];
+  
+    var radius0 = ticks[0].segment.radius;
+    var full_len = ticks.reduce((acc, tick) => (tick.theta=acc)+tick.segment.length, 0);
+    console.assert(this._cmp(full_len, 4) == 0);
+    for ( let tick of ticks ) for ( let sub of tick.subticks )
+      [sub.length] = this._leaf(sub.angle, radius0, sub.segment.radius);
+  
+    // find latches (center of possible intercuting circle)
+    // find all free latches
+    var free_ind = ticks.flatMap(({is_free}, i) => is_free ? [i] : []);
+    for ( let i of free_ind ) for ( let j of free_ind ) if ( i < j ) {
+      let length = ticks[j].theta - ticks[i].theta;
+      let center = this._mod4(ticks[i].theta+length/2);
+      let segment0  = (ticks[j-1] || ticks[ticks.length-1]).segment;
+      let segment0_ = (ticks[i-1] || ticks[ticks.length-1]).segment;
+  
+      switch ( this._cmp(length, 2) ) {
+        case -1:
+          latches.push({length, center, segment0});
+          break;
+  
+        case +1:
+          length = 4 - length;
+          center = this._mod4(center+2);
+          segment0 = segment0_;
+          latches.push({length, center, segment0});
+          break;
+  
+        case 0:
+          length = 2;
+          latches.push({length, center, segment0});
+          center = this._mod4(center+2);
+          segment0 = segment0_;
+          latches.push({length, center, segment0});
+          break;
+      }
+    }
+  
+    // find normal latches
+    var normal_ind = ticks.flatMap(({is_free}, i) => is_free ? [] : [i]);
+    for ( let i of normal_ind ) for ( let j of normal_ind ) if ( i < j ) {
+      let lenj = this._mod4(ticks[j].theta - ticks[i].theta);
+      let leni = this._mod4(ticks[i].theta - ticks[j].theta);
+      for ( let subi of ticks[i].subticks ) if ( this._cmp(subi.length, leni) == 0 )
+        for ( let subj of ticks[j].subticks ) if ( this._cmp(subj.length, lenj) == 0 )
+          if ( this._cmp(subi.segment.radius+subj.segment.radius, 2) == 0 ) {
+            let center = this._mod4(ticks[j].theta-lenj/2);
+            let length = lenj;
+            let segment = subj.segment;
+  
+            switch ( this._cmp([length, segment.radius], [2, 1]) ) {
+              case -1:
+                latches.push({length, center, segment});
+                break;
+  
+              case +1:
+                length = leni;
+                center = this._mod4(center+2);
+                segment = subi.segment;
+                latches.push({length, center, segment});
+                break;
+  
+              case 0:
+                length = 2;
+                latches.push({length, center, segment});
+                center = this._mod4(center+2);
+                segment = subi.segment;
+                latches.push({length, center, segment});
+                break;
+            }
+          }
+    }
+  
+    for ( let j of normal_ind ) for ( let i of free_ind ) {
+      let length = this._mod4(ticks[j].theta - ticks[i].theta);
+      for ( let subj of ticks[j].subticks ) if ( this._cmp(subj.length, length) == 0 ) {
+        let center = this._mod4(ticks[j].theta-length/2);
+        let segment = subj.segment;
+  
+        switch ( this._cmp([length, segment.radius], [2, 1]) ) {
+          case -1:
+            latches.push({length, center, segment});
+            break;
+  
+          case +1:
+            length = 4-length;
+            center = this._mod4(center+2);
+            [segment] = this._jump(segment, 0, +1);
+            latches.push({length, center, segment});
+            break;
+  
+          case 0:
+            length = 2;
+            latches.push({length, center, segment});
+            center = this._mod4(center+2);
+            [segment] = this._jump(segment, 0, +1);
+            latches.push({length, center, segment});
+            break;
+        }
+      }
+    }
+  
+    return latches;
+  }
+  /**
+   * Detect non-trivial twist angle of lock.
+   * 
+   * @param {SphLock} lock
+   * @returns {Map<number,number[]>} Map from twist angle to unlockable segment,
+   *   has entries `[ang, [seg, len]]` or `[ang, [seg0, 0]]` (masker key):
+   *   `ang` is twist angle that may unlock intersecting circle;
+   *   `seg` is segment that may become unlockable;
+   *   `len` is length of shadow under unlockable circle;
+   *   `seg0` is segment in which `seg0.next.vertex` is point of unlockable circle.
+   */
+  _decipher(lock) {
+    var ticks1 = [], ticks2 = [];
+    for ( let [segs, ticks] of [[lock.teeth, ticks1], [lock.dual.teeth, ticks2]] ) {
+      for ( let i=0; i<segs.length; i++ ) {
+        let seg = segs[i-1] || segs[segs.length-1];
+        let tick = this._makeTick(seg);
+        console.assert(tick && tick.segment === segs[i]);
+        ticks.push(tick);
+      }
+    }
+  
+    var latches1 = this._detectLatches(ticks1);
+    var latches2 = this._detectLatches(ticks2);
+  
+    var passwords = new Map(); // theta => [segment, 0] or [segment0, length]
+    var keys = new Set([]);
+    for ( let latch1 of latches1 ) for ( let latch2 of latches2 ) {
+      let test;
+      if ( latch1.segment && latch2.segment )
+        test = this._cmp([latch1.length, latch1.segment.radius],
+                       [latch2.length, latch2.segment.radius]) == 0;
+      else
+        test = this._cmp(latch1.length, latch2.length) == 0;
+  
+  
+      if ( test ) {
+        let key = this._mod4(lock.offset-latch1.center-latch2.center, keys);
+        keys.add(key);
+        if ( !passwords.has(key) )
+          passwords.set(key, []);
+  
+        let segment = latch1.segment || latch2.segment;
+        if ( segment )
+          passwords.get(key).push([segment, 0]);
+        else
+          passwords.get(key).push([latch1.segment0, latch1.length]);
+      }
+    }
+  
+    return passwords;
+  }
+
+  merge(element0, ...elements) {
+    console.assert(this.elements.has(element0));
+    for ( let elem of elements ) if ( elem !== element0 ) {
+      console.assert(this.elements.has(elem));
+      this.elements.delete(elem);
+    }
+    element0.merge(...elements);
+  }
+  split(element0, ...groups) {
+    console.assert(this.elements.has(element0));
+    this.elements.delete(element0);
+    var splited = element0.split(...groups);
+    for ( let elem of splited )
+      this.elements.add(elem);
   }
   rotate(q) {
     for ( let elem of this.elements )
@@ -1397,16 +1914,15 @@ class SlidingSphere
   }
   slice(center, radius) {
     var circle = this.createCircle({radius, orientation:q_align(center)});
-    var new_elems = [];
     var new_bd = [];
-    for ( let elem of this.elements ) {
+    var elements = new Set(this.elements);
+    for ( let elem of elements ) {
       let [in_segs, out_segs, in_bd, out_bd] = this._slice(elem, circle);
-      new_elems.push(...elem.split(in_segs, out_segs));
+      this.split(elem, in_segs, out_segs);
       new_bd.push(...in_bd, ...out_bd);
     }
     if ( new_bd.length )
       if ( !new_bd[0].lock ) this._buildLock(new_bd[0]);
-    this.elements = new_elems;
   }
   mergeTrivialVertices() {
     for ( let elem of this.elements )
@@ -1417,6 +1933,19 @@ class SlidingSphere
                && this._cmp(seg.radius, seg.prev.radius) == 0
                && this._cmp(seg.circle.center, seg.prev.circle.center) == 0 )
             this._mergePrev(seg);
+  }
+  mergeUntwistableEdges() {
+    for ( let elem of this.elements ) {
+      while ( true ) {
+        let seg = Array.from(elem.boundaries)
+                       .find(seg => !this._isTwistable(seg)
+                                    && Array.from(seg.adj.keys())
+                                            .some(seg_ => seg_.affiliation!==elem));
+        if ( !seg )
+          break;
+        this.merge(elem, ...seg.adj.keys());
+      }
+    }
   }
   mergeTrivialEdges() {
     for ( let elem of this.elements ) {
@@ -1435,506 +1964,7 @@ class SlidingSphere
     }
   }
   twist(lock, theta) {
-    this._twist([[lock, theta]]);
-  }
-}
-
-class SlidingSphereAnalyzer
-{
-  _elementsOfSide(lock, side=+1) {
-    var bd = side > 0 ? lock.left : lock.right;
-    var elems = new Set(bd.map(seg => seg.affiliation));
-    for ( let elem of elems ) for ( let seg of elem.boundaries )
-      if ( !bd.includes(seg) ) for ( let adj_seg of seg.adj.keys() )
-        elems.add(adj_seg.affiliation);
-    return elems;
-  }
-  _twist(lock, theta, side=+1) {
-    theta = mod4(theta, lock.passwords.keys());
-    var matches = lock.passwords.get(theta);
-
-    // unlock
-    for ( let seg0 of lock.left )
-      for ( let [angle, seg, offset] of this._spin(seg0) )
-        if ( offset == 0 && angle != 0 && angle != 2 )
-          if ( seg.lock ) seg.lock.unlock();
-
-    // twist and shift passwords
-    var q = quaternion(lock.circle.center, Math.sign(side)*theta*Q);
-    for ( let elem of this._elementsOfSide(lock, side) )
-      for ( let seg of elem.boundaries )
-        q_mul(q, seg.orientation, seg.orientation);
-    lock.offset = mod4(lock.offset-theta);
-    var new_passwords = new Map();
-    for ( let [key, matches] of lock.passwords )
-      new_passwords.set(mod4(key-theta, [0]), matches);
-    lock.passwords = new_passwords;
-
-    // relink adjacent segments
-    for ( let segs of [lock.left, lock.right] )
-      for ( let seg0 of segs )
-        seg0.adj.clear();
-
-    var offset1 = 0, offset2 = 0;
-    for ( let seg1 of lock.left ) {
-      offset2 = 0;
-      for ( let seg2 of lock.right ) {
-        let offset = mod4(lock.offset-offset1-offset2, [4]);
-        if ( fzy_cmp(offset, seg1.length+seg2.length) < 0 )
-          seg1.adjacent(seg2, offset);
-        offset2 += seg2.length;
-      }
-      offset1 += seg1.length;
-    }
-
-    // lock
-    if ( matches ) {
-      for ( let [latch1, latch2] of matches ) {
-        let segment = latch1.segment || latch2.segment;
-        if ( segment ) {
-          if ( !segment.lock ) this._buildLock(segment);
-        } else {
-          let seg0 = lock.left[latch1.j-1] || lock.left[lock.left.length-1];
-          for ( let [angle, seg, offset] of this._spin(seg0) )
-            if ( offset == 0 && angle != 0 && angle != 2 )
-              if ( !seg.lock ) this._buildLock.unlock(seg);
-        }
-      }
-    }
+    this._twist([[lock, theta]], lock.dual.teeth[0].affiliation);
   }
 
-  /**
-   * Find profile of segments.
-   * Profile are loops of segments that are adjacent to boundaries of
-   * non-self-adjacent part.
-   * 
-   * @param {SphSeg[]} segments
-   * @returns {SphSeg[][]} Profile of segments.
-   */
-  _findProfile(segments) {
-    var uncovered = [];
-    for ( let seg of segments ) {
-      // find end points of covers between segments
-      let brackets = [];
-      for ( let [adj_seg, offset] of seg.adj ) if ( segments.includes(adj_seg) ) {
-        let [segment1, segment2] = [seg, adj_seg];
-
-        let offset1 = mod4(offset, [4, segment1.length]);
-        if ( offset1 <= segment1.length )
-          brackets.push([offset1, -1]);
-        let offset2 = mod4(offset, [4, segment2.length]);
-        if ( offset2 <= segment2.length )
-          brackets.push([0, +1]);
-        let offset1_ = mod4(offset-segment2.length, [0, segment1.length, offset1]);
-        if ( offset1_ != 0 && offset1_ < segment1.length )
-          brackets.push([offset1_, +1]);
-        let offset2_ = mod4(offset-segment1.length, [0, segment2.length, offset2]);
-        if ( offset2_ != 0 && offset2_ < segment2.length )
-          brackets.push([segment1.length, -1]);
-      }
-      brackets.unshift([0, -1]);
-      brackets.push([seg.length, +1]);
-      brackets.sort(fzy_cmp);
-
-      // find uncovered interval
-      console.assert(brackets.length % 2 == 0);
-      for ( let i=0; i<brackets.length; i+=2 ) {
-        let [th1, s1] = brackets[i];
-        let [th2, s2] = brackets[i+1];
-        console.assert(s1<0 && s2>0);
-
-        if ( fzy_cmp(th1, th2) != 0 )
-          uncovered.push([seg, th1, th2]);
-      }
-    }
-
-    // build segments of profile and connect them
-    var profile = [];
-    while ( uncovered.length ) {
-      let i = 0;
-      let ang_, seg_, th1_;
-      let loop = [];
-      do {
-        let [[seg, th1, th2]] = uncovered.splice(i, 1);
-        let length = fzy_cmp(th2-th1, seg.length);
-        let {radius, orientation} = seg.circle.shift(th2).complement();
-        let bd = new SphSeg({radius, length, orientation});
-        bd.adj.set(seg, th2);
-        loop.push(bd);
-
-        for ( let tick of this._spin(bd) ) {
-          if ( !segments.includes(tick[1]) )
-            break;
-          [ang_, seg_, th1_] = tick;
-        }
-        bd.angle = 4-ang_;
-        i = uncovered.findIndex(([seg, th1]) => seg === seg_ && fzy_cmp(th1, th1_) == 0);
-      } while ( i != -1 );
-      console.assert(fzy_cmp(loop[0].adj.get(seg_)-loop[0].length, th1_) == 0);
-
-      for ( let j=0; j<loop.length; j++ )
-        loop[j].connect(loop[j-1] || loop[loop.length-1]);
-      profile.push(loop);
-    }
-
-    return profile;
-  }
-  _parseNetworks(segments) {
-    // network = {
-    //   loops: [loop, ...],
-    //   profile: [loop, ...],
-    //   joints: [joint, ...],
-    // },
-    // joint = {
-    //   networks: [network, ...],
-    //   loops: [loop, ...],
-    //   side: +1/-1,
-    // },
-
-    // find all connected networks
-    var networks = [];
-    var lost = new Set(segments);
-    while ( lost.size ) {
-      let seg0 = lost.values().next().value;
-      let network = {loops:[], profile:[], joints:[]};
-
-      let queue = new Set([seg0]);
-      while ( queue.size ) {
-        let seg0 = queue.values().next().value;
-        let loop = [];
-        for ( let seg of this._walk(seg0) ) {
-          lost.delete(seg);
-          queue.delete(seg);
-          loop.push(seg);
-
-          for ( let adj_seg of seg.adj.keys() )
-            if ( lost.has(adj_seg) )
-              queue.add(adj_seg);
-        }
-
-        network.loops.push(loop);
-      }
-
-      networks.push(network);
-    }
-
-    // find profile of networks
-    for ( let network of networks ) {
-      network.profile = this._findProfile(network.loops.flatMap(loop => loop));
-    }
-
-    // determine relation between networks
-    var vertex0 = networks[0].loops[0][0].vertex;
-    var locals = new Set(networks.slice(1));
-    while ( locals.size ) {
-      // build circle pass through multiple networks (start from the first network)
-      let network = locals.values().next().value;
-      let vertex = network.loops[0][0].vertex;
-      let radius = 1;
-      let orientation = q_mul(q_align(vertex0, vertex), [-0.5, -0.5, -0.5, 0.5]);
-      let circle = new SphCircle({orientation, radius});
-
-      // find and sort meets
-      let meets = [];
-      for ( let network of networks ) for ( let loops of [network.loops, network.profile] )
-        for ( let loop of loops ) for ( let seg of loop )
-          for ( let meet of this._meetWith(seg, circle) ) {
-            meet.theta = mod4(meet.theta, meets.map(mmeet => mmeet[0].theta));
-
-            let i, sgn;
-            for ( i=0; i<meets.length; i++ ) {
-              sgn = Math.sign(meet.theta-meets[i][0].theta);
-              if ( sgn > 0 ) continue;
-              else           break;
-            }
-
-            if ( sgn == 0 )
-              meets[i].push(meet);
-            else if ( sgn < 0 )
-              meets.splice(i, 0, [meet]);
-            else
-              meets.push([meet]);
-          }
-      meets = meets.flatMap(mmeet => this.solveScattering(mmeet));
-      // make sure meeting starts from the first network
-      while ( meets[0].segment !== networks[0].loops[0][0] )
-        meets.push(meets.shift());
-
-      // build joints
-      for ( let i=0; i<meets.length; i++ )
-        if ( ["+0", "+-", "--"].includes(meets[i].type) ) {
-          let meet1 = meets[i];
-          let meet2 = meets[i+1] || meets[0];
-          console.assert(["-0", "+-", "--"].includes(meet2.type));
-
-          // find joint loops
-          let subjoint1, subjoint2;
-          for ( let network of networks ) {
-            let loop = network.loops.find(loop => loop.includes(meet1.segment));
-            if ( loop ) {
-              subjoint1 = [network, loop, +1];
-              break;
-            }
-            loop = network.profile.find(loop => loop.includes(meet1.segment));
-            if ( loop ) {
-              subjoint1 = [network, loop, -1];
-              break;
-            }
-          }
-          for ( let network of networks ) {
-            let loop = network.loops.find(loop => loop.includes(meet2.segment));
-            if ( loop ) {
-              subjoint2 = [network, loop, +1];
-              break;
-            }
-            loop = network.profile.find(loop => loop.includes(meet2.segment));
-            if ( loop ) {
-              subjoint2 = [network, loop, -1];
-              break;
-            }
-          }
-          console.assert(subjoint1 && subjoint2 && subjoint1[2]==subjoint2[2]);
-
-          if ( subjoint1[0] === subjoint2[0] ) {
-            console.assert(subjoint1[1] === subjoint2[1]);
-            continue;
-          }
-
-          // connect networks
-          let joint1 = subjoint1[0].joints.find(joint => joint.loops.includes(subjoint1[1]));
-          let joint2 = subjoint2[0].joints.find(joint => joint.loops.includes(subjoint2[1]));
-          console.assert(joint1&&joint2 ? joint1===joint2 : true);
-
-          let joint = joint1 || joint2 || {networks:[], loops:[], side:subjoint1[2]};
-          if ( !joint.loops.includes(subjoint1[1]) ) {
-            joint.networks.push(subjoint1[0]);
-            joint.loops.push(subjoint1[1]);
-            locals.delete(subjoint1[0]);
-          }
-          if ( !joint.loops.includes(subjoint2[1]) ) {
-            joint.networks.push(subjoint2[0]);
-            joint.loops.push(subjoint2[1]);
-            locals.delete(subjoint2[0]);
-          }
-          if ( !subjoint1[0].joints.includes(joint) )
-            subjoint1[0].joints.push(joint);
-          if ( !subjoint2[0].joints.includes(joint) )
-            subjoint2[0].joints.push(joint);
-        }
-    }
-  }
-  _separateConnectedPart(segments) {
-    // ...
-    var networks = this._parseNetworks(segments);
-
-    // separate connected part
-    var joints = new Set(networks.flatMap(network => network.joints)
-                                 .filter(joint => joint.side > 0));
-    var loops = new Set(networks.flatMap(network => network.loops));
-    for ( let joint of joints ) for ( let loop of joint.loops )
-      loops.delete(loop);
-    var res = [];
-    for ( let joint of joints )
-      res.push(joint.loops.flatMap(loop => loop));
-    for ( let loop of loops )
-      res.push(loop);
-    return res;
-  }
-
-  /**
-   * Make tick at end point of segment.
-   * 
-   * @param {SphSeg} prev_seg
-   * @returns {object} Tick at `prev_seg.next.vertex`, which have value
-   *   `{segment, subticks, is_free}`, and `subticks = [{angle, segment}, ...]`:
-   *   `segment` is next segment along extending circle of this segment;
-   *   `subtick.angle` is rolling angle, with unit of quadrant, range in (0, 2);
-   *   `subtick.segment` is segment of subtick, which has vertex at tick center;
-   *   `is_free` indicate subticks are free or not.
-   */
-  _makeTick(prev_seg) {
-    var [segment0, offset0] = this._jump(prev_seg, prev_seg.length, -1);
-
-    var subticks = [], pre = [], post = [];
-    var angle, segment, offset;
-    for ( [angle, segment, offset] of this._spin(segment0, offset0) ) {
-      let side = fzy_cmp([angle, segment.radius-1], [2, 1-segment0.radius]);
-      if ( side == 0 ) break;
-      if ( side >  0 ) return;
-
-      if ( angle == 0 )
-        pre.push(segment);
-      else if ( angle == 2 )
-        post.push(segment);
-      else
-        subticks.push({angle, segment});
-    }
-
-    var is_free = false;
-    for ( let seg1 of pre )
-      if ( post.find(seg2 => fzy_cmp(2-seg1.radius, seg2.radius) == 0) ) {
-        is_free = true;
-        break;
-      }
-
-    return {segment, subticks, is_free};
-  }
-  _detectLatches(ticks) {
-    var latches = []; // [{length, center, segment, i, j}, ...]
-
-    // find latches (center of possible intercuting circle)
-    // find all free latches
-    var free_ind = ticks.flatMap(({is_free}, i) => is_free ? [i] : []);
-    for ( let i of free_ind ) for ( let j of free_ind ) if ( i < j ) {
-      let length = ticks[j].theta - ticks[i].theta;
-      let center = mod4(ticks[i].theta+length/2);
-
-      switch ( fzy_cmp(length, 2) ) {
-        case -1:
-          latches.push({length, center, i, j});
-          break;
-
-        case +1:
-          length = 4 - length;
-          center = mod4(center+2);
-          [i, j] = [j, i];
-          latches.push({length, center, i, j});
-          break;
-
-        case 0:
-          length = 2;
-          latches.push({length, center, i, j});
-          center = mod4(center+2);
-          [i, j] = [j, i];
-          latches.push({length, center, i, j});
-          break;
-      }
-    }
-
-    // find normal latches
-    var normal_ind = ticks.flatMap(({is_free}, i) => is_free ? [] : [i]);
-    for ( let j of normal_ind ) {
-      let radius0 = ticks[j].segment.radius;
-
-      while ( ticks[j].subticks.length ) {
-        let subtickj = ticks[j].subticks.pop();
-        let [length] = this._leaf(subtickj.angle, radius0, subtickj.segment.radius);
-        let center = mod4(ticks[j].theta-length/2);
-
-        let i = ticks.findIndex(tick => mod4(ticks[j].theta-tick.theta, [length]) == length);
-        if ( i == -1 ) continue;
-        if ( !ticks[i].is_free ) {
-          let x = ticks[i].subticks
-            .findIndex(subticki => fzy_cmp([2-subticki.angle, 2-subticki.segment.radius],
-                                           [  subtickj.angle,   subtickj.segment.radius]) == 0);
-          if ( x == -1 ) continue;
-          ticks[i].subticks.splice(x, 1);
-        }
-
-        let segment = subtickj.segment;
-        switch ( fzy_cmp([length, segment.radius], [2, 1]) ) {
-          case -1:
-            latches.push({length, center, segment, i, j});
-            break;
-
-          case +1:
-            length = 4 - length;
-            center = mod4(center+2);
-            [segment] = this._jump(segment, 0, +1);
-            [i, j] = [j, i];
-            latches.push({length, center, segment, i, j});
-            break;
-
-          case 0:
-            length = 2;
-            latches.push({length, center, segment, i, j});
-            center = mod4(center+2);
-            [segment] = this._jump(segment, 0, +1);
-            [i, j] = [j, i];
-            latches.push({length, center, segment, i, j});
-            break;
-        }
-      }
-    }
-
-    return latches;
-  }
-  _buildLock(segment) {
-    var [segment2, offset] = segment.adj.entries().next().value;
-    var ticks1 = [], ticks2 = [];
-    for ( let [seg0, ticks] of [[segment, ticks1], [segment2, ticks2]] ) {
-
-      let seg = seg0;
-      do {
-        let tick = this._makeTick(seg);
-        if ( !tick ) return;
-        ticks.push(tick);
-        seg = tick.segment;
-      } while ( seg != seg0 );
-      ticks.unshift(ticks.pop());
-
-      let full_len = ticks.reduce((acc, tick) => (tick.theta=acc)+tick.segment.length, 0);
-      console.assert(fzy_cmp(full_len, 4) == 0);
-    }
-
-    var lock = new SphLock();
-    lock.offset = offset;
-    lock.left = ticks1.map(tick => tick.segment);
-    lock.right = ticks2.map(tick => tick.segment);
-    var latches1 = this._detectLatches(ticks1);
-    var latches2 = this._detectLatches(ticks2);
-
-    lock.passwords = new Map();
-    var keys = new Set([0]);
-    for ( let latch1 of latches1 ) for ( let latch2 of latches2 )
-      if ( fzy_cmp([latch1.length, latch1.segment.radius],
-                   [latch2.length, latch2.segment.radius]) == 0 ) {
-        let key = mod4(offset-latch1.center-latch2.center, keys);
-        keys.add(key);
-        if ( !lock.passwords.has(key) )
-          lock.passwords.set(key, []);
-        lock.passwords.get(key).push([latch1, latch2]);
-      }
-
-    lock.lock();
-
-    return lock;
-  }
-  _decipher(lock) {
-    var ticks1 = [], ticks2 = [];
-    for ( let [segs, ticks] of [[lock.left, ticks1], [lock.right, ticks2]] ) {
-
-      for ( let i=0; i<segs.length; i++ ) {
-        let seg = segs[i-1] || segs[segs.length-1];
-        let tick = this._makeTick(seg);
-        console.assert(tick && tick.segment === segs[i]);
-        ticks.push(tick);
-      }
-
-      let full_len = ticks.reduce((acc, tick) => (tick.theta=acc)+tick.segment.length, 0);
-      console.assert(fzy_cmp(full_len, 4) == 0);
-    }
-
-    var latches1 = this._detectLatches(ticks1);
-    var latches2 = this._detectLatches(ticks2);
-
-    lock.passwords = new Map();
-    var keys = new Set([0]);
-    for ( let latch1 of latches1 ) for ( let latch2 of latches2 ) {
-      let test;
-      if ( latch1.segment.radius !== undefined && latch2.segment.radius !== undefined )
-        test = fzy_cmp([latch1.length, latch1.segment.radius],
-                       [latch2.length, latch2.segment.radius]) == 0;
-      else
-        test = fzy_cmp(latch1.length, latch2.length) == 0;
-
-      if ( test ) {
-        let key = mod4(lock.offset-latch1.center-latch2.center, keys);
-        keys.add(key);
-        if ( !lock.passwords.has(key) )
-          lock.passwords.set(key, []);
-        lock.passwords.get(key).push([latch1, latch2]);
-      }
-    }
-  }
 }
