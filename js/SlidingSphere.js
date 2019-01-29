@@ -296,10 +296,9 @@ class SphElem
         seg.affiliation = undefined;
   }
   split(...groups) {
-    var type = Object.getPrototypeOf(this).constructor;
     var elements = [];
     for ( let group of groups ) if ( group.length ) {
-      let elem = new type();
+      let elem = new SphElem();
       this.withdraw(...group);
       elem.accept(...group);
       elements.push(elem);
@@ -385,20 +384,7 @@ class SlidingSphere
 {
   constructor(tol=1e-5) {
     this.tol = tol;
-    this.elements = new Set([this.createElem()]);
-  }
-
-  createCircle(...args) {
-    return new SphCircle(...args);
-  }
-  createSeg(...args) {
-    return new SphSeg(...args);
-  }
-  createElem(...args) {
-    return new SphElem(...args);
-  }
-  createLock(...args) {
-    return new SphLock(...args);
+    this.elements = new Set([new SphElem()]);
   }
 
   /**
@@ -770,7 +756,7 @@ class SlidingSphere
       throw new Error("out of range of interpolation");
 
     // make next segment started from point of interpolation
-    var next_seg = this.createSeg({
+    var next_seg = new SphSeg({
       length: seg.length - theta,
       angle: 2,
       radius: seg.radius,
@@ -1138,7 +1124,7 @@ class SlidingSphere
       return false;
 
     var orientation = q_mul(q_align(vertex, point), quaternion([0,1,0], radius*Q));
-    var circle = this.createCircle({orientation, radius});
+    var circle = new SphCircle({orientation, radius});
 
     var meets = Array.from(boundaries)
                      .flatMap(seg => Array.from(this._meetWith(seg, circle)));
@@ -1158,7 +1144,7 @@ class SlidingSphere
    *   boundaries of both sides.
    */
   _slice(elem, circle) {
-    var circle_ = this.createCircle(circle).complement();
+    var circle_ = new SphCircle(circle).complement();
 
     // INTERPOLATE
     // find meet points and sort by `theta`
@@ -1227,10 +1213,10 @@ class SlidingSphere
 
         } else {
           // make segments between two meets
-          let in_seg  = this.createSeg({radius:circle.radius,  length, angle:4,
-                                        orientation:q_spin(circle.orientation, meet1.theta*Q)});
-          let out_seg = this.createSeg({radius:circle_.radius, length, angle:4,
-                                        orientation:q_spin(circle_.orientation, -meet2.theta*Q)});
+          let in_seg  = new SphSeg({radius:circle.radius,  length, angle:4,
+                                    orientation:q_spin(circle.orientation, meet1.theta*Q)});
+          let out_seg = new SphSeg({radius:circle_.radius, length, angle:4,
+                                    orientation:q_spin(circle_.orientation, -meet2.theta*Q)});
           in_seg.connect(out_seg);
           out_seg.connect(in_seg);
           in_seg.adjacent(out_seg, length);
@@ -1259,10 +1245,10 @@ class SlidingSphere
 
       if ( inside ) {
 
-        let in_seg  = this.createSeg({length:4, angle:2, radius:circle.radius,
-                                      orientation:circle.orientation});
-        let out_seg = this.createSeg({length:4, angle:2, radius:circle_.radius,
-                                      orientation:circle_.orientation});
+        let in_seg  = new SphSeg({length:4, angle:2, radius:circle.radius,
+                                  orientation:circle.orientation});
+        let out_seg = new SphSeg({length:4, angle:2, radius:circle_.radius,
+                                  orientation:circle_.orientation});
         in_seg.connect(in_seg);
         out_seg.connect(out_seg);
         in_seg.adjacent(out_seg, 4);
@@ -1398,7 +1384,7 @@ class SlidingSphere
       let [seg, th1, th2] = interval;
       let length = this._snap(th2-th1, [seg.length]);
       let {radius, orientation} = seg.circle.shift(th2).complement();
-      let bd = this.createSeg({radius, length, orientation});
+      let bd = new SphSeg({radius, length, orientation});
       bd.adj.set(seg, th2);
       interval.push(bd);
     }
@@ -1475,7 +1461,7 @@ class SlidingSphere
       let vertex = network.loops[0][0].vertex;
       let radius = 1;
       let orientation = q_mul(q_align(vertex0, vertex), [-0.5, -0.5, -0.5, 0.5]);
-      let circle = this.createCircle({orientation, radius});
+      let circle = new SphCircle({orientation, radius});
   
       // find and sort meets
       let meets = [];
@@ -1604,8 +1590,8 @@ class SlidingSphere
     var right = this._full(this._ski(seg_));
     if ( !right ) return;
 
-    var left_lock = this.createLock();
-    var right_lock = this.createLock();
+    var left_lock = new SphLock();
+    var right_lock = new SphLock();
     left_lock.lock(left);
     right_lock.lock(right);
     left_lock.pairWith(right_lock, offset);
@@ -1913,7 +1899,7 @@ class SlidingSphere
     return this;
   }
   slice(center, radius) {
-    var circle = this.createCircle({radius, orientation:q_align(center)});
+    var circle = new SphCircle({radius, orientation:q_align(center)});
     var new_bd = [];
     var elements = new Set(this.elements);
     for ( let elem of elements ) {
@@ -1966,5 +1952,4 @@ class SlidingSphere
   twist(lock, theta) {
     this._twist([[lock, theta]], lock.dual.teeth[0].affiliation);
   }
-
 }

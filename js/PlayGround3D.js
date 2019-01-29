@@ -63,6 +63,14 @@ class Display
       }
     }, false);
 
+    this.dom.addEventListener("wheel", event => {
+      let y = -10*Math.sign(event.deltaY);
+      let z = this.camera.position.z - y*this.zoomSpeed;
+      if ( this.distanceRange[0] < z && z < this.distanceRange[1] )
+        this.camera.position.z = z;
+      event.preventDefault();
+    });
+
     // animation
     {
       this.animations = [];
