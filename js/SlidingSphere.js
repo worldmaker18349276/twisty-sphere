@@ -1907,7 +1907,7 @@ class SlidingSphere
   }
 
   _analyze(loops) {
-    var config = SphConfig();
+    var config = new SphConfig();
     var prototype = [];
 
     // build types
@@ -1945,14 +1945,15 @@ class SlidingSphere
       }
       let type, ind_loop;
       if ( sgn == 0 ) {
-        ind_loop = type.count;
         type = config.types[ind_type];
+        ind_loop = type.count;
         type.count++;
       } else {
         ind_loop = 0;
         type = {count:1, fold, patch};
         if ( fold > 1 )
-          type.center = normalize(q_mul(loop[offsets[1]], q_inv(loop[offsets[0]])));
+          type.center = normalize(q_mul(loop[offsets[1]].orientation,
+                                        q_inv(loop[offsets[0]].orientation)));
         config.types.splice(ind_type, 0, type);
         prototype.splice(ind_type, 0, []);
       }
@@ -2029,7 +2030,7 @@ class SlidingSphere
 
     return prototype;
   }
-  _crawl(config, [i0, j0, k0]) {
+  *_crawl(config, [i0, j0, k0]) {
     var perm = config.types.map(() => []);
     perm[i0].push([j0, k0]);
     // i,p;q,l => i,j;k,l
@@ -2087,7 +2088,8 @@ class SlidingSphere
   _sortConfig(config) {
     var type = config.types[0];
     var length = config.adjacencies.length;
-    var buffer = [], crawler = this._crawl(config, [0, 0, 0]);
+    var buffer = Array(length).fill([[1,0,0,0], [1,0,0,0], 4]);
+    var crawler;
     var permutations = [];
 
     // find the smallest adjacencies table
@@ -2098,8 +2100,8 @@ class SlidingSphere
         // find minimal lazy array (lexical order)
         let sgn;
         for ( let t=0; t<length; t++ ) {
-          let val  = buffer [t] || (buffer [t] = crawler .next());
-          let val_ = buffer_[t] || (buffer_[t] = crawler_.next());
+          let val  = buffer [t] || (buffer [t] = crawler .next().value);
+          let val_ = buffer_[t] || (buffer_[t] = crawler_.next().value);
           sgn = this._cmp(val, val_);
           if ( sgn != 0 )
             break;
@@ -2202,7 +2204,7 @@ class SlidingSphere
 
 class SphConfig
 {
-  constructor({types=[], adjacencies=[]}) {
+  constructor({types=[], adjacencies=[]}={}) {
     this.types = types;
     this.adjacencies = adjacencies;
     // SphConfig = {
@@ -2223,9 +2225,9 @@ class SphConfig
     //   ...
     // ]
     var [i1, i2, i3=0, i4=0] = index;
-    var {fold} = this.types[i1];
+    var len = this.types[i1].patch.length;
     var seg = prototype[i1][i2];
-    for ( var i=i3*fold+i4; i>0; i-- )
+    for ( var i=i3*len+i4; i>0; i-- )
       seg = seg.next;
     return seg;
   }
