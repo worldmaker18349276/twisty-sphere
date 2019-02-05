@@ -234,7 +234,7 @@ class SphSeg
     this.length = length;
     this.angle = angle;
     this.radius = radius;
-    this.orientation = orientation.slice(0);
+    this.orientation = orientation && orientation.slice(0);
 
     this.next = undefined;
     this.prev = undefined;
@@ -542,6 +542,34 @@ class SlidingSphere
     console.assert(!Number.isNaN(length2) && length2 > 0);
   
     return [length1, length2];
+  }
+  // find circle passing through three points
+  _heart(v1, v2, v3) {
+    var center;
+    if ( this._cmp(angleTo(v1, v2)/Q, 0) == 0 ) {
+      center = v1.map((x,i) => x+v3[i]);
+
+    } else if ( this._cmp(angleTo(v2, v3)/Q, 0) == 0 ) {
+      center = v1.map((x,i) => x+v2[i]);
+
+    } else if ( this._cmp(angleTo(v3, v1)/Q, 0) == 0 ) {
+      center = v1.map((x,i) => x+v2[i]);
+
+    } else {
+      let c1 = rotate([1,0,0], q_align(v1.map((x,i) => x+v2[i]), v2));
+      let c2 = rotate([1,0,0], q_align(v3.map((x,i) => x+v2[i]), v2));
+      let dis = angleTo(c1, c2)/Q;
+      let [,len,] = this._intersect(1, 1, dis);
+      center = rotate([Math.cos(len*Q/2), -Math.sin(len*Q/2), 0], q_align(c1, c2));
+
+    }
+
+    var radius = angleTo(center, v1)/Q;
+    var orientation = q_align(center, v1);
+    console.assert(this._cmp(angleTo(center, v1)/Q, radius) == 0);
+    console.assert(this._cmp(angleTo(center, v2)/Q, radius) == 0);
+    console.assert(this._cmp(angleTo(center, v3)/Q, radius) == 0);
+    return new SphCircle({radius, orientation});
   }
 
   /**
@@ -1878,6 +1906,224 @@ class SlidingSphere
     return passwords;
   }
 
+  _analyze(loops) {
+    var config = SphConfig();
+    var prototype = [];
+
+    // build types
+    for ( let loop of loops ) {
+      let keys = loop.map(({length, radius, angle}) => [length, radius, angle]);
+      // fix rotation
+      let keyring = keys.slice();
+      let offsets = [];
+      for ( let i=0,len=keys.length; i<len; i++ ) {
+        switch ( this._cmp(keys, keyring) ) {
+          case 0:
+            offsets.push(i);
+            break;
+
+          case -1:
+            keyring = keys.slice();
+            offsets = [i];
+            break;
+        }
+        keys.push(keys.shift());
+      }
+
+      // make patch
+      let patch = keyring.slice(0, (offsets[1]-offsets[0]) || keyring.length);
+      let fold = keyring.length / patch.length;
+      console.assert(Number.isInteger(fold));
+      console.assert(offsets.every((i, n) => i == offsets[0]+patch.length*n));
+
+      // determine type
+      let ind_type, sgn = -1;
+      for ( ind_type=0; ind_type<config.types.length; ind_type++ ) {
+        sgn = this._cmp(config.types[ind_type].patch, patch);
+        if ( sgn == 0 || sgn > 0 )
+          break;
+      }
+      let type, ind_loop;
+      if ( sgn == 0 ) {
+        ind_loop = type.count;
+        type = config.types[ind_type];
+        type.count++;
+      } else {
+        ind_loop = 0;
+        type = {count:1, fold, patch};
+        if ( fold > 1 )
+          type.center = normalize(q_mul(loop[offsets[1]], q_inv(loop[offsets[0]])));
+        config.types.splice(ind_type, 0, type);
+        prototype.splice(ind_type, 0, []);
+      }
+
+      prototype[ind_type].push(loop[offsets[0]]);
+    }
+
+    // determine indices of segments
+    for ( let ind_type=0; ind_type<prototype.length; ind_type++ )
+      for ( let ind_loop=0; ind_loop<prototype[ind_type].length; ind_loop++ ) {
+        let len = config.types[ind_type].patch.length;
+        let i = 0;
+        for ( let seg of this._walk(prototype[ind_type][ind_loop]) ) {
+          let ind_rot = Math.floor(i / len);
+          let ind_num = i % len;
+          seg.index = [ind_type, ind_loop, ind_rot, ind_num];
+          i++;
+        }
+      }
+
+    // build adjacencies
+    for ( let loop of loops )
+      for ( let seg1 of loop )
+        for ( let [seg2, offset] of seg1.adj )
+          if ( this._cmp(seg1.index, seg2.index) < 0 )
+            config.adjacencies.push([seg1.index, seg2.index, offset]);
+
+    return [config, prototype];
+  }
+  _assemble(config) {
+    // build segments
+    var prototype = config.types.map(() => []);
+    for ( let i=0; i<config.types.length; i++ ) for ( let j=0; j<count; j++ ) {
+      let {count, fold, patch} = config.types[i];
+      let loop;
+      for ( let k=0; k<fold; k++ ) for ( let l=0; l<patch.length; l++ ) {
+        let [length, radius, angle] = patch[l];
+        loop.push(new SphSeg({length, radius, angle}));
+      }
+      prototype[i][j] = loop[0];
+      loop.reduce((seg1, seg2) => (seg1.connect(seg2), seg2), loop[loop.length-1]);
+    }
+
+    // set adjacencies
+    for ( let [index1, index2, offset] of config.adjacencies ) {
+      let seg1 = config.get(index1, prototype);
+      let seg2 = config.get(index2, prototype);
+      seg1.adjacent(seg2, offset);
+    }
+
+    // fix orientation
+    prototype[0][0].orientation = [0,0,0,1];
+    var located = new Set([prototype[0][0]]);
+    for ( let seg of located ) {
+      let compass = seg.orientation.slice();
+      let walker = this._walk(seg, compass);
+      walker.next(); walker.next();
+
+      if ( !seg.next.orientation )
+        seg.next.orientation = compass;
+      console.assert(this._cmp(seg.next.orientation, compass) == 0);
+      located.add(seg.next);
+
+      for ( let [adj_seg, offset] of seg.adj ) {
+        let compass = seg.orientation.slice();
+        this._jump(seg, offset, -1, compass);
+
+        if ( !adj_seg.orientation )
+          adj_seg.orientation = compass;
+        console.assert(this._cmp(adj_seg.orientation, compass) == 0);
+        located.add(adj_seg);
+      }
+    }
+
+    return prototype;
+  }
+  _crawl(config, [i0, j0, k0]) {
+    var perm = config.types.map(() => []);
+    perm[i0].push([j0, k0]);
+    // i,p;q,l => i,j;k,l
+
+    var adjacencies = new Set(config.adjacencies);
+    var queue = [[i0, 0, j0, k0]];
+    for ( let [i, p, j, k] of queue ) {
+      let N = config.types[i].fold;
+
+      // find adjacent segment
+      let adj = [];
+      for ( let adjacency of adjacencies ) {
+        let [index1, index2, offset] = adjacency;
+
+        // determine index1
+        let [i_, j_, k_, l_] = index1;
+        if ( i_ != i || j_ != j ) {
+          [index2, index1] = [index1, index2];
+          [i_, j_, k_, l_] = index1;
+        }
+        if ( i_ != i || j_ != j )
+          continue;
+        let q_ = (k_-k+N)%N;
+        adj.push([q_, l_, offset, index2]);
+        adjacencies.delete(adjacency);
+      }
+      adj.sort(this._cmp.bind(this));
+
+      for ( let [q1, l1, offset, [i2, j2, k2, l2]] of adj ) {
+        // determine index2
+        let N2 = config.types[i2].fold;
+        let p2 = perm[i2].findIndex(ind => ind[0] == j2);
+        let q2;
+        if ( p2 != -1 ) {
+          let [j2_, k2_] = perm[i2][p2];
+          q2 = (k2-k2_+N2)%N2;
+        } else {
+          perm[i2].push([j2, k2]);
+          p2 = perm[i2].length-1;
+          q2 = 0;
+          queue.push([i2, p2, j2, k2]);
+        }
+
+        // build new adjacencies table
+        let index1 = [i , p , q1, l1];
+        let index2 = [i2, p2, q2, l2];
+        if ( this._cmp(index1, index2) > 0 )
+          [index2, index1] = [index1, index2];
+        yield [index1, index2, offset];
+      }
+    }
+    return perm;
+  }
+  // sort config by adjacencies table and return possible permutations
+  _sortConfig(config) {
+    var type = config.types[0];
+    var length = config.adjacencies.length;
+    var buffer = [], crawler = this._crawl(config, [0, 0, 0]);
+    var permutations = [];
+
+    // find the smallest adjacencies table
+    for ( let ind_loop=0; ind_loop<type.count; ind_loop++ )
+      for ( let ind_rot=0; ind_rot<type.fold; ind_rot++ ) {
+        let buffer_ = [], crawler_ = this._crawl(config, [0, ind_loop, ind_rot]);
+
+        // find minimal lazy array (lexical order)
+        let sgn;
+        for ( let t=0; t<length; t++ ) {
+          let val  = buffer [t] || (buffer [t] = crawler .next());
+          let val_ = buffer_[t] || (buffer_[t] = crawler_.next());
+          sgn = this._cmp(val, val_);
+          if ( sgn != 0 )
+            break;
+        }
+        if ( sgn > 0 ) {
+          [buffer, crawler] = [buffer_, crawler_];
+          permutations = [];
+        } else if ( sgn == 0 ) {
+          let res = crawler_.next();
+          console.assert(res.done);
+          permutations.push(res.value);
+        }
+      }
+
+    for ( let t=0; t<length; t++ )
+      if ( !buffer[t] ) buffer[t] = crawler.next();
+    let res = crawler.next();
+    console.assert(res.done);
+    permutations.push(res.value);
+
+    config.adjacencies = buffer;
+    return permutations;
+  }
+
   merge(element0, ...elements) {
     console.assert(this.elements.has(element0));
     for ( let elem of elements ) if ( elem !== element0 ) {
@@ -1951,5 +2197,62 @@ class SlidingSphere
   }
   twist(lock, theta) {
     this._twist([[lock, theta]], lock.dual.teeth[0].affiliation);
+  }
+}
+
+class SphConfig
+{
+  constructor({types=[], adjacencies=[]}) {
+    this.types = types;
+    this.adjacencies = adjacencies;
+    // SphConfig = {
+    //   types: [
+    //     {count, fold, patch: [[length, radius, angle], ...]},
+    //     ...
+    //   ],
+    //   adjacencies: [
+    //     [index1, index2, offset],
+    //     ...
+    //   ]
+    // }
+  }
+  get(index, prototype) {
+    // index = "type,loop;rotation,number"
+    // prototype = [
+    //   [[seg1, seg2, seg3], [seg4, seg4], ...],
+    //   ...
+    // ]
+    var [i1, i2, i3=0, i4=0] = index;
+    var {fold} = this.types[i1];
+    var seg = prototype[i1][i2];
+    for ( var i=i3*fold+i4; i>0; i-- )
+      seg = seg.next;
+    return seg;
+  }
+  apply(param, ...perms) {
+    // permutation = [["l1;r1", "l2;r2", "l3;r3"], ["l4;r4", "l5;r5"], ...]
+    for ( let perm of perms ) {
+      let param_ = param.map(() => []);
+      for ( let i=0; i<perm.length; i++ )
+        for ( let j=0; j<perm[i].length; j++ ) {
+          let [dj, dk] = perm[i][j];
+          let [j_, k_] = param[i][dj];
+          k_ = (k_+dk)%config.types[i].fold;
+          param_[i][j] = [j_, k_];
+        }
+      param = param_;
+    }
+    return param;
+  }
+  inverse(perm) {
+    var perm_inv = perm.map(() => []);
+    for ( let i=0; i<perm.length; i++ )
+      for ( let j=0; j<perm[i].length; j++ ) {
+        let [dj, dk] = perm[i][j];
+        let N = config.types[i].fold;
+        let k = (N-dk)%N;
+        perm_inv[i][dj] = [j, k];
+      }
+    return perm_inv;
   }
 }
