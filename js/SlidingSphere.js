@@ -119,7 +119,7 @@ function rotate([x, y, z, w], q, out=[]) {
 }
 function q_align([x, y, z], v_xz, out=[]) {
   var theta = Math.atan2(y, x);
-  var phi = Math.acos(z);
+  var phi = Math.atan2(Math.sqrt(x*x+y*y), z);
   var n = [-Math.sin(theta), Math.cos(theta), 0];
   quaternion(n, phi, out);
   if ( v_xz !== undefined ) {
