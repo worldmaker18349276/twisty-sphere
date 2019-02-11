@@ -276,24 +276,6 @@ class Display
 }
 
 
-function *colors() {
-  while ( true ) {
-    // ref: https://sashat.me/2017/01/11/list-of-20-simple-distinct-colors/
-    yield *["#e6194B", "#3cb44b",
-            "#ffe119", "#4363d8",
-            "#f58231", "#911eb4",
-            "#42d4f4", "#f032e6",
-            "#bfef45", "#fabebe",
-            "#469990", "#e6beff",
-            "#9A6324", "#fffac8",
-            "#800000", "#aaffc3",
-            "#808000", "#ffd8b1",
-            "#000075", "#a9a9a9",
-            "#ffffff", "#000000"];
-  }
-}
-var cloop = colors();
-
 class SlidingSphereBasic extends SlidingSphere
 {
   constructor(id, width, height) {
@@ -302,16 +284,25 @@ class SlidingSphereBasic extends SlidingSphere
     this.display = new Display(id, width, height);
     this.ball = this.buildBallView(0.999);
     this.display.add(this.ball);
-    this.view = [];
 
     this.gui = new dat.GUI();
+    this.cmd = {
+      ["merge elements"]: () => this.mergeElemCmd(),
+      ["merge vertex"]: () => this.mergeVertexCmd(),
+      ["interpolate"]: () => this.interpolateCmd(),
+      ["merge edges"]: () => this.mergeEdgeCmd(),
+      ["align segments"]: () => this.alignSegCmd(),
+      ["slice"]: () => this.sliceCmd(),
+    };
+    for ( let name in this.cmd )
+      this.gui.add(this.cmd, name);
 
     // build selection system
     this.preselection = undefined;
     this.selections = [];
 
-    this.selectOn = "segment";
-    this.gui.add(this, "selectOn", ["segment", "element", "lock"]);
+    this["select on"] = "segment";
+    this.gui.add(this, "select on", ["segment", "element", "lock"]);
 
     this.sels_gui = this.gui.addFolder("selections");
     this.sels_gui.open();
@@ -322,7 +313,7 @@ class SlidingSphereBasic extends SlidingSphere
 
     this.hover_handler = event => {
       if ( event.type == "mouseenter" ) {
-        switch ( this.selectOn ) {
+        switch ( this["select on"] ) {
           case "segment":
             this.preselection = event.target.userData.host;
             break;
@@ -339,14 +330,28 @@ class SlidingSphereBasic extends SlidingSphere
       }
     };
     this.select_handler = event => {
-      if ( this.preselection === undefined )
-        this.select();
-      else
-        this.select(this.preselection, event.originalEvent.ctrlKey ? "toggle" : "select");
+      this.select(this.preselection, event.originalEvent.ctrlKey ? "toggle" : "select");
     };
     this.ball.addEventListener("click", this.select_handler);
 
     this.display.animate(this.hoverRoutine());
+
+    this.colors = (function *colors() {
+      while ( true ) {
+        // ref: https://sashat.me/2017/01/11/list-of-20-simple-distinct-colors/
+        yield *["#e6194B", "#3cb44b",
+                "#ffe119", "#4363d8",
+                "#f58231", "#911eb4",
+                "#42d4f4", "#f032e6",
+                "#bfef45", "#fabebe",
+                "#469990", "#e6beff",
+                "#9A6324", "#fffac8",
+                "#800000", "#aaffc3",
+                "#808000", "#ffd8b1",
+                "#000075", "#a9a9a9",
+                "#ffffff", "#000000"];
+      }
+    })();
   }
 
   select(target, mode="select") {
@@ -444,6 +449,15 @@ class SlidingSphereBasic extends SlidingSphere
     proxy.object = () => console.log(seg);
     this.sel_ctrl.push(this.sel_gui.add(proxy, "object"));
 
+    proxy.color = seg.view.children[0].material.color.getHex();
+    var clr_ctrl = this.sel_gui.addColor(proxy, "color");
+    clr_ctrl.onChange(color => {
+      for ( let seg_ of seg.affiliation.boundaries )
+        for ( let obj of seg_.view.children )
+          obj.material.color.set(color);
+    });
+    this.sel_ctrl.push(clr_ctrl);
+
     proxy.arc = seg.arc;
     proxy.radius = seg.radius;
     proxy.angle = seg.angle;
@@ -469,6 +483,16 @@ class SlidingSphereBasic extends SlidingSphere
     var proxy = {};
     proxy.object = () => console.log(elem);
     this.sel_ctrl.push(this.sel_gui.add(proxy, "object"));
+
+    var seg0 = elem.boundaries.values().next().value;
+    proxy.color = seg0.view.children[0].material.color.getHex();
+    var clr_ctrl = this.sel_gui.addColor(proxy, "color");
+    clr_ctrl.onChange(color => {
+      for ( let seg of elem.boundaries )
+        for ( let obj of seg.view.children )
+          obj.material.color.set(color);
+    });
+    this.sel_ctrl.push(clr_ctrl);
 
     var n = 0;
     for ( let seg of elem.boundaries )
@@ -571,35 +595,55 @@ class SlidingSphereBasic extends SlidingSphere
       geo.rotateX(Q);
       geo.applyMatrix(new THREE.Matrix4().makeRotationFromQuaternion(q));
       
-      let mat = new THREE.MeshBasicMaterial({color, transparent:true, opacity:0});
+      let mat = new THREE.MeshBasicMaterial({color, transparent:true, opacity:0,
+                                             depthWrite:false});
       var holder = new THREE.Mesh(geo, mat);
       holder.userData.hoverable = true;
       holder.name = "holder";
       holder.userData.host = seg;
+      holder.addEventListener("mouseenter", this.hover_handler);
+      holder.addEventListener("mouseleave", this.hover_handler);
+      holder.addEventListener("click", this.select_handler);
     }
+    var obj = new THREE.Object3D();
+    obj.add(arc, dash, ang, holder);
+    obj.userData.host = seg;
+    seg.view = obj;
 
-    seg.view = [arc, dash, ang, holder];
     return seg.view;
   }
-  draw() {
-    for ( let obj of this.view )
-      this.display.remove(obj);
-    this.view = [];
-
-    for ( let elem of this.elements ) {
-      elem.color = cloop.next().value;
-      for ( let seg of elem.boundaries ) {
-        this.view.push(...this.buildSegView(seg, elem.color));
-        let holder = seg.view[3];
-        holder.userData.hoverable = true;
-        holder.addEventListener("mouseenter", this.hover_handler);
-        holder.addEventListener("mouseleave", this.hover_handler);
-        holder.addEventListener("click", this.select_handler);
+  draw(target, color) {
+    if ( target === undefined ) {
+      for ( let elem of this.elements ) {
+        let color = this.colors.next().value;
+        this.draw(elem, color);
       }
-    }
 
-    for ( let obj of this.view )
-      this.display.add(obj);
+    } else if ( target instanceof SphElem ) {
+      color = color || this.colors.next().value;
+      for ( let seg of target.boundaries )
+        this.draw(seg, color);
+
+    } else if ( target instanceof SphSeg ) {
+      color = color || this.colors.next().value;
+      this.buildSegView(target, color);
+      this.display.add(target.view);
+
+    }
+  }
+  erase(target) {
+    if ( target === undefined ) {
+      for ( let elem of this.elements )
+        this.erase(elem);
+
+    } else if ( target instanceof SphElem ) {
+      for ( let seg of target.boundaries )
+        this.erase(seg);
+
+    } else if ( target instanceof SphSeg ) {
+      this.display.remove(target.view);
+
+    }
   }
 
   *hoverRoutine() {
@@ -622,13 +666,13 @@ class SlidingSphereBasic extends SlidingSphere
       if ( this.preselection !== preselection ) {
         for ( let seg of segsOf(preselection) )
           if ( seg && seg.view ) {
-            seg.view[0].material.linewidth = 1;
-            seg.view[1].material.linewidth = 1;
+            seg.view.children[0].material.linewidth = 1;
+            seg.view.children[1].material.linewidth = 1;
           }
         for ( let seg of segsOf(this.preselection) )
           if ( seg && seg.view ) {
-            seg.view[0].material.linewidth = 2;
-            seg.view[1].material.linewidth = 2;
+            seg.view.children[0].material.linewidth = 2;
+            seg.view.children[1].material.linewidth = 2;
           }
         preselection = this.preselection;
       }
@@ -639,15 +683,254 @@ class SlidingSphereBasic extends SlidingSphere
         for ( let sel of selections )
           for ( let seg of segsOf(sel) )
             if ( seg && seg.view )
-              seg.view[3].material.opacity = 0;
+              seg.view.children[3].material.opacity = 0;
         for ( let sel of this.selections )
           for ( let seg of segsOf(sel) )
             if ( seg && seg.view )
-              seg.view[3].material.opacity = 0.3;
+              seg.view.children[3].material.opacity = 0.3;
         selections = this.selections.slice();
       }
     }
   }
+
+  mergeElemCmd() {
+    if ( this.selections.length <= 1 ) {
+      window.alert("Please select two elements at least!");
+      return;
+    }
+    if ( this.selections.some(elem => !(elem instanceof SphElem)) ) {
+      window.alert("Not element!");
+      return;
+    }
+    var sels = this.selections.slice();
+    this.select();
+
+    var seg0 = sels[0].boundaries.values().next().value;
+    var color = seg0.view.children[0].material.color.getHex();
+    for ( let elem of sels.slice(1) )
+      for ( let seg of elem.boundaries )
+        for ( let obj of seg.view.children )
+          obj.material.color.set(color);
+    this.merge(...sels);
+
+    this.select(sels[0]);
+  }
+  mergeVertexCmd() {
+    if ( this.selections.length != 1 ) {
+      window.alert("Please select one segment!");
+      return;
+    }
+    var seg = this.selections[0];
+    if ( !(seg instanceof SphSeg) ) {
+      window.alert("Not segment!");
+      return;
+    }
+    if ( seg === seg.prev
+         || this._cmp(seg.angle, 2) != 0
+         || this._cmp(seg.radius, seg.prev.radius) != 0
+         || this._cmp(seg.circle.center, seg.prev.circle.center) != 0 ) {
+      window.alert("Cannot merge!");
+      return;
+    }
+
+    var prev = seg.prev;
+    var color = seg.prev.view.children[0].material.color.getHex();
+
+    this.select();
+    this.erase(prev);
+    this.erase(seg);
+
+    this._mergePrev(seg);
+
+    this.draw(prev, color);
+    this.select(prev);
+  }
+  interpolateCmd() {
+    if ( this.selections.length != 1 ) {
+      window.alert("Please select one segment!");
+      return;
+    }
+    var seg = this.selections[0];
+    if ( !(seg instanceof SphSeg) ) {
+      window.alert("Not segment!");
+      return;
+    }
+
+    var theta = parseFloat(window.prompt("angle to interpolate:"));
+    if ( Number.isNaN(theta) ) {
+      window.alert("Not a number!");
+      return;
+    }
+    if ( theta > seg.length || theta < 0 ) {
+      window.alert("Improper number!");
+      return;
+    }
+
+    var color = seg.view.children[0].material.color.getHex();
+    this.select();
+    this.erase(seg);
+
+    var next = this._interpolate(seg, theta);
+
+    this.draw(seg, color);
+    this.draw(next, color);
+    this.select(seg);
+    this.select(next, "toggle");
+  }
+  mergeEdgeCmd() {
+    if ( this.selections.length != 2 ) {
+      window.alert("Please select two segments!");
+      return;
+    }
+    var [seg1, seg2] = this.selections;
+    if ( !(seg1 instanceof SphSeg) || !(seg2 instanceof SphSeg) ) {
+      window.alert("Not segment!");
+      return;
+    }
+    if ( seg1.affiliation !== seg2.affiliation || !seg1.adj.has(seg2) ) {
+      window.alert("Cannot merge edges!");
+      return;
+    }
+
+    var elem = seg1.affiliation;
+    var color = seg1.view.children[0].material.color.getHex();
+
+    this.select();
+    this.erase(elem);
+
+    this._glueAdj(seg1, seg2);
+
+    this.draw(elem, color);
+    this.select(elem);
+  }
+  alignSegCmd() {
+    if ( this.selections.length != 1 && this.selections.length != 2 ) {
+      window.alert("Please select one or two segments!");
+      return;
+    }
+    var [seg1, seg2] = this.selections;
+    if ( !(seg1 instanceof SphSeg) || seg2 && !(seg2 instanceof SphSeg) ) {
+      window.alert("Not segments!");
+      return;
+    }
+
+    if ( seg2 ) {
+      if ( !seg1.lock || seg1.lock.dual !== seg2.lock ) {
+        window.alert("Cannot align segmets!");
+        return;
+      }
+
+      var offset0 = seg1.lock.offset;
+      var offset1 = 0;
+      for ( let seg of seg1.lock.teeth ) {
+        if ( seg === seg1 )
+          break;
+        offset1 += seg.arc;
+      }
+      var offset2 = 0;
+      for ( let seg of seg2.lock.teeth ) {
+        if ( seg === seg2 )
+          break;
+        offset2 += seg.arc;
+      }
+      var theta = offset0-offset1-offset2;
+
+    } else {
+      if ( !seg1.lock ) {
+        window.alert("Cannot align segmets!");
+        return;
+      }
+
+      var theta = parseFloat(window.prompt("angle to twist"));
+      if ( Number.isNaN(theta) ) {
+        window.alert("Not a number!");
+        return;
+      }
+    }
+
+    var groups = this._partitionBy(seg1.lock, seg1.lock.dual);
+    var group = groups.find(g => g.locks.has(seg1.lock));
+    var elements = Array.from(group.elements);
+    this.twist(seg1.lock, this._mod4(theta));
+
+    var axis = new THREE.Vector3(...seg1.lock.circle.center);
+    var angle = theta*Q;
+    for ( let elem of elements )
+      for ( let seg of elem.boundaries )
+        for ( let obj of seg.view.children )
+          obj.rotateOnWorldAxis(axis, angle);
+  }
+  sliceCmd() {
+    if ( this.selections.length > 1 ) {
+      window.alert("Please select one segment or nothing!");
+      return;
+    }
+    var seg = this.selections[0];
+    if ( seg !== undefined && !(seg instanceof SphSeg) ) {
+      window.alert("Not segment!");
+      return;
+    }
+
+    if ( seg ) {
+      var circle = seg.circle;
+
+    } else {
+      var center = eval(window.prompt("center:"));
+      if ( !Array.isArray(center) || center.length != 3 ) {
+        window.alert("Not a vector!");
+        return;
+      }
+      for ( let x of center ) {
+        if ( typeof x != "number" && !(x instanceof Number) ) {
+          window.alert("Not a number!");
+          return;
+        }
+        if ( Number.isNaN(x) ) {
+          window.alert("Not a number!");
+          return;
+        }
+      }
+
+      var radius = eval(window.prompt("radius:"));
+      if ( typeof radius != "number" && !(radius instanceof Number) ) {
+        window.alert("Not a number!");
+        return;
+      }
+      if ( Number.isNaN(radius) ) {
+        window.alert("Not a number!");
+        return;
+      }
+      var circle = new SphCircle({radius, orientation:q_align(center)});
+    }
+
+    this.select();
+
+    var bd;
+    for ( let elem of new Set(this.elements) ) {
+      let seg0 = elem.boundaries.values().next().value;
+      let color = seg0.view.children[0].material.color.getHex();
+      this.erase(elem);
+      let [in_segs, out_segs, in_bd, out_bd] = this._slice(elem, circle);
+      if ( in_segs.length != 0 && out_segs.length != 0 ) {
+        this.elements.delete(elem);
+        var [in_elem, out_elem] = elem.split(in_segs, out_segs);
+        this.elements.add(in_elem);
+        this.elements.add(out_elem);
+        this.draw(in_elem, color);
+        this.draw(out_elem, this.colors.next().value);
+
+      } else {
+        this.draw(elem, color);
+      }
+
+      if ( !bd && in_bd.length != 0 )
+        bd = in_bd[0];
+    }
+    this._buildLock(bd);
+
+    this.select(bd.lock);
+  }
+
 }
 
 function graphView(puzzle) {

@@ -1648,8 +1648,7 @@ class SlidingSphere
     for ( let [lock, theta] of op ) {
       if ( !op.has(lock.dual) )
         op.set(lock.dual, theta);
-      else
-        console.assert(this._cmp(op.get(lock.dual), theta) == 0);
+      console.assert(this._cmp(op.get(lock.dual), theta) == 0);
     }
 
     // unlock
@@ -2222,10 +2221,9 @@ class SlidingSphere
       elem.rotate(q);
     return this;
   }
-  slice(center, radius) {
+  slice(center, radius, elements=new Set(this.elements)) {
     var circle = new SphCircle({radius, orientation:q_align(center)});
     var new_bd = [];
-    var elements = new Set(this.elements);
     for ( let elem of elements ) {
       let [in_segs, out_segs, in_bd, out_bd] = this._slice(elem, circle);
       this.split(elem, in_segs, out_segs);
@@ -2274,7 +2272,7 @@ class SlidingSphere
     }
   }
   twist(lock, theta) {
-    this._twist([[lock, theta]], lock.dual.teeth[0].affiliation);
+    this._twist([[lock, theta], [lock.dual, theta]], lock.dual.teeth[0].affiliation);
   }
 }
 
