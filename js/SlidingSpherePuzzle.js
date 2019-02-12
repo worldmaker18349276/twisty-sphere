@@ -354,6 +354,21 @@ class SlidingSphereBasic extends SlidingSphere
     })();
   }
 
+  slice(center, radius, elements=new Set(this.elements)) {
+    var circle = new SphCircle({radius, orientation:q_align(center)});
+    var new_bd = [];
+    for ( let elem of elements ) {
+      let [in_segs, out_segs, in_bd, out_bd] = this._slice(elem, circle);
+      this.split(elem, in_segs, out_segs);
+      new_bd.push(...in_bd, ...out_bd);
+    }
+    if ( new_bd.length )
+      if ( !new_bd[0].lock ) this._buildLock(new_bd[0]);
+  }
+  twist(lock, theta) {
+    this._twist([[lock, theta], [lock.dual, theta]], lock.dual.teeth[0].affiliation);
+  }
+
   select(target, mode="select") {
     switch ( mode ) {
       case "select":

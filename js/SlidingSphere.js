@@ -387,6 +387,28 @@ class SlidingSphere
     this.elements = new Set([new SphElem()]);
   }
 
+  merge(element0, ...elements) {
+    console.assert(this.elements.has(element0));
+    console.assert(elements.every(elem => this.elements.has(elem)));
+    for ( let elem of elements ) if ( elem !== element0 )
+      this.elements.delete(elem);
+    element0.merge(...elements);
+    return element0;
+  }
+  split(element0, ...groups) {
+    console.assert(this.elements.has(element0));
+    this.elements.delete(element0);
+    var splited = element0.split(...groups);
+    for ( let elem of splited )
+      this.elements.add(elem);
+    return splited;
+  }
+  rotate(q) {
+    for ( let elem of this.elements )
+      elem.rotate(q);
+    return this;
+  }
+
   /**
    * Fuzzy compare two values with tolerance `this.tol`.
    * It will compare array of numbers by lexical order.
@@ -1342,26 +1364,27 @@ class SlidingSphere
     }
   }
   /**
-   * Check if segment is twistable; element should be intersection of circles.
+   * Check if segment is twistable; element should has no meet with extended
+   * circles.
    * 
    * @param {SphSeg} seg0 - The segment to test.
+   * @param {SphSeg[]} fixed - The fixed segments.
    * @returns {boolean} True if `seg0` is twistable.
    */
-  _isTwistable(seg0) {
+  _isTwistable(seg0, fixed=seg0.affiliation.boundaries) {
     if ( this._cmp(seg0.angle, 2) > 0 )
       return false;
     if ( this._cmp(seg0.next.angle, 2) > 0 )
       return false;
     if ( this._cmp(seg0.angle, 2) == 0 && this._cmp(seg0.radius, seg0.prev.radius) < 0 )
       return false;
-    if ( this._cmp(seg0.next.angle, 2) == 0 && this._cmp(seg0.next.radius, seg0.radius) < 0 )
+    if ( this._cmp(seg0.next.angle, 2) == 0 && this._cmp(seg0.radius, seg0.next.radius) < 0 )
       return false;
     if ( Array.from(seg0.adj.keys()).some(seg => seg.affiliation === seg0.affiliation) )
       return false;
   
     var circle = seg0.circle;
-    var meets = Array.from(seg0.affiliation.boundaries)
-                     .flatMap(seg => Array.from(this._meetWith(seg, circle)));
+    var meets = Array.from(fixed).flatMap(seg => Array.from(this._meetWith(seg, circle)));
     meets = this._sortMeets(meets);
     var types = meets.map(meet => meet.type);
   
@@ -1371,6 +1394,87 @@ class SlidingSphere
     if ( types.find(type => type[0] == "+") && types.find(type => type[0] == "-") )
       return false;
     return true;
+  }
+  /**
+   * Separate twistable part of given elements.
+   * 
+   * @param {SphElem[]} elements - The elements to separate.
+   * @returns {SphElem[][]} Set of twistable Elements.
+   */
+  _separateTwistablePart(elements) {
+    var elements = Array.from(elements);
+
+    var res = [];
+    var unprocessed = new Set(elements);
+    for ( let elem of unprocessed ) {
+      let comb = [elem];
+      let segs = Array.from(elem.boundaries);
+      let locked = [];
+
+      for ( let i=0; i<segs.length; i++ ) {
+        if ( locked[i] )
+          continue;
+
+        locked[i] = !this._isTwistable(segs[i], segs);
+        if ( !locked[i] )
+          continue;
+
+        let adj = Array.from(segs[i].adj.keys())
+                       .map(seg => seg.affiliation)
+                       .filter(elem => elements.includes(elem) && !comb.includes(elem));
+        if ( adj.length > 0 ) {
+          adj = new Set(adj);
+          for ( let elem of adj ) {
+            unprocessed.delete(elem);
+            comb.push(elem);
+            segs.push(...elem.boundaries);
+          }
+          i = -1;
+        }
+      }
+
+      res.push(comb);
+    }
+
+    return res;
+  }
+  /**
+   * Clean trivial structure of elements.
+   * It will: merge untwistable edges, merge trivial edges, and merge trivial
+   * vertices.
+   * 
+   * @param {SphElem[]} elements - Elements to clean.
+   * @returns {SphElem[]} Clear elements.
+   */
+  _clean(elements=this.elements) {
+    // merge untwistable edges
+    var mergeable = this._separateTwistablePart(elements);
+    elements = mergeable.map(elems => this.merge(elems[0], ...elems));
+
+    // merge trivial edges
+    for ( let elem of elements ) {
+      while ( true ) {
+        let bd = Array.from(elem.boundaries);
+        let seg1, seg2;
+        for ( seg1 of bd )
+          if ( seg2 = bd.find(seg2 => seg2.adj.has(seg1)) )
+            break;
+
+        if ( !seg2 )
+          break;
+        this._glueAdj(seg1, seg2);
+      }
+    }
+
+    // merge trivial vertices
+    for ( let elem of elements )
+      for ( let loop of this._loops(elem.boundaries) )
+        for ( let seg of loop )
+          if ( seg !== seg.prev
+               && this._cmp(seg.angle, 2) == 0
+               && this._cmp(seg.radius, seg.prev.radius) == 0
+               && this._cmp(seg.circle.center, seg.prev.circle.center) == 0 )
+            this._mergePrev(seg);
   }
   
   /**
@@ -2199,80 +2303,6 @@ class SlidingSphere
 
     config.adjacencies = buffer;
     return permutations;
-  }
-
-  merge(element0, ...elements) {
-    console.assert(this.elements.has(element0));
-    for ( let elem of elements ) if ( elem !== element0 ) {
-      console.assert(this.elements.has(elem));
-      this.elements.delete(elem);
-    }
-    element0.merge(...elements);
-  }
-  split(element0, ...groups) {
-    console.assert(this.elements.has(element0));
-    this.elements.delete(element0);
-    var splited = element0.split(...groups);
-    for ( let elem of splited )
-      this.elements.add(elem);
-  }
-  rotate(q) {
-    for ( let elem of this.elements )
-      elem.rotate(q);
-    return this;
-  }
-  slice(center, radius, elements=new Set(this.elements)) {
-    var circle = new SphCircle({radius, orientation:q_align(center)});
-    var new_bd = [];
-    for ( let elem of elements ) {
-      let [in_segs, out_segs, in_bd, out_bd] = this._slice(elem, circle);
-      this.split(elem, in_segs, out_segs);
-      new_bd.push(...in_bd, ...out_bd);
-    }
-    if ( new_bd.length )
-      if ( !new_bd[0].lock ) this._buildLock(new_bd[0]);
-  }
-  mergeTrivialVertices() {
-    for ( let elem of this.elements )
-      for ( let loop of this._loops(elem.boundaries) )
-        for ( let seg of loop )
-          if ( seg !== seg.prev
-               && this._cmp(seg.angle, 2) == 0
-               && this._cmp(seg.radius, seg.prev.radius) == 0
-               && this._cmp(seg.circle.center, seg.prev.circle.center) == 0 )
-            this._mergePrev(seg);
-  }
-  mergeUntwistableEdges() {
-    for ( let elem of this.elements ) {
-      while ( true ) {
-        let seg = Array.from(elem.boundaries)
-                       .find(seg => !this._isTwistable(seg)
-                                    && Array.from(seg.adj.keys())
-                                            .some(seg_ => seg_.affiliation!==elem));
-        if ( !seg )
-          break;
-        this.merge(elem, ...seg.adj.keys());
-      }
-    }
-  }
-  mergeTrivialEdges() {
-    for ( let elem of this.elements ) {
-      while ( true ) {
-        let bd = Array.from(elem.boundaries);
-        let seg1, seg2;
-        for ( seg1 of bd )
-          if ( seg2 = bd.find(seg2 => seg2.adj.has(seg1)) )
-            break;
-
-        if ( seg2 )
-          this._glueAdj(seg1, seg2);
-        else
-          break;
-      }
-    }
-  }
-  twist(lock, theta) {
-    this._twist([[lock, theta], [lock.dual, theta]], lock.dual.teeth[0].affiliation);
   }
 }
 
