@@ -137,7 +137,7 @@ function q_spin(q, theta, out=[]) {
 /**
  * Quadrant; unit of angle and arc.  One quadrant is one quarter of a circle.
  * The method in {@link SphCircle}, {@link SphSeg}, {@link SphElem} and
- * {@link SlidingSphere} will use this unit for angle and arc.
+ * {@link SphPuzzle} will use this unit for angle and arc.
  * @const
  * @type {number}
  */
@@ -376,37 +376,14 @@ class SphLock
 }
 
 /**
- * Sliding sphere.
+ * Analyzer for spherical twisty puzzle.
  * 
  * @class
  */
-class SlidingSphere
+class SphAnalyzer
 {
   constructor(tol=1e-5) {
     this.tol = tol;
-    this.elements = new Set([new SphElem()]);
-  }
-
-  merge(element0, ...elements) {
-    console.assert(this.elements.has(element0));
-    console.assert(elements.every(elem => this.elements.has(elem)));
-    for ( let elem of elements ) if ( elem !== element0 )
-      this.elements.delete(elem);
-    element0.merge(...elements);
-    return element0;
-  }
-  split(element0, ...groups) {
-    console.assert(this.elements.has(element0));
-    this.elements.delete(element0);
-    var splited = element0.split(...groups);
-    for ( let elem of splited )
-      this.elements.add(elem);
-    return splited;
-  }
-  rotate(q) {
-    for ( let elem of this.elements )
-      elem.rotate(q);
-    return this;
   }
 
   /**
@@ -418,7 +395,7 @@ class SlidingSphere
    * @returns {number} `0` if `v1` is almost equal to `v2`; `+1` if `v1` is
    *   greater than `v2`; `-1` if `v1` is less than `v2`.
    */
-  _cmp(v1, v2) {
+  cmp(v1, v2) {
     return fzy_cmp(v1, v2, this.tol);
   }
   /**
@@ -429,7 +406,7 @@ class SlidingSphere
    * @returns {number} The closest value in `snaps`, or original value if not
    *   close enough.
    */
-  _snap(val, snaps=[]) {
+  snap(val, snaps=[]) {
     return fzy_snap(val, snaps, this.tol);
   }
   /**
@@ -440,7 +417,7 @@ class SlidingSphere
    *   Snapping occur when they are roughly congruent modulo 4.
    * @returns {number} Modulus.
    */
-  _mod4(val, snaps=[]) {
+  mod4(val, snaps=[]) {
     return fzy_mod(val, 4, snaps, this.tol);
   }
 
@@ -471,36 +448,36 @@ class SlidingSphere
    *   `arc2` is arc of `circle2` under `circle1`, in the range of [0, 4].
    *   `meeted` is number of meet points between circles.
    */
-  _relationTo(circle1, circle2) {
+  relationTo(circle1, circle2) {
     var radius1 = circle1.radius;
     var radius2 = circle2.radius;
     var distance = angleTo(circle2.center, circle1.center)/Q;
-    console.assert(this._cmp(distance, 0) >= 0 && this._cmp(distance, 2) <= 0);
-    console.assert(this._cmp(radius1, 0) > 0 && this._cmp(radius1, 2) < 0);
-    console.assert(this._cmp(radius2, 0) > 0 && this._cmp(radius2, 2) < 0);
+    console.assert(this.cmp(distance, 0) >= 0 && this.cmp(distance, 2) <= 0);
+    console.assert(this.cmp(radius1, 0) > 0 && this.cmp(radius1, 2) < 0);
+    console.assert(this.cmp(radius2, 0) > 0 && this.cmp(radius2, 2) < 0);
 
-    if ( this._cmp(distance, 0) == 0 && this._cmp(radius1, radius2) == 0 )
+    if ( this.cmp(distance, 0) == 0 && this.cmp(radius1, radius2) == 0 )
       return [0, undefined, undefined, undefined]; // equal
-    else if ( this._cmp(distance, 2) == 0 && this._cmp(radius1 + radius2, 2) == 0 )
+    else if ( this.cmp(distance, 2) == 0 && this.cmp(radius1 + radius2, 2) == 0 )
       return [2, undefined, undefined, undefined]; // complement
-    else if ( this._cmp(distance, radius1 - radius2) <  0 )
+    else if ( this.cmp(distance, radius1 - radius2) <  0 )
       return [0, 0, 4, 0]; // include
-    else if ( this._cmp(distance, radius1 - radius2) == 0 )
+    else if ( this.cmp(distance, radius1 - radius2) == 0 )
       return [0, 0, 4, 1]; // kissing include
-    else if ( this._cmp(distance, radius1 + radius2) >  0 )
+    else if ( this.cmp(distance, radius1 + radius2) >  0 )
       return [2, 0, 0, 0]; // exclude
-    else if ( this._cmp(distance, radius1 + radius2) == 0 )
+    else if ( this.cmp(distance, radius1 + radius2) == 0 )
       return [2, 0, 0, 1]; // kissing exclude
-    else if ( this._cmp(2-distance, radius1 - (2-radius2)) <  0 )
+    else if ( this.cmp(2-distance, radius1 - (2-radius2)) <  0 )
       return [2, 4, 4, 0]; // anti-include
-    else if ( this._cmp(2-distance, radius1 - (2-radius2)) == 0 )
+    else if ( this.cmp(2-distance, radius1 - (2-radius2)) == 0 )
       return [2, 4, 4, 1]; // kissing anti-include
-    else if ( this._cmp(2-distance, radius1 + (2-radius2)) >  0 )
+    else if ( this.cmp(2-distance, radius1 + (2-radius2)) >  0 )
       return [0, 4, 0, 0]; // anti-exclude
-    else if ( this._cmp(2-distance, radius1 + (2-radius2)) == 0 )
+    else if ( this.cmp(2-distance, radius1 + (2-radius2)) == 0 )
       return [0, 4, 0, 1]; // kissing anti-exclude
     else if ( distance < radius1 + radius2 )
-      return [...this._intersect(radius1, radius2, distance), 2]; // intersect
+      return [...this.intersect(radius1, radius2, distance), 2]; // intersect
     else
       throw new Error(`unknown case: [${radius1}, ${radius2}, ${distance}]`);
   }
@@ -511,9 +488,9 @@ class SlidingSphere
    * @param {number} radius2 - Radius of the second circle to intersect.
    * @param {number} distance - Distance between centers of two circles.
    * @returns {number[]} Information about intersection, which has values
-   *   `[ang, arc1, arc2]` (see method {@link SlidingSphere#_relationTo}).
+   *   `[ang, arc1, arc2]` (see method {@link SphPuzzle#relationTo}).
    */
-  _intersect(radius1, radius2, distance) {
+  intersect(radius1, radius2, distance) {
     var a = radius2*Q;
     var b = radius1*Q;
     var c = distance*Q;
@@ -546,7 +523,7 @@ class SlidingSphere
    * @returns {number[]} The arcs of left edge and right edge, which has values
    *   `[arc1, arc2]`.
    */
-  _leaf(angle, radius1, radius2) {
+  leaf(angle, radius1, radius2) {
     var a = radius1*Q;
     var b = radius2*Q;
     var C = (2-angle)*Q;
@@ -577,31 +554,31 @@ class SlidingSphere
    * @param {number[]} v3 - The third point.
    * @returns {SphCircle} The circle passing through those points.
    */
-  _heart(v1, v2, v3) {
+  heart(v1, v2, v3) {
     var center;
-    if ( this._cmp(angleTo(v1, v2)/Q, 0) == 0 ) {
+    if ( this.cmp(angleTo(v1, v2)/Q, 0) == 0 ) {
       center = v1.map((x,i) => x+v3[i]);
 
-    } else if ( this._cmp(angleTo(v2, v3)/Q, 0) == 0 ) {
+    } else if ( this.cmp(angleTo(v2, v3)/Q, 0) == 0 ) {
       center = v1.map((x,i) => x+v2[i]);
 
-    } else if ( this._cmp(angleTo(v3, v1)/Q, 0) == 0 ) {
+    } else if ( this.cmp(angleTo(v3, v1)/Q, 0) == 0 ) {
       center = v1.map((x,i) => x+v2[i]);
 
     } else {
       let c1 = rotate([1,0,0], q_align(v1.map((x,i) => x+v2[i]), v2));
       let c2 = rotate([1,0,0], q_align(v3.map((x,i) => x+v2[i]), v2));
       let dis = angleTo(c1, c2)/Q;
-      let [,arc,] = this._intersect(1, 1, dis);
+      let [,arc,] = this.intersect(1, 1, dis);
       center = rotate([Math.cos(arc*Q/2), -Math.sin(arc*Q/2), 0], q_align(c1, c2));
 
     }
 
     var radius = angleTo(center, v1)/Q;
     var orientation = q_align(center, v1);
-    console.assert(this._cmp(angleTo(center, v1)/Q, radius) == 0);
-    console.assert(this._cmp(angleTo(center, v2)/Q, radius) == 0);
-    console.assert(this._cmp(angleTo(center, v3)/Q, radius) == 0);
+    console.assert(this.cmp(angleTo(center, v1)/Q, radius) == 0);
+    console.assert(this.cmp(angleTo(center, v2)/Q, radius) == 0);
+    console.assert(this.cmp(angleTo(center, v3)/Q, radius) == 0);
     return new SphCircle({radius, orientation});
   }
 
@@ -616,7 +593,7 @@ class SlidingSphere
    *   be set to buffer `compass`.
    * @returns {boolean} True if it return to the starting segment finally.
    */
-  *_walk(seg0, compass) {
+  *walk(seg0, compass) {
     var seg = seg0;
     do {
       yield seg;
@@ -643,11 +620,11 @@ class SlidingSphere
    * @param {SphSeg[]} segs - The segments to loop.
    * @yields {SphSeg[]} The loop of segment includes at least one of `segs`.
    */
-  *_loops(segs) {
+  *loops(segs) {
     segs = new Set(segs);
     for ( let seg0 of segs ) {
       let loop = [];
-      for ( let seg of this._walk(seg0) ) {
+      for ( let seg of this.walk(seg0) ) {
         segs.delete(seg);
         loop.push(seg);
       }
@@ -669,9 +646,9 @@ class SlidingSphere
    *   or empty array if no adjacent segment to jump.  The derived orientation
    *   of `seg` will be set to buffer `compass`.
    */
-  _jump(seg0, theta, prefer=+1, compass) {
+  jump(seg0, theta, prefer=+1, compass) {
     for ( let [adj_seg, offset] of seg0.adj ) {
-      let theta_ = this._mod4(offset-theta, [0, adj_seg.arc]);
+      let theta_ = this.mod4(offset-theta, [0, adj_seg.arc]);
       if ( adj_seg.arc == 4 && theta_ == 0 )
         theta_ = prefer < 0 ? 0 : 4;
       else if ( theta_ == 0 && prefer > 0 )
@@ -708,7 +685,7 @@ class SlidingSphere
    *   The orientation of `seg` will be set to buffer `compass`.
    * @returns {boolean} True if it return to the first segment finally.
    */
-  *_spin(seg0, offset=0, compass) {
+  *spin(seg0, offset=0, compass) {
     var angle = 0, seg = seg0;
     if ( compass ) {
       var compass0 = compass.slice();
@@ -719,14 +696,14 @@ class SlidingSphere
     do {
       yield [angle, seg, offset];
 
-      [seg, offset] = this._jump(seg, offset, +1);
+      [seg, offset] = this.jump(seg, offset, +1);
 
       if ( seg !== undefined ) {
         if ( seg.arc == offset )
           [angle, seg, offset] = [angle+seg.next.angle, seg.next, 0];
         else
           angle += 2;
-        angle = this._snap(angle, [0, 2, 4]);
+        angle = this.snap(angle, [0, 2, 4]);
       }
 
       if ( seg === undefined )
@@ -748,15 +725,15 @@ class SlidingSphere
    * @yields {SphSeg} Next segment along extended circle of the first segment.
    * @returns {boolean} True if it return to the starting segment finally.
    */
-  *_ski(seg0) {
+  *ski(seg0) {
     var seg = seg0;
     do {
       yield seg;
       
       let [ang1, seg1] = [seg.next.angle, seg.next];
       let ang;
-      for ( [ang, seg] of this._spin(seg1) ) {
-        let sgn = this._cmp([ang, seg.radius-1], [2-ang1, seg0.radius-1]);
+      for ( [ang, seg] of this.spin(seg1) ) {
+        let sgn = this.cmp([ang, seg.radius-1], [2-ang1, seg0.radius-1]);
         if ( sgn == 0 ) break;
         if ( sgn >  0 ) return false;
       }
@@ -769,7 +746,7 @@ class SlidingSphere
    * @param {object} gen - The generator to collect.
    * @returns {Array=} Generated values if `gen` return true finally, or `undefined`.
    */
-  _full(gen) {
+  full(gen) {
     var list = [];
     var res;
     while ( !(res = gen.next()).done )
@@ -793,7 +770,7 @@ class SlidingSphere
    *   for split case.  And with constraint `ang1+ang2 == 4` for merge case;
    *   with constraint `ang1+ang2 == -4` for split case.
    */
-  _swap(seg1, seg2, ang1, ang2) {
+  swap(seg1, seg2, ang1, ang2) {
     var [seg1_prev, seg2_prev] = [seg1.prev, seg2.prev];
     var [seg1_ang, seg2_ang] = [seg1.angle, seg2.angle];
 
@@ -811,8 +788,8 @@ class SlidingSphere
    * @param {number} theta - The position to split.
    * @returns {SphSeg} The second part segment after splitting.
    */
-  _interpolate(seg, theta) {
-    theta = this._mod4(theta, [4, seg.arc]);
+  interpolate(seg, theta) {
+    theta = this.mod4(theta, [4, seg.arc]);
     if ( theta >= seg.arc )
       throw new Error("out of range of interpolation");
 
@@ -836,12 +813,12 @@ class SlidingSphere
 
     for ( let [adj_seg, offset] of seg.adj ) {
       // remove adjacent of segment
-      if ( this._cmp(offset, seg.arc + adj_seg.arc) >= 0 )
+      if ( this.cmp(offset, seg.arc + adj_seg.arc) >= 0 )
         seg.adjacent(adj_seg);
 
       // add adjacent of next_seg
-      let offset_ = this._mod4(offset - seg.arc, [4, next_seg.arc, adj_seg.arc]);
-      if ( this._cmp(offset_, next_seg.arc + adj_seg.arc) < 0 )
+      let offset_ = this.mod4(offset - seg.arc, [4, next_seg.arc, adj_seg.arc]);
+      if ( this.cmp(offset_, next_seg.arc + adj_seg.arc) < 0 )
         next_seg.adjacent(adj_seg, offset_);
     }
 
@@ -855,11 +832,11 @@ class SlidingSphere
    * @param {number} seg - The segment to merge.
    * @returns {SphSeg} The removed segment.
    */
-  _mergePrev(seg) {
+  mergePrev(seg) {
     if ( seg === seg.prev
-         || this._cmp(seg.angle, 2) != 0
-         || this._cmp(seg.radius, seg.prev.radius) != 0
-         || this._cmp(seg.circle.center, seg.prev.circle.center) != 0 )
+         || this.cmp(seg.angle, 2) != 0
+         || this.cmp(seg.radius, seg.prev.radius) != 0
+         || this.cmp(seg.circle.center, seg.prev.circle.center) != 0 )
       throw new Error("unable to merge segments");
 
     // merge segment
@@ -881,7 +858,7 @@ class SlidingSphere
     for ( let [adj_seg, offset] of seg.adj ) {
       seg.adjacent(adj_seg);
       if ( !merged.adj.has(adj_seg) ) {
-        let offset_ = this._mod4(offset + arc0, [4, merged.arc, adj_seg.arc]);
+        let offset_ = this.mod4(offset + arc0, [4, merged.arc, adj_seg.arc]);
         merged.adjacent(adj_seg, offset_);
       }
     }
@@ -900,7 +877,7 @@ class SlidingSphere
    * @param {SphSeg} segment1 - The first segment to glue.
    * @param {SphSeg} segment2 - The second segment to glue.
    */
-  _glueAdj(segment1, segment2) {
+  glueAdj(segment1, segment2) {
     var offset = segment1.adj.get(segment2);
     var affiliation = segment1.affiliation;
     if ( offset === undefined || segment2.affiliation !== affiliation )
@@ -914,16 +891,16 @@ class SlidingSphere
     // find end points of covers between segments
     var brackets = [];
 
-    var offset1 = this._mod4(offset, [4, segment1.arc]);
+    var offset1 = this.mod4(offset, [4, segment1.arc]);
     if ( offset1 <= segment1.arc )
       brackets.push([offset1, 0, -1]);
-    var offset2 = this._mod4(offset, [4, segment2.arc]);
+    var offset2 = this.mod4(offset, [4, segment2.arc]);
     if ( offset2 <= segment2.arc )
       brackets.push([0, offset2, +1]);
-    var offset1_ = this._mod4(offset-segment2.arc, [0, segment1.arc, offset1]);
+    var offset1_ = this.mod4(offset-segment2.arc, [0, segment1.arc, offset1]);
     if ( offset1_ != 0 && offset1_ < segment1.arc )
       brackets.push([offset1_, segment2.arc, +1]);
-    var offset2_ = this._mod4(offset-segment1.arc, [0, segment2.arc, offset2]);
+    var offset2_ = this.mod4(offset-segment1.arc, [0, segment2.arc, offset2]);
     if ( offset2_ != 0 && offset2_ < segment2.arc )
       brackets.push([segment1.arc, offset2_, -1]);
     brackets.sort();
@@ -942,7 +919,7 @@ class SlidingSphere
         else if ( theta == 0 )
           contacts.set(theta, [segment, 0]);
         else if ( theta > 0 && theta < segment.arc )
-          contacts.set(theta, [this._interpolate(segment, theta), 0]);
+          contacts.set(theta, [this.interpolate(segment, theta), 0]);
         else
           console.assert(false);
       }
@@ -953,10 +930,10 @@ class SlidingSphere
       let [seg1, ang1] = contacts1.get(theta1);
       let [seg2, ang2] = contacts2.get(theta2);
       if ( seg1 !== seg2 )
-        this._swap(seg1, seg2, 2-ang1+ang2, 2-ang2+ang1);
+        this.swap(seg1, seg2, 2-ang1+ang2, 2-ang2+ang1);
 
       if ( i % 2 == 1 ) {
-        console.assert(seg2.next.next === seg2 && this._cmp(seg2.angle, 4) == 0);
+        console.assert(seg2.next.next === seg2 && this.cmp(seg2.angle, 4) == 0);
         affiliation.withdraw(seg2);
         affiliation.withdraw(seg2.prev);
       }
@@ -979,13 +956,13 @@ class SlidingSphere
    *   `circle` is the circle that segment meets with;
    *   `theta` is offset of meet point along `circle`.
    */
-  *_meetWith(segment, circle) {
+  *meetWith(segment, circle) {
     var circle_ = segment.circle;
-    var [angle, arc, arc_, meeted] = this._relationTo(circle_, circle);
+    var [angle, arc, arc_, meeted] = this.relationTo(circle_, circle);
     var offset = 0, theta = 0;
 
     if ( meeted === undefined ) {
-      theta = this._mod4(circle.thetaOf(segment.vertex));
+      theta = this.mod4(circle.thetaOf(segment.vertex));
 
       if ( angle == 0 ) angle = +0;
       if ( angle == 2 ) angle = -2;
@@ -996,8 +973,8 @@ class SlidingSphere
       return;
 
     } else if ( meeted == 1 ) {
-      theta = this._mod4(circle.thetaOf(circle_.center)+arc_/2);
-      offset = this._mod4(circle_.thetaOf(circle.center)-arc/2, [0, segment.arc]);
+      theta = this.mod4(circle.thetaOf(circle_.center)+arc_/2);
+      offset = this.mod4(circle_.thetaOf(circle.center)-arc/2, [0, segment.arc]);
 
       if ( angle == 0 && arc == 4 ) angle = +0;
       if ( angle == 0 && arc == 0 ) angle = -0;
@@ -1008,12 +985,12 @@ class SlidingSphere
         yield {angle, segment, offset, circle, theta};
 
     } else if ( meeted == 2 ) {
-      theta = this._mod4(circle.thetaOf(circle_.center)+arc_/2);
-      offset = this._mod4(circle_.thetaOf(circle.center)-arc/2, [0, segment.arc]);
+      theta = this.mod4(circle.thetaOf(circle_.center)+arc_/2);
+      offset = this.mod4(circle_.thetaOf(circle.center)-arc/2, [0, segment.arc]);
       let meet1 = {angle, segment, offset, circle, theta};
 
-      theta = this._mod4(circle.thetaOf(circle_.center)-arc_/2);
-      offset = this._mod4(circle_.thetaOf(circle.center)+arc/2, [0, segment.arc]);
+      theta = this.mod4(circle.thetaOf(circle_.center)-arc_/2);
+      offset = this.mod4(circle_.thetaOf(circle.center)+arc/2, [0, segment.arc]);
       angle = -angle;
       let meet2 = {angle, segment, offset, circle, theta};
 
@@ -1039,12 +1016,12 @@ class SlidingSphere
    * @param {object[]} meets - The meets to sort.
    * @returns {object[]} Sorted meets.
    */
-  _sortMeets(meets) {
+  sortMeets(meets) {
     // sort meets by `theta`
     var mmeets = [];
     var pos = [];
     for ( let meet of meets ) {
-      meet.theta = this._mod4(meet.theta, pos);
+      meet.theta = this.mod4(meet.theta, pos);
 
       let i, sgn;
       for ( i=0; i<pos.length; i++ ) {
@@ -1076,22 +1053,22 @@ class SlidingSphere
 
       // mod angle into range [-2, 2] and deal with boundary case
       post_beams = post_beams.map(([ang, cur, i]) =>
-        this._cmp([this._mod4(ang), cur, i], pre_field) <= 0
-        ? [+this._mod4(+ang), cur, i] : [-this._mod4(-ang), cur, i]);
+        this.cmp([this.mod4(ang), cur, i], pre_field) <= 0
+        ? [+this.mod4(+ang), cur, i] : [-this.mod4(-ang), cur, i]);
       pre_beams = pre_beams.map(([ang, cur, i]) =>
-        this._cmp([this._mod4(ang), cur, i], pre_field) <= 0
-        ? [+this._mod4(+ang), cur, i] : [-this._mod4(-ang), cur, i]);
+        this.cmp([this.mod4(ang), cur, i], pre_field) <= 0
+        ? [+this.mod4(+ang), cur, i] : [-this.mod4(-ang), cur, i]);
 
       // separate as in and out of field
       var in_beams = [], out_beams = [];
       for ( let beams of [pre_beams, post_beams] ) for ( let beam of beams ) {
-        if ( this._cmp(beam, post_field) >= 0 )
+        if ( this.cmp(beam, post_field) >= 0 )
           in_beams.push(beam);
         else
           out_beams.push(beam);
       }
-      in_beams.sort(this._cmp.bind(this));
-      out_beams.sort(this._cmp.bind(this));
+      in_beams.sort(this.cmp.bind(this));
+      out_beams.sort(this.cmp.bind(this));
       in_beams = in_beams.map(e => e[2]);
       out_beams = out_beams.map(e => e[2]);
 
@@ -1174,24 +1151,24 @@ class SlidingSphere
    * @param {number[]} point - The point to check.
    * @returns {boolean} True if point is in this element.
    */
-  _contains(boundaries, point) {
+  contains(boundaries, point) {
     if ( boundaries.size == 0 )
       return true;
 
     // make a circle passing through this point and a vertex of element
     var vertex = boundaries.values().next().value.vertex;
     var radius = angleTo(point, vertex)/2/Q;
-    if ( this._cmp(radius, 0) == 0 )
+    if ( this.cmp(radius, 0) == 0 )
       return false;
 
     var orientation = q_mul(q_align(vertex, point), quaternion([0,1,0], radius*Q));
     var circle = new SphCircle({orientation, radius});
 
     var meets = Array.from(boundaries)
-                     .flatMap(seg => Array.from(this._meetWith(seg, circle)));
+                     .flatMap(seg => Array.from(this.meetWith(seg, circle)));
     console.assert(meets.length > 0);
-    meets = this._sortMeets(meets);
-    if ( meets.find(meet => this._mod4(meet.theta, [0]) == 0) )
+    meets = this.sortMeets(meets);
+    if ( meets.find(meet => this.mod4(meet.theta, [0]) == 0) )
       return false;
     else
       return ["-0", "+-", "--"].includes(meets[0].type);
@@ -1204,20 +1181,20 @@ class SlidingSphere
    * @returns {SphSeg[]} Sliced segments of both sides of `circle` and sliced
    *   boundaries of both sides.
    */
-  _slice(elem, circle) {
+  slice(elem, circle) {
     var circle_ = new SphCircle(circle).complement();
 
     // INTERPOLATE
     // find meet points and sort by `theta`
     var paths = [];
-    for ( let loop of this._loops(elem.boundaries) )
-      paths.push(loop.flatMap(seg => Array.from(this._meetWith(seg, circle))));
-    var meets = this._sortMeets(paths.flatMap(path => path));
+    for ( let loop of this.loops(elem.boundaries) )
+      paths.push(loop.flatMap(seg => Array.from(this.meetWith(seg, circle))));
+    var meets = this.sortMeets(paths.flatMap(path => path));
 
     // interpolate
     for ( let path of paths ) for ( let meet of path.slice(0).reverse() )
       if ( meet.type[1] == "0" && meet.offset != 0 ) {
-        meet.segment = this._interpolate(meet.segment, meet.offset);
+        meet.segment = this.interpolate(meet.segment, meet.offset);
         meet.offset = 0;
       }
 
@@ -1232,7 +1209,7 @@ class SlidingSphere
       console.assert(side == ["+0", "++", "+-"].includes(meet2.type));
       let segs = side ? in_segs : out_segs;
 
-      for ( let seg of this._walk(meet1.segment) ) {
+      for ( let seg of this.walk(meet1.segment) ) {
         if ( seg === meet2.segment )
           break;
         segs.add(seg);
@@ -1241,10 +1218,10 @@ class SlidingSphere
     }
 
     for ( let seg0 of lost ) {
-      let side = this._cmp(circle.radius, angleTo(circle.center, seg0.vertex)/Q) > 0;
+      let side = this.cmp(circle.radius, angleTo(circle.center, seg0.vertex)/Q) > 0;
       let segs = side ? in_segs : out_segs;
 
-      for ( let seg of this._walk(seg0) ) {
+      for ( let seg of this.walk(seg0) ) {
         segs.add(seg);
         lost.delete(seg);
       }
@@ -1267,10 +1244,11 @@ class SlidingSphere
         let meet1 = dash[i];
         let meet2 = dash[i+1];
 
-        let arc = this._snap(meet2.theta - meet1.theta, [0, 4]);
+        let arc = this.snap(meet2.theta - meet1.theta, [0, 4]);
         if ( arc == 0 ) {
           // connect two meets
-          this._swap(meet2.segment, meet1.segment, meet1.angle-meet2.angle, meet2.angle-meet1.angle-4);
+          this.swap(meet2.segment, meet1.segment,
+                     meet1.angle-meet2.angle, meet2.angle-meet1.angle-4);
 
         } else {
           // make segments between two meets
@@ -1284,8 +1262,8 @@ class SlidingSphere
           elem.accept(in_seg);
           elem.accept(out_seg);
 
-          this._swap(in_seg, meet1.segment, meet1.angle, -meet1.angle-4);
-          this._swap(meet2.segment, out_seg, -2-meet2.angle, -2+meet2.angle);
+          this.swap(in_seg, meet1.segment, meet1.angle, -meet1.angle-4);
+          this.swap(meet2.segment, out_seg, -2-meet2.angle, -2+meet2.angle);
 
           in_bd.push(in_seg);
           out_bd.push(out_seg);
@@ -1302,7 +1280,7 @@ class SlidingSphere
       if ( inside === undefined && meets.find(({type}) => type[1] == "-") )
         inside = true;
       if ( inside === undefined )
-        inside = this._contains(elem.boundaries, circle.vectorAt(0));
+        inside = this.contains(elem.boundaries, circle.vectorAt(0));
 
       if ( inside ) {
 
@@ -1333,34 +1311,36 @@ class SlidingSphere
    * 
    * @param {SphSeg} seg - The segment to check.
    */
-  _checkGeometry(seg) {
-    console.assert(this._cmp(seg.arc, 0) > 0 && this._cmp(seg.arc, 4) <= 0);
-    console.assert(this._cmp(seg.radius, 0) > 0 && this._cmp(seg.radius, 2) < 0);
-    console.assert(this._cmp(seg.angle, 0) >= 0 && this._cmp(seg.radius, 4) <= 0);
-    if ( this._cmp(seg.angle, 0) == 0 )
-      console.assert(this._cmp(seg.radius, 2-seg.prev.radius) >  0);
-    if ( this._cmp(seg.angle, 4) == 0 )
-      console.assert(this._cmp(seg.radius, 2-seg.prev.radius) <= 0);
+  checkGeometry(seg) {
+    console.assert(this.cmp(seg.arc, 0) > 0 && this.cmp(seg.arc, 4) <= 0);
+    console.assert(this.cmp(seg.radius, 0) > 0 && this.cmp(seg.radius, 2) < 0);
+    console.assert(this.cmp(seg.angle, 0) >= 0 && this.cmp(seg.radius, 4) <= 0);
+    if ( this.cmp(seg.angle, 0) == 0 )
+      console.assert(this.cmp(seg.radius, 2-seg.prev.radius) >  0);
+    if ( this.cmp(seg.angle, 4) == 0 )
+      console.assert(this.cmp(seg.radius, 2-seg.prev.radius) <= 0);
   }
   /**
-   * Check orientation of connected segments in this puzzle.
+   * Check orientation of connected segments in puzzle.
+   * 
+   * @param {SphElem[]} elements - The elements to check.
    */
-  _checkOrientation() {
-    for ( let elem of this.elements ) for ( let loop of this._loops(elem.boundaries) ) {
+  checkOrientation(elements) {
+    for ( let elem of elements ) for ( let loop of this.loops(elem.boundaries) ) {
       var compass = loop[0].orientation.slice();
-      for ( let seg of this._walk(loop[0], compass) ) {
-        console.assert(this._cmp(compass, seg.orientation) == 0
-                       || this._cmp(compass, seg.orientation.map(x => -x)) == 0);
+      for ( let seg of this.walk(loop[0], compass) ) {
+        console.assert(this.cmp(compass, seg.orientation) == 0
+                       || this.cmp(compass, seg.orientation.map(x => -x)) == 0);
 
         for ( let [adj_seg, offset] of seg.adj ) {
           let adj_compass = seg.orientation.slice();
-          this._jump(seg, offset, -1, adj_compass);
-          console.assert(this._cmp(adj_compass, adj_seg.orientation) == 0
-                         || this._cmp(adj_compass, adj_seg.orientation.map(x => -x)) == 0);
+          this.jump(seg, offset, -1, adj_compass);
+          console.assert(this.cmp(adj_compass, adj_seg.orientation) == 0
+                         || this.cmp(adj_compass, adj_seg.orientation.map(x => -x)) == 0);
         }
       }
-      console.assert(this._cmp(compass, loop[0].orientation) == 0
-                     || this._cmp(compass, loop[0].orientation.map(x => -x)) == 0);
+      console.assert(this.cmp(compass, loop[0].orientation) == 0
+                     || this.cmp(compass, loop[0].orientation.map(x => -x)) == 0);
     }
   }
   /**
@@ -1371,21 +1351,21 @@ class SlidingSphere
    * @param {SphSeg[]} fixed - The fixed segments.
    * @returns {boolean} True if `seg0` is twistable.
    */
-  _isTwistable(seg0, fixed=seg0.affiliation.boundaries) {
-    if ( this._cmp(seg0.angle, 2) > 0 )
+  isTwistable(seg0, fixed=seg0.affiliation.boundaries) {
+    if ( this.cmp(seg0.angle, 2) > 0 )
       return false;
-    if ( this._cmp(seg0.next.angle, 2) > 0 )
+    if ( this.cmp(seg0.next.angle, 2) > 0 )
       return false;
-    if ( this._cmp(seg0.angle, 2) == 0 && this._cmp(seg0.radius, seg0.prev.radius) < 0 )
+    if ( this.cmp(seg0.angle, 2) == 0 && this.cmp(seg0.radius, seg0.prev.radius) < 0 )
       return false;
-    if ( this._cmp(seg0.next.angle, 2) == 0 && this._cmp(seg0.radius, seg0.next.radius) < 0 )
+    if ( this.cmp(seg0.next.angle, 2) == 0 && this.cmp(seg0.radius, seg0.next.radius) < 0 )
       return false;
     if ( Array.from(seg0.adj.keys()).some(seg => seg.affiliation === seg0.affiliation) )
       return false;
   
     var circle = seg0.circle;
-    var meets = Array.from(fixed).flatMap(seg => Array.from(this._meetWith(seg, circle)));
-    meets = this._sortMeets(meets);
+    var meets = Array.from(fixed).flatMap(seg => Array.from(this.meetWith(seg, circle)));
+    meets = this.sortMeets(meets);
     var types = meets.map(meet => meet.type);
   
     if ( types.find(type => type[1] == "0") )
@@ -1396,13 +1376,13 @@ class SlidingSphere
     return true;
   }
   /**
-   * Separate twistable part of given elements.
+   * Separate twistable part of given puzzle.
    * 
    * @param {SphElem[]} elements - The elements to separate.
    * @returns {SphElem[][]} Set of twistable Elements.
    */
-  _separateTwistablePart(elements) {
-    var elements = Array.from(elements);
+  separateTwistablePart(elements) {
+    elements = Array.from(elements);
 
     var res = [];
     var unprocessed = new Set(elements);
@@ -1415,7 +1395,7 @@ class SlidingSphere
         if ( locked[i] )
           continue;
 
-        locked[i] = !this._isTwistable(segs[i], segs);
+        locked[i] = !this.isTwistable(segs[i], segs);
         if ( !locked[i] )
           continue;
 
@@ -1439,18 +1419,13 @@ class SlidingSphere
     return res;
   }
   /**
-   * Clean trivial structure of elements.
+   * Clean trivial structure of puzzle.
    * It will: merge untwistable edges, merge trivial edges, and merge trivial
    * vertices.
    * 
-   * @param {SphElem[]} elements - Elements to clean.
-   * @returns {SphElem[]} Clear elements.
+   * @param {SphElem[]} elements - The elements to clean.
    */
-  _clean(elements=this.elements) {
-    // merge untwistable edges
-    var mergeable = this._separateTwistablePart(elements);
-    elements = mergeable.map(elems => this.merge(elems[0], ...elems));
-
+  clean(elements) {
     // merge trivial edges
     for ( let elem of elements ) {
       while ( true ) {
@@ -1462,19 +1437,19 @@ class SlidingSphere
 
         if ( !seg2 )
           break;
-        this._glueAdj(seg1, seg2);
+        this.glueAdj(seg1, seg2);
       }
     }
 
     // merge trivial vertices
     for ( let elem of elements )
-      for ( let loop of this._loops(elem.boundaries) )
+      for ( let loop of this.loops(elem.boundaries) )
         for ( let seg of loop )
           if ( seg !== seg.prev
-               && this._cmp(seg.angle, 2) == 0
-               && this._cmp(seg.radius, seg.prev.radius) == 0
-               && this._cmp(seg.circle.center, seg.prev.circle.center) == 0 )
-            this._mergePrev(seg);
+               && this.cmp(seg.angle, 2) == 0
+               && this.cmp(seg.radius, seg.prev.radius) == 0
+               && this.cmp(seg.circle.center, seg.prev.circle.center) == 0 )
+            this.mergePrev(seg);
   }
   
   /**
@@ -1484,7 +1459,7 @@ class SlidingSphere
    * @param {SphSeg[]} segments
    * @returns {SphSeg[]} Profile of segments.
    */
-  _findProfile(segments) {
+  findProfile(segments) {
     var segments = new Set(segments);
     var uncovered = [];
     for ( let seg of segments ) {
@@ -1493,22 +1468,22 @@ class SlidingSphere
       for ( let [adj_seg, offset] of seg.adj ) if ( segments.has(adj_seg) ) {
         let [segment1, segment2] = [seg, adj_seg];
   
-        let offset1 = this._mod4(offset, [4, segment1.arc]);
+        let offset1 = this.mod4(offset, [4, segment1.arc]);
         if ( offset1 <= segment1.arc )
           brackets.push([offset1, -1]);
-        let offset2 = this._mod4(offset, [4, segment2.arc]);
+        let offset2 = this.mod4(offset, [4, segment2.arc]);
         if ( offset2 <= segment2.arc )
           brackets.push([0, +1]);
-        let offset1_ = this._mod4(offset-segment2.arc, [0, segment1.arc, offset1]);
+        let offset1_ = this.mod4(offset-segment2.arc, [0, segment1.arc, offset1]);
         if ( offset1_ != 0 && offset1_ < segment1.arc )
           brackets.push([offset1_, +1]);
-        let offset2_ = this._mod4(offset-segment1.arc, [0, segment2.arc, offset2]);
+        let offset2_ = this.mod4(offset-segment1.arc, [0, segment2.arc, offset2]);
         if ( offset2_ != 0 && offset2_ < segment2.arc )
           brackets.push([segment1.arc, -1]);
       }
       brackets.unshift([0, -1]);
       brackets.push([seg.arc, +1]);
-      brackets.sort(this._cmp.bind(this));
+      brackets.sort(this.cmp.bind(this));
   
       // find uncovered interval
       console.assert(brackets.length % 2 == 0);
@@ -1517,7 +1492,7 @@ class SlidingSphere
         let [th2, s2] = brackets[i+1];
         console.assert(s1<0 && s2>0);
   
-        if ( this._cmp(th1, th2) != 0 )
+        if ( this.cmp(th1, th2) != 0 )
           uncovered.push([seg, th1, th2]);
       }
     }
@@ -1525,7 +1500,7 @@ class SlidingSphere
     // build segments of profile
     for ( let interval of uncovered ) {
       let [seg, th1, th2] = interval;
-      let arc = this._snap(th2-th1, [seg.arc]);
+      let arc = this.snap(th2-th1, [seg.arc]);
       let {radius, orientation} = seg.circle.shift(th2).complement();
       let bd = new SphSeg({radius, arc, orientation});
       bd.adj.set(seg, th2);
@@ -1535,13 +1510,13 @@ class SlidingSphere
     // connect segments of profile
     for ( let [,,,bd] of uncovered ) {
       let ang_, seg_, th1_;
-      for ( let tick of this._spin(bd) ) {
+      for ( let tick of this.spin(bd) ) {
         if ( !segments.has(tick[1]) )
           break;
         [ang_, seg_, th1_] = tick;
       }
       bd.angle = 4-ang_;
-      let [,,,bd_] = uncovered.find(([seg, th1]) => seg===seg_ && this._cmp(th1,th1_) == 0);
+      let [,,,bd_] = uncovered.find(([seg, th1]) => seg===seg_ && this.cmp(th1,th1_) == 0);
       bd_.connect(bd);
     }
   
@@ -1565,7 +1540,7 @@ class SlidingSphere
    * @param {SphSeg[]} segments
    * @returns {object} Networks.
    */
-  _parseNetworks(segments) {
+  parseNetworks(segments) {
   
     // find all connected networks
     var networks = [];
@@ -1575,7 +1550,7 @@ class SlidingSphere
   
       let queue = new Set([lost.values().next().value]);
       for ( let seg0 of queue ) {
-        let loop = this._full(this._walk(seg0));
+        let loop = this.full(this.walk(seg0));
         console.assert(loop);
         network.loops.push(loop);
   
@@ -1589,8 +1564,8 @@ class SlidingSphere
         }
       }
   
-      let profile = this._findProfile(network.loops.flatMap(loop => loop));
-      network.profile = Array.from(this._loops(profile));
+      let profile = this.findProfile(network.loops.flatMap(loop => loop));
+      network.profile = Array.from(this.loops(profile));
   
       networks.push(network);
     }
@@ -1611,13 +1586,13 @@ class SlidingSphere
       for ( let network of networks )
         for ( let [loops, side] of [[network.loops, +1], [network.profile, -1]] )
           for ( let loop of loops ) for ( let seg of loop )
-            for ( let meet of this._meetWith(seg, circle) ) {
+            for ( let meet of this.meetWith(seg, circle) ) {
               meet.network = network;
               meet.loop = loop;
               meet.side = side;
               meets.push(meet);
             }
-      meets = this._sortMeets(meets);
+      meets = this.sortMeets(meets);
       while ( meets[0].network !== networks[0] )
         meets.push(meets.shift());
   
@@ -1664,8 +1639,8 @@ class SlidingSphere
    * @param {SphSeg[]} segments
    * @returns {SphSeg[][]} Set of joint Segments.
    */
-  _separateJointPart(segments) {
-    var networks = this._parseNetworks(segments);
+  separateJointPart(segments) {
+    var networks = this.parseNetworks(segments);
   
     // separate connected part
     var joints = new Set(networks.flatMap(network => network.joints)
@@ -1690,7 +1665,7 @@ class SlidingSphere
    *   `elements` is set of elements in this part,
    *   `locks` is set of locks of boundaries of this part.
    */
-  _partitionBy(...locks) {
+  partitionBy(...locks) {
     var bd = locks.flatMap(lock => lock.teeth);
     locks = new Set(locks);
     var partition = [];
@@ -1726,11 +1701,11 @@ class SlidingSphere
    * @param {SphSeg} seg
    * @returns {SphLock[]} The locks, or `undefined` if it is unlockable.
    */
-  _buildLock(seg) {
+  buildLock(seg) {
     var [seg_, offset] = seg.adj.entries().next().value;
-    var left = this._full(this._ski(seg));
+    var left = this.full(this.ski(seg));
     if ( !left ) return;
-    var right = this._full(this._ski(seg_));
+    var right = this.full(this.ski(seg_));
     if ( !right ) return;
 
     var left_lock = new SphLock();
@@ -1747,23 +1722,23 @@ class SlidingSphere
    *   twist by what angle.
    * @param {SphElem=} hold - The element whose orientation should be fixed.
    */
-  _twist(op, hold) {
+  twist(op, hold) {
     op = new Map(op);
     for ( let [lock, theta] of op ) {
       if ( !op.has(lock.dual) )
         op.set(lock.dual, theta);
-      console.assert(this._cmp(op.get(lock.dual), theta) == 0);
+      console.assert(this.cmp(op.get(lock.dual), theta) == 0);
     }
 
     // unlock
     var bd = Array.from(op.keys()).flatMap(lock => lock.teeth);
     for ( let seg0 of bd )
-      for ( let [angle, seg, offset] of this._spin(seg0) )
+      for ( let [angle, seg, offset] of this.spin(seg0) )
         if ( offset == 0 && angle != 0 && angle != 2 )
           if ( seg.lock ) seg.lock.unlock();
 
     // twist
-    var partition = this._partitionBy(...op.keys());
+    var partition = this.partitionBy(...op.keys());
     var group0 = partition.find(g => g.elements.has(hold)) || partition[0];
     group0.rotation = [0,0,0,1];
     var processed = new Set([group0]);
@@ -1776,7 +1751,7 @@ class SlidingSphere
       q_mul(rotation, group.rotation, rotation);
 
       if ( !processed.has(adj_group) ) {
-        lock.offset = lock.dual.offset = this._mod4(lock.offset - theta);
+        lock.offset = lock.dual.offset = this.mod4(lock.offset - theta);
 
         adj_group.rotation = rotation;
         for ( let elem of adj_group.elements )
@@ -1784,7 +1759,7 @@ class SlidingSphere
         processed.add(adj_group);
 
       } else {
-        console.assert(this._cmp(adj_group.rotation, rotation) == 0);
+        console.assert(this.cmp(adj_group.rotation, rotation) == 0);
       }
     }
 
@@ -1797,8 +1772,8 @@ class SlidingSphere
       for ( let seg1 of lock.teeth ) {
         offset2 = 0;
         for ( let seg2 of lock.dual.teeth ) {
-          let offset = this._mod4(lock.offset-offset1-offset2, [4, seg1.arc, seg2.arc]);
-          if ( this._cmp(offset, seg1.arc+seg2.arc) < 0 )
+          let offset = this.mod4(lock.offset-offset1-offset2, [4, seg1.arc, seg2.arc]);
+          if ( this.cmp(offset, seg1.arc+seg2.arc) < 0 )
             seg1.adjacent(seg2, offset);
           offset2 += seg2.arc;
         }
@@ -1807,9 +1782,9 @@ class SlidingSphere
 
     // lock
     for ( let seg0 of bd )
-      for ( let [angle, seg, offset] of this._spin(seg0) )
+      for ( let [angle, seg, offset] of this.spin(seg0) )
         if ( offset == 0 && angle != 0 && angle != 2 )
-          if ( !seg.lock ) this._buildLock(seg);
+          if ( !seg.lock ) this.buildLock(seg);
   }
 
   /**
@@ -1823,13 +1798,13 @@ class SlidingSphere
    *   `subtick.segment` is segment of subtick, which has vertex at tick center;
    *   `is_free` indicate subticks are free or not.
    */
-  _makeTick(prev_seg) {
+  makeTick(prev_seg) {
     var [ang1, seg1] = [prev_seg.next.angle, prev_seg.next];
     var subticks = [], pre = [], post = [];
     var angle, segment, offset;
-    for ( [angle, segment, offset] of this._spin(seg1) ) {
-      angle = this._snap(angle+ang1, [0, 2, 4]);
-      let sgn = this._cmp([angle, segment.radius-1], [2, prev_seg.radius-1]);
+    for ( [angle, segment, offset] of this.spin(seg1) ) {
+      angle = this.snap(angle+ang1, [0, 2, 4]);
+      let sgn = this.cmp([angle, segment.radius-1], [2, prev_seg.radius-1]);
       if ( sgn == 0 ) break;
       if ( sgn >  0 ) return {};
   
@@ -1843,7 +1818,7 @@ class SlidingSphere
   
     var is_free = false;
     for ( let seg1 of pre )
-      if ( post.find(seg2 => this._cmp(2-seg1.radius, seg2.radius) == 0) ) {
+      if ( post.find(seg2 => this.cmp(2-seg1.radius, seg2.radius) == 0) ) {
         is_free = true;
         break;
       }
@@ -1862,32 +1837,32 @@ class SlidingSphere
    *   `segment0` is segment in which `segment0.next.vertex` is point of twistable
    *   circle.
    */
-  _detectLatches(ticks) {
+  detectLatches(ticks) {
     var latches = [];
   
     var radius0 = ticks[0].segment.radius;
     var full_arc = ticks.reduce((acc, tick) => (tick.theta=acc)+tick.segment.arc, 0);
-    console.assert(this._cmp(full_arc, 4) == 0);
+    console.assert(this.cmp(full_arc, 4) == 0);
     for ( let tick of ticks ) for ( let sub of tick.subticks )
-      [sub.arc] = this._leaf(sub.angle, radius0, sub.segment.radius);
+      [sub.arc] = this.leaf(sub.angle, radius0, sub.segment.radius);
   
     // find latches (center of possible intercuting circle)
     // find all free latches
     var free_ind = ticks.flatMap(({is_free}, i) => is_free ? [i] : []);
     for ( let i of free_ind ) for ( let j of free_ind ) if ( i < j ) {
       let arc = ticks[j].theta - ticks[i].theta;
-      let center = this._mod4(ticks[i].theta+arc/2);
+      let center = this.mod4(ticks[i].theta+arc/2);
       let segment0  = (ticks[j-1] || ticks[ticks.arc-1]).segment;
       let segment0_ = (ticks[i-1] || ticks[ticks.arc-1]).segment;
   
-      switch ( this._cmp(arc, 2) ) {
+      switch ( this.cmp(arc, 2) ) {
         case -1:
           latches.push({arc, center, segment0});
           break;
   
         case +1:
           arc = 4 - arc;
-          center = this._mod4(center+2);
+          center = this.mod4(center+2);
           segment0 = segment0_;
           latches.push({arc, center, segment0});
           break;
@@ -1895,7 +1870,7 @@ class SlidingSphere
         case 0:
           arc = 2;
           latches.push({arc, center, segment0});
-          center = this._mod4(center+2);
+          center = this.mod4(center+2);
           segment0 = segment0_;
           latches.push({arc, center, segment0});
           break;
@@ -1905,23 +1880,23 @@ class SlidingSphere
     // find normal latches
     var normal_ind = ticks.flatMap(({is_free}, i) => is_free ? [] : [i]);
     for ( let i of normal_ind ) for ( let j of normal_ind ) if ( i < j ) {
-      let arcj = this._mod4(ticks[j].theta - ticks[i].theta);
-      let arci = this._mod4(ticks[i].theta - ticks[j].theta);
-      for ( let subi of ticks[i].subticks ) if ( this._cmp(subi.arc, arci) == 0 )
-        for ( let subj of ticks[j].subticks ) if ( this._cmp(subj.arc, arcj) == 0 )
-          if ( this._cmp(subi.segment.radius+subj.segment.radius, 2) == 0 ) {
-            let center = this._mod4(ticks[j].theta-arcj/2);
+      let arcj = this.mod4(ticks[j].theta - ticks[i].theta);
+      let arci = this.mod4(ticks[i].theta - ticks[j].theta);
+      for ( let subi of ticks[i].subticks ) if ( this.cmp(subi.arc, arci) == 0 )
+        for ( let subj of ticks[j].subticks ) if ( this.cmp(subj.arc, arcj) == 0 )
+          if ( this.cmp(subi.segment.radius+subj.segment.radius, 2) == 0 ) {
+            let center = this.mod4(ticks[j].theta-arcj/2);
             let arc = arcj;
             let segment = subj.segment;
   
-            switch ( this._cmp([arc, segment.radius], [2, 1]) ) {
+            switch ( this.cmp([arc, segment.radius], [2, 1]) ) {
               case -1:
                 latches.push({arc, center, segment});
                 break;
   
               case +1:
                 arc = arci;
-                center = this._mod4(center+2);
+                center = this.mod4(center+2);
                 segment = subi.segment;
                 latches.push({arc, center, segment});
                 break;
@@ -1929,7 +1904,7 @@ class SlidingSphere
               case 0:
                 arc = 2;
                 latches.push({arc, center, segment});
-                center = this._mod4(center+2);
+                center = this.mod4(center+2);
                 segment = subi.segment;
                 latches.push({arc, center, segment});
                 break;
@@ -1938,28 +1913,28 @@ class SlidingSphere
     }
   
     for ( let j of normal_ind ) for ( let i of free_ind ) {
-      let arc = this._mod4(ticks[j].theta - ticks[i].theta);
-      for ( let subj of ticks[j].subticks ) if ( this._cmp(subj.arc, arc) == 0 ) {
-        let center = this._mod4(ticks[j].theta-arc/2);
+      let arc = this.mod4(ticks[j].theta - ticks[i].theta);
+      for ( let subj of ticks[j].subticks ) if ( this.cmp(subj.arc, arc) == 0 ) {
+        let center = this.mod4(ticks[j].theta-arc/2);
         let segment = subj.segment;
   
-        switch ( this._cmp([arc, segment.radius], [2, 1]) ) {
+        switch ( this.cmp([arc, segment.radius], [2, 1]) ) {
           case -1:
             latches.push({arc, center, segment});
             break;
   
           case +1:
             arc = 4-arc;
-            center = this._mod4(center+2);
-            [segment] = this._jump(segment, 0, +1);
+            center = this.mod4(center+2);
+            [segment] = this.jump(segment, 0, +1);
             latches.push({arc, center, segment});
             break;
   
           case 0:
             arc = 2;
             latches.push({arc, center, segment});
-            center = this._mod4(center+2);
-            [segment] = this._jump(segment, 0, +1);
+            center = this.mod4(center+2);
+            [segment] = this.jump(segment, 0, +1);
             latches.push({arc, center, segment});
             break;
         }
@@ -1979,33 +1954,33 @@ class SlidingSphere
    *   `arc` is arc of shadow under unlockable circle;
    *   `seg0` is segment in which `seg0.next.vertex` is point of unlockable circle.
    */
-  _decipher(lock) {
+  decipher(lock) {
     var ticks1 = [], ticks2 = [];
     for ( let [segs, ticks] of [[lock.teeth, ticks1], [lock.dual.teeth, ticks2]] ) {
       for ( let i=0; i<segs.length; i++ ) {
         let seg = segs[i-1] || segs[segs.length-1];
-        let tick = this._makeTick(seg);
+        let tick = this.makeTick(seg);
         console.assert(tick && tick.segment === segs[i]);
         ticks.push(tick);
       }
     }
   
-    var latches1 = this._detectLatches(ticks1);
-    var latches2 = this._detectLatches(ticks2);
+    var latches1 = this.detectLatches(ticks1);
+    var latches2 = this.detectLatches(ticks2);
   
     var passwords = new Map(); // theta => [segment, 0] or [segment0, arc]
     var keys = new Set([]);
     for ( let latch1 of latches1 ) for ( let latch2 of latches2 ) {
       let test;
       if ( latch1.segment && latch2.segment )
-        test = this._cmp([latch1.arc, latch1.segment.radius],
+        test = this.cmp([latch1.arc, latch1.segment.radius],
                        [latch2.arc, latch2.segment.radius]) == 0;
       else
-        test = this._cmp(latch1.arc, latch2.arc) == 0;
+        test = this.cmp(latch1.arc, latch2.arc) == 0;
   
   
       if ( test ) {
-        let key = this._mod4(lock.offset-latch1.center-latch2.center, keys);
+        let key = this.mod4(lock.offset-latch1.center-latch2.center, keys);
         keys.add(key);
         if ( !passwords.has(key) )
           passwords.set(key, []);
@@ -2027,7 +2002,7 @@ class SlidingSphere
    * @param {SphSeg[][]} loops - Loops of segments which form a connected network.
    * @returns {Array} Configuration and parameters of given state.
    */
-  _analyze(loops) {
+  analyze(loops) {
     var config = new SphConfig();
     var param = [];
 
@@ -2038,7 +2013,7 @@ class SlidingSphere
       let keyring = keys.slice();
       let offsets = [];
       for ( let i=0,len=keys.length; i<len; i++ ) {
-        switch ( this._cmp(keys, keyring) ) {
+        switch ( this.cmp(keys, keyring) ) {
           case 0:
             offsets.push(i);
             break;
@@ -2060,7 +2035,7 @@ class SlidingSphere
       // determine type
       let ind_type, sgn = -1;
       for ( ind_type=0; ind_type<config.types.length; ind_type++ ) {
-        sgn = this._cmp(config.types[ind_type].patch, patch);
+        sgn = this.cmp(config.types[ind_type].patch, patch);
         if ( sgn == 0 || sgn > 0 )
           break;
       }
@@ -2093,7 +2068,7 @@ class SlidingSphere
         } else {
           let len = config.types[ind_type].patch.length;
           let n = 0;
-          for ( let seg of this._walk(param[ind_type][ind_loop]) ) {
+          for ( let seg of this.walk(param[ind_type][ind_loop]) ) {
             let ind_num = n % len;
             let ind_rot = (n - ind_num) / len;
             seg.index = [ind_type, ind_loop, ind_rot, ind_num];
@@ -2108,7 +2083,7 @@ class SlidingSphere
     for ( let loop of loops )
       for ( let seg1 of loop )
         for ( let [seg2, offset] of seg1.adj )
-          if ( this._cmp(seg1.index, seg2.index) < 0 )
+          if ( this.cmp(seg1.index, seg2.index) < 0 )
             config.adjacencies.push([seg1.index, seg2.index, offset]);
 
     return [config, param];
@@ -2121,7 +2096,7 @@ class SlidingSphere
    * @param {number[]} orientation0 - The fixed orientation.
    * @returns {SphSeg[][]} Parameters of building with respect to `config`.
    */
-  _assemble(config, index0=[0,0], orientation0=[0,0,0,1]) {
+  assemble(config, index0=[0,0], orientation0=[0,0,0,1]) {
     // build segments
     var param = config.types.map(() => []);
     for ( let i=0; i<config.types.length; i++ ) {
@@ -2130,9 +2105,12 @@ class SlidingSphere
 
       for ( let j=0; j<count; j++ ) {
         let loop;
+        let elem = new SphElem();
         for ( let k=0; k<N; k++ ) for ( let l=0; l<patch.length; l++ ) {
           let [arc, radius, angle] = patch[l];
-          loop.push(new SphSeg({arc, radius, angle}));
+          let seg = new SphSeg({arc, radius, angle});
+          loop.push(seg);
+          elem.accept(seg);
         }
         loop.reduce((seg1, seg2) => (seg1.connect(seg2), seg2), loop[loop.length-1]);
 
@@ -2154,23 +2132,23 @@ class SlidingSphere
 
     for ( let seg of located ) {
       let compass = seg.orientation.slice();
-      let walker = this._walk(seg, compass);
+      let walker = this.walk(seg, compass);
       walker.next(); walker.next();
 
       if ( !seg.next.orientation )
         seg.next.orientation = compass;
-      console.assert(this._cmp(seg.next.orientation, compass) == 0
-                     || this._cmp(seg.next.orientation, compass.map(x=>-x)) == 0);
+      console.assert(this.cmp(seg.next.orientation, compass) == 0
+                     || this.cmp(seg.next.orientation, compass.map(x=>-x)) == 0);
       located.add(seg.next);
 
       for ( let [adj_seg, offset] of seg.adj ) {
         let compass = seg.orientation.slice();
-        this._jump(seg, offset, -1, compass);
+        this.jump(seg, offset, -1, compass);
 
         if ( !adj_seg.orientation )
           adj_seg.orientation = compass;
-        console.assert(this._cmp(adj_seg.orientation, compass) == 0
-                       || this._cmp(adj_seg.orientation, compass.map(x=>-x)) == 0);
+        console.assert(this.cmp(adj_seg.orientation, compass) == 0
+                       || this.cmp(adj_seg.orientation, compass.map(x=>-x)) == 0);
         located.add(adj_seg);
       }
     }
@@ -2191,7 +2169,7 @@ class SlidingSphere
    * @yields {Array} The adjacency just passed through.
    * @returns {Array} The permutation of sorted configuration.
    */
-  *_crawl(config, index0) {
+  *crawl(config, index0) {
     var perm = config.types.map(() => []);
     var adjacencies = new Set(config.adjacencies);
     var P = Array(config.types.length).fill(0);
@@ -2223,11 +2201,11 @@ class SlidingSphere
         // determine index1 in sorted config
         let index1_ = config.apply(perm, index1);
         if ( config.types[i].fold == 0 )
-          offset = this._mod4(offset-k*4, [4]);
+          offset = this.mod4(offset-k*4, [4]);
         adj.push([index1_, offset, index2]);
         adjacencies.delete(adjacency);
       }
-      adj.sort(this._cmp.bind(this));
+      adj.sort(this.cmp.bind(this));
 
       for ( let [index1_, offset, index2] of adj ) {
         // determine index2 in sorted config
@@ -2245,7 +2223,7 @@ class SlidingSphere
 
         // build new adjacency table
         let index2_ = config.apply(perm, index2);
-        if ( this._cmp(index1_, index2_) > 0 )
+        if ( this.cmp(index1_, index2_) > 0 )
           [index2_, index1_] = [index1_, index2_];
         yield [index1_, index2_, offset];
       }
@@ -2261,7 +2239,7 @@ class SlidingSphere
    * @param {SphConfig} config - The configuration to sort.
    * @returns {Array} All possible permutations to sorted configuration.
    */
-  _sortConfig(config) {
+  sortConfig(config) {
     const type = config.types[0];
     const length = config.adjacencies.length;
     if ( type.fold == 0 )
@@ -2274,14 +2252,14 @@ class SlidingSphere
     // find the smallest adjacency table
     for ( let ind_loop=0; ind_loop<type.count; ind_loop++ )
       for ( let ind_rot=0; ind_rot<type.fold; ind_rot++ ) {
-        let buffer_ = [], crawler_ = this._crawl(config, [0, ind_loop, ind_rot]);
+        let buffer_ = [], crawler_ = this.crawl(config, [0, ind_loop, ind_rot]);
 
         // find minimal lazy array (lexical order)
         let sgn;
         for ( let t=0; t<length; t++ ) {
           let val  = buffer [t] || (buffer [t] = crawler .next().value);
           let val_ = buffer_[t] || (buffer_[t] = crawler_.next().value);
-          sgn = this._cmp(val, val_);
+          sgn = this.cmp(val, val_);
           if ( sgn != 0 )
             break;
         }
