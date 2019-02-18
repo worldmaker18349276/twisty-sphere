@@ -137,7 +137,7 @@ function q_spin(q, theta, out=[]) {
 /**
  * Quadrant; unit of angle and arc.  One quadrant is one quarter of a circle.
  * The method in {@link SphCircle}, {@link SphSeg}, {@link SphElem} and
- * {@link SphPuzzle} will use this unit for angle and arc.
+ * {@link SphAnalyzer} will use this unit for angle and arc.
  * @const
  * @type {number}
  */
@@ -488,7 +488,7 @@ class SphAnalyzer
    * @param {number} radius2 - Radius of the second circle to intersect.
    * @param {number} distance - Distance between centers of two circles.
    * @returns {number[]} Information about intersection, which has values
-   *   `[ang, arc1, arc2]` (see method {@link SphPuzzle#relationTo}).
+   *   `[ang, arc1, arc2]` (see method {@link SphAnalyzer#relationTo}).
    */
   intersect(radius1, radius2, distance) {
     var a = radius2*Q;
@@ -755,31 +755,6 @@ class SphAnalyzer
   }
 
   /**
-   * Swap connection of two segments.
-   * The vertices of segments must at the same position.
-   * It have two cases: exclusive segments become inclusive segments in merge case;
-   * inclusive segments become exclusive segments in split case.
-   * 
-   * @param {SphSeg} seg1 - The first segment to swap.
-   * @param {SphSeg} seg2 - The second segment to swap.
-   * @param {number} ang1 - angle from `seg1` to `seg2`.
-   *   It must in the range of [0, 4] for merge case; in the range of [-4, 0]
-   *   for split case.
-   * @param {number} ang2 - angle from `seg2` to `seg1`.
-   *   It must in the range of [0, 4] for merge case; in the range of [-4, 0]
-   *   for split case.  And with constraint `ang1+ang2 == 4` for merge case;
-   *   with constraint `ang1+ang2 == -4` for split case.
-   */
-  swap(seg1, seg2, ang1, ang2) {
-    var [seg1_prev, seg2_prev] = [seg1.prev, seg2.prev];
-    var [seg1_ang, seg2_ang] = [seg1.angle, seg2.angle];
-
-    seg2_prev.connect(seg1);
-    seg1_prev.connect(seg2);
-    seg1.angle = seg2_ang + ang1;
-    seg2.angle = seg1_ang + ang2;
-  }
-  /**
    * Split segment into two segments.
    * splited segment will be in-place modified as the first part, and create new
    * object as the second part.
@@ -825,6 +800,18 @@ class SphAnalyzer
     return next_seg;
   }
   /**
+   * Check if vertex is trivial.
+   * All trivial vertex can be merged except for full circle case.
+   * 
+   * @param {number} seg - The segment to check.
+   * @returns {boolean} True if vertex is trivial.
+   */
+  isTrivialVertex(seg) {
+    return this.cmp(seg.angle, 2) == 0
+           && this.cmp(seg.radius, seg.prev.radius) == 0
+           && this.cmp(seg.circle.center, seg.prev.circle.center) == 0;
+  }
+  /**
    * Merge segment with the previous segment, and remove this segment.
    * The radius and center of them must be same, and this segment cannot be
    * self connected.
@@ -833,10 +820,7 @@ class SphAnalyzer
    * @returns {SphSeg} The removed segment.
    */
   mergePrev(seg) {
-    if ( seg === seg.prev
-         || this.cmp(seg.angle, 2) != 0
-         || this.cmp(seg.radius, seg.prev.radius) != 0
-         || this.cmp(seg.circle.center, seg.prev.circle.center) != 0 )
+    if ( seg === seg.prev || !this.isTrivialVertex(seg) )
       throw new Error("unable to merge segments");
 
     // merge segment
@@ -870,73 +854,160 @@ class SphAnalyzer
 
     return seg;
   }
+
   /**
-   * Glue two adjacent segments.
-   * They must have same affiliation.
+   * Swap connection of two segments.
+   * The vertices of segments must at the same position.
+   * It have two cases: exclusive segments become inclusive segments in merge case;
+   * inclusive segments become exclusive segments in split case.
    * 
-   * @param {SphSeg} segment1 - The first segment to glue.
-   * @param {SphSeg} segment2 - The second segment to glue.
+   * @param {SphSeg} seg1 - The first segment to swap.
+   * @param {SphSeg} seg2 - The second segment to swap.
+   * @param {number} ang1 - angle from `seg1` to `seg2`.
+   *   It must in the range of [0, 4] for merge case; in the range of [-4, 0]
+   *   for split case.
+   * @param {number} ang2 - angle from `seg2` to `seg1`.
+   *   It must in the range of [0, 4] for merge case; in the range of [-4, 0]
+   *   for split case.  And with constraint `ang1+ang2 == 4` for merge case;
+   *   with constraint `ang1+ang2 == -4` for split case.
    */
-  glueAdj(segment1, segment2) {
-    var offset = segment1.adj.get(segment2);
-    var affiliation = segment1.affiliation;
-    if ( offset === undefined || segment2.affiliation !== affiliation )
-      throw new Error("unable to glue segments");
-  
-    if ( segment1.lock )
-      segment1.lock.unlock();
-    if ( segment2.lock )
-      segment2.lock.unlock();
+  swap(seg1, seg2, ang1, ang2) {
+    var [seg1_prev, seg2_prev] = [seg1.prev, seg2.prev];
+    var [seg1_ang, seg2_ang] = [seg1.angle, seg2.angle];
 
-    // find end points of covers between segments
-    var brackets = [];
+    seg2_prev.connect(seg1);
+    seg1_prev.connect(seg2);
+    seg1.angle = seg2_ang + ang1;
+    seg2.angle = seg1_ang + ang2;
+  }
+  /**
+   * Find cover between two adjacent segments.
+   * 
+   * @param {SphSeg} seg1 - The first segment.
+   * @param {SphSeg} seg2 - The second segment.
+   * @returns {object[]} array with entries `[seg1, theta1, theta1_, seg2, theta2, theta2_]`:
+   *   the part from `theta1` to `theta1_` in `seg1` is adjacent to the part from
+   *   `theta2` to `theta2_` in `seg2`.
+   */
+  cover(seg1, seg2) {
+    var offset = seg1.adj.get(seg2);
+    if ( offset === undefined )
+      return [];
+    var brackets = new Map();
+    var adj_seg, theta;
 
-    var offset1 = this.mod4(offset, [4, segment1.arc]);
-    if ( offset1 <= segment1.arc )
-      brackets.push([offset1, 0, -1]);
-    var offset2 = this.mod4(offset, [4, segment2.arc]);
-    if ( offset2 <= segment2.arc )
-      brackets.push([0, offset2, +1]);
-    var offset1_ = this.mod4(offset-segment2.arc, [0, segment1.arc, offset1]);
-    if ( offset1_ != 0 && offset1_ < segment1.arc )
-      brackets.push([offset1_, segment2.arc, +1]);
-    var offset2_ = this.mod4(offset-segment1.arc, [0, segment2.arc, offset2]);
-    if ( offset2_ != 0 && offset2_ < segment2.arc )
-      brackets.push([segment1.arc, offset2_, -1]);
-    brackets.sort();
-    console.assert(brackets.length%2==0 && brackets.every((c,i) => c[2]==(-1)**i));
+    [adj_seg, theta] = this.jump(seg1, 0, +1);
+    if ( adj_seg === seg2 ) {
+      let key = this.snap([0, +1], brackets.keys());
+      if ( !brackets.has(key) )
+        brackets.set(key, [0, theta]);
+    }
+
+    [adj_seg, theta] = this.jump(seg1, seg1.arc, -1);
+    if ( adj_seg === seg2 ) {
+      let key = this.snap([seg1.arc, -1], brackets.keys());
+      if ( !brackets.has(key) )
+        brackets.set(key, [seg1.arc, theta]);
+    }
+
+    [adj_seg, theta] = this.jump(seg2, 0, +1);
+    if ( adj_seg === seg1 ) {
+      let key = this.snap([theta, -1], brackets.keys());
+      if ( !brackets.has(key) )
+        brackets.set(key, [theta, 0]);
+    }
+
+    [adj_seg, theta] = this.jump(seg2, seg2.arc, -1);
+    if ( adj_seg === seg1 ) {
+      let key = this.snap([theta, +1], brackets.keys());
+      if ( !brackets.has(key) )
+        brackets.set(key, [theta, seg2.arc]);
+    }
+
+    // build covers
+    var covers = [];
+    var keys = Array.from(brackets.keys()).sort(this.cmp.bind(this));
+    console.assert(keys.length%2 == 0);
+    for ( let i=0; i<keys.length; i+=2 ) {
+      console.assert(keys[i][1] > 0 && keys[i+1][1] < 0);
+      let [theta1 , theta2 ] = brackets.get(keys[i]);
+      let [theta1_, theta2_] = brackets.get(keys[i+1]);
+      covers.push([seg1, theta1, theta1_, seg2, theta2_, theta2]);
+    }
+
+    return covers;
+  }
+  /**
+   * Find the segments with same affiliation that are connected by adjacent
+   * relation.
+   * 
+   * @param {SphSeg} seg0 - The segment to zip.
+   * @returns {object[]} array with entries `[seg1, theta1, theta1_, seg2, theta2, theta2_]`:
+   *   the part from `theta1` to `theta1_` in `seg1` is adjacent to the part from
+   *   `theta2` to `theta2_` in `seg2`, where `seg1` is at the same side of `seg0`.
+   */
+  findZippers(seg0) {
+    var pairs = [];
+    var queue = new Set([seg0]);
+    for ( let seg of queue ) for ( let adj_seg of seg.adj.keys() )
+      if ( adj_seg.affiliation === seg.affiliation ) {
+        pairs.push([seg, adj_seg]);
+        for ( let seg_ of adj_seg.adj.keys() )
+          if ( seg_.affiliation === seg.affiliation )
+            queue.add(seg_);
+      }
+
+    var zippers = [];
+    for ( let [seg1, seg2] of pairs )
+      zippers.push(...this.cover(seg1, seg2));
+
+    return zippers;
+  }
+  /**
+   * Glue adjacent segments with same affiliation.
+   * 
+   * @param {object[]} zippers - The data returned by {@link SphAnalyzer#findZippers}.
+   */
+  glueAdj(zippers) {
+    if ( zippers.length == 0 )
+      return;
+
+    if ( zippers[0][0].lock )
+      zippers[0][0].lock.unlock();
+    if ( zippers[0][3].lock )
+      zippers[0][3].lock.unlock();
 
     // interpolate
-    var offsets1 = new Set(brackets.map(([th1, th2]) => th1));
-    var offsets2 = new Set(brackets.map(([th1, th2]) => th2));
-    var contacts1 = new Map();
-    var contacts2 = new Map();
-    for ( let [contacts, segment, offsets] of [[contacts1, segment1, offsets1],
-                                               [contacts2, segment2, offsets2]] )
-      for ( let theta of Array.from(offsets).sort().reverse() ) {
-        if ( theta == segment.arc )
-          contacts.set(theta, [segment.next, 2-segment.next.angle]);
-        else if ( theta == 0 )
-          contacts.set(theta, [segment, 0]);
-        else if ( theta > 0 && theta < segment.arc )
-          contacts.set(theta, [this.interpolate(segment, theta), 0]);
-        else
-          console.assert(false);
-      }
+    var extrapolate = (seg, theta, prefer) => {
+      while ( theta > seg.arc )
+        [seg, theta] = [seg.next, this.snap(theta-seg.arc, [0, seg.next.arc])];
+      if ( theta > 0 && theta < seg.arc )
+        this.interpolate(seg, theta);
+      if ( prefer > 0 && theta == seg.arc )
+        [seg, theta] = [seg.next, 0];
+      return seg;
+    };
+    var contacts = [];
+    for ( let [seg1, theta1, theta1_, seg2, theta2, theta2_] of zippers ) {
+      let seg1_ = extrapolate(seg1, theta1_, -1);
+      seg1 = extrapolate(seg1, theta1, +1);
+      console.assert(seg1_ === seg1);
+
+      let seg2_ = extrapolate(seg2, theta2_, -1);
+      seg2 = extrapolate(seg2, theta2, +1);
+      console.assert(seg2_ === seg2);
+
+      contacts.push([seg1, seg2]);
+    }
 
     // zip
-    for ( let i=0; i<brackets.length; i++ ) {
-      let [theta1, theta2] = brackets[i];
-      let [seg1, ang1] = contacts1.get(theta1);
-      let [seg2, ang2] = contacts2.get(theta2);
-      if ( seg1 !== seg2 )
-        this.swap(seg1, seg2, 2-ang1+ang2, 2-ang2+ang1);
-
-      if ( i % 2 == 1 ) {
-        console.assert(seg2.next.next === seg2 && this.cmp(seg2.angle, 4) == 0);
-        affiliation.withdraw(seg2);
-        affiliation.withdraw(seg2.prev);
-      }
+    for ( let [seg1, seg2] of contacts ) {
+      let seg1_ = seg1.next;
+      let seg2_ = seg2.next;
+      this.swap(seg1, seg2_, 4-seg2_.angle, seg2_.angle);
+      this.swap(seg1_, seg2, seg1_.angle, 4-seg1_.angle);
+      seg1.affiliation.withdraw(seg1);
+      seg2.affiliation.withdraw(seg2);
     }
   }
 
@@ -1178,7 +1249,7 @@ class SphAnalyzer
    * 
    * @param {SphCircle} elem - The element to slice.
    * @param {SphCircle} circle - The knife for slicing.
-   * @returns {SphSeg[]} Sliced segments of both sides of `circle` and sliced
+   * @returns {SphSeg[][]} Sliced segments of both sides of `circle` and sliced
    *   boundaries of both sides.
    */
   slice(elem, circle) {
@@ -1418,6 +1489,7 @@ class SphAnalyzer
 
     return res;
   }
+
   /**
    * Clean trivial structure of puzzle.
    * It will: merge untwistable edges, merge trivial edges, and merge trivial
@@ -1426,30 +1498,34 @@ class SphAnalyzer
    * @param {SphElem[]} elements - The elements to clean.
    */
   clean(elements) {
+    // merge untwistable edges
+    var elements = separateTwistablePart(elements).map(([h,...t]) => h.merge(t));
+
     // merge trivial edges
     for ( let elem of elements ) {
-      while ( true ) {
-        let bd = Array.from(elem.boundaries);
-        let seg1, seg2;
-        for ( seg1 of bd )
-          if ( seg2 = bd.find(seg2 => seg2.adj.has(seg1)) )
-            break;
-
-        if ( !seg2 )
-          break;
-        this.glueAdj(seg1, seg2);
+      let trivial = [];
+      let boundaries = new Set(elem.boundaries);
+      for ( let seg of boundaries ) {
+        let zippers = this.findZippers(seg);
+        for ( let [seg,,,seg_,,] of zippers ) {
+          boundaries.delete(seg);
+          boundaries.delete(seg_);
+        }
+        if ( zippers.length )
+          trivial.push(zippers);
       }
+      for ( let zippers of trivial )
+        this.glueAdj(zippers);
     }
 
     // merge trivial vertices
-    for ( let elem of elements )
-      for ( let loop of this.loops(elem.boundaries) )
-        for ( let seg of loop )
-          if ( seg !== seg.prev
-               && this.cmp(seg.angle, 2) == 0
-               && this.cmp(seg.radius, seg.prev.radius) == 0
-               && this.cmp(seg.circle.center, seg.prev.circle.center) == 0 )
-            this.mergePrev(seg);
+    for ( let elem of elements ) {
+      let trivial = Array.from(elem.boundaries)
+                         .filter(seg => this.isTrivialVertex(seg));
+      for ( let seg of trivial )
+        if ( seg !== seg.prev )
+          this.mergePrev(seg);
+    }
   }
   
   /**
@@ -1464,26 +1540,28 @@ class SphAnalyzer
     var uncovered = [];
     for ( let seg of segments ) {
       // find end points of covers between segments
-      let brackets = [];
+      let brackets = new Set();
+
+      let seg_, theta_;
+      [seg_, theta_] = this.jump(seg, 0, +1);
+      if ( segments.has(seg_) )
+        brackets.add([0, +1]);
+      [seg_, theta_] = this.jump(seg, seg.arc, -1);
+      if ( segments.has(seg_) )
+        brackets.add([seg.arc, -1]);
+
       for ( let [adj_seg, offset] of seg.adj ) if ( segments.has(adj_seg) ) {
-        let [segment1, segment2] = [seg, adj_seg];
-  
-        let offset1 = this.mod4(offset, [4, segment1.arc]);
-        if ( offset1 <= segment1.arc )
-          brackets.push([offset1, -1]);
-        let offset2 = this.mod4(offset, [4, segment2.arc]);
-        if ( offset2 <= segment2.arc )
-          brackets.push([0, +1]);
-        let offset1_ = this.mod4(offset-segment2.arc, [0, segment1.arc, offset1]);
-        if ( offset1_ != 0 && offset1_ < segment1.arc )
-          brackets.push([offset1_, +1]);
-        let offset2_ = this.mod4(offset-segment1.arc, [0, segment2.arc, offset2]);
-        if ( offset2_ != 0 && offset2_ < segment2.arc )
-          brackets.push([segment1.arc, -1]);
+        [seg_, theta_] = this.jump(adj_seg, 0, +1);
+        if ( seg_ === seg )
+          brackets.add(this.snap([theta_, -1], brackets));
+        [seg_, theta_] = this.jump(adj_seg, adj_seg.arc, -1);
+        if ( seg_ === seg )
+          brackets.add(this.snap([theta_, +1], brackets));
       }
-      brackets.unshift([0, -1]);
-      brackets.push([seg.arc, +1]);
-      brackets.sort(this.cmp.bind(this));
+
+      brackets.add([0, -1]);
+      brackets.add([seg.arc, +1]);
+      brackets = Array.from(brackets).sort(this.cmp.bind(this));
   
       // find uncovered interval
       console.assert(brackets.length % 2 == 0);
