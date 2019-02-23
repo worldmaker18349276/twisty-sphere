@@ -226,7 +226,7 @@ class SphCircle
  *   where key is adjacent segment, and value is offset between vertices, in the
  *   range of (0, 4].
  * @property {SphElem} affiliation - The affiliation of this segment.
- * @property {SphLock} lock - The lock of this segment.
+ * @property {SphTrack} track - The track of this segment.
  */
 class SphSeg
 {
@@ -240,7 +240,7 @@ class SphSeg
     this.prev = undefined;
     this.adj = new Map();
     this.affiliation = undefined;
-    this.lock = undefined;
+    this.track = undefined;
   }
   get vertex() {
     var vec = [Math.sin(this.radius*Q), 0, Math.cos(this.radius*Q)];
@@ -321,57 +321,90 @@ class SphElem
 }
 
 /**
- * Lock of sliding sphere.
+ * Track of sliding sphere.
  * It represent the full circle of gap between elements, which is able to twist.
  * 
  * @class
- * @property {SphSeg[]} dash - Segments of boundaries.
- * @property {number} offset - Offset between the first segments in `dash`.
- *   Notice that it may not modulus of 4.
- * @property {SphCircle} circle - Circle of lock.
+ * @property {SphSeg[]} left - Segments of left of track.
+ * @property {SphSeg[]} right - Segments of right of track.
+ * @property {number} offset - Offset between the first segments in `left` and
+ * `right`.  Notice that it may not modulus of 4.
+ * @property {Set<SphTrack>} locks - the intersected tracks.
+ * @property {SphCircle} circle - Circle of track (with center on the left side).
  */
-class SphLock
+class SphTrack
 {
   constructor() {
-    this.teeth = [];
-    this.dual = undefined;
+    this.left = [];
+    this.right = [];
     this.offset = 0;
+    this.locks = new Set();
   }
   get circle() {
-    return this.teeth[0].circle;
+    return this.left[0].circle;
   }
 
-  lock(segs) {
-    this.teeth = segs.slice(0);
-    for ( let seg of segs )
-      seg.lock = this;
+  lay(left, right) {
+    this.left = left.slice(0);
+    this.right = right.slice(0);
+    for ( let seg of left )
+      seg.track = this;
+    for ( let seg of right )
+      seg.track = this;
     return this;
   }
-  unlock() {
-    for ( let seg of this.teeth )
-      seg.lock = undefined;
+  tearDown() {
+    for ( let track of this.locks )
+      this.unlock(track);
+    for ( let seg of this.left )
+      seg.track = undefined;
+    for ( let seg of this.right )
+      seg.track = undefined;
+    this.left = [];
+    this.right = [];
     return this;
-  }
-  pairWith(lock, offset) {
-    this.dual = lock;
-    lock.dual = this;
-    this.offset = lock.offset = offset;
   }
   insertAfter(seg, seg0) {
-    let i = this.teeth.indexOf(seg0);
-    if ( i == -1 )
+    var i = this.left.indexOf(seg0);
+    if ( i != -1 ) {
+      this.left.splice(i+1, 0, seg);
+      seg.track = this;
       return;
-    this.teeth.splice(i+1, 0, seg);
-    seg.lock = this;
+    }
+
+    i = this.right.indexOf(seg0);
+    if ( i != -1 ) {
+      this.right.splice(i+1, 0, seg);
+      seg.track = this;
+      return;
+    }
   }
   remove(seg) {
-    let i = this.teeth.indexOf(seg);
-    if ( i == -1 )
+    var i = this.left.indexOf(seg);
+    if ( i != -1 ) {
+      this.left.splice(i, 1);
+      seg.track = undefined;
+      if ( i == 0 )
+        this.offset = this.offset - seg.arc;
       return;
-    this.teeth.splice(i, 1);
-    seg.lock = undefined;
-    if ( i == 0 )
-      this.offset = this.dual.offset = this.offset - seg.arc;
+    }
+
+    i = this.right.indexOf(seg);
+    if ( i != -1 ) {
+      this.right.splice(i, 1);
+      seg.track = undefined;
+      if ( i == 0 )
+        this.offset = this.offset - seg.arc;
+      return;
+    }
+  }
+  lock(track) {
+    this.locks.add(track);
+    track.locks.add(this);
+  }
+  unlock(track) {
+    this.locks.delete(track);
+    track.locks.delete(this);
   }
 }
 
@@ -783,8 +816,8 @@ class SphAnalyzer
     seg.connect(next_seg);
     if ( seg.affiliation )
       seg.affiliation.accept(next_seg);
-    if ( seg.lock )
-      seg.lock.insertAfter(next_seg, seg);
+    if ( seg.track )
+      seg.track.insertAfter(next_seg, seg);
 
     for ( let [adj_seg, offset] of seg.adj ) {
       // remove adjacent of segment
@@ -835,8 +868,8 @@ class SphAnalyzer
       seg.prev.next = undefined;
     if ( seg.affiliation )
       seg.affiliation.withdraw(seg);
-    if ( seg.lock )
-      seg.lock.remove(seg);
+    if ( seg.track )
+      seg.track.remove(seg);
 
     // merge adjacent
     for ( let [adj_seg, offset] of seg.adj ) {
@@ -972,29 +1005,32 @@ class SphAnalyzer
     if ( zippers.length == 0 )
       return;
 
-    if ( zippers[0][0].lock )
-      zippers[0][0].lock.unlock();
-    if ( zippers[0][3].lock )
-      zippers[0][3].lock.unlock();
+    for ( let zipper of zippers )
+      if ( zipper[0].track )
+        zipper[0].track.tearDown();
 
     // interpolate
     var extrapolate = (seg, theta, prefer) => {
-      while ( theta > seg.arc )
+      theta = this.snap(theta, [0, seg.arc]);
+      while ( theta >= seg.arc )
         [seg, theta] = [seg.next, this.snap(theta-seg.arc, [0, seg.next.arc])];
       if ( theta > 0 && theta < seg.arc )
         this.interpolate(seg, theta);
+
       if ( prefer > 0 && theta == seg.arc )
         [seg, theta] = [seg.next, 0];
+      if ( prefer < 0 && theta == 0 )
+        [seg, theta] = [seg.prev, seg.prev.arc];
       return seg;
     };
     var contacts = [];
     for ( let [seg1, theta1, theta1_, seg2, theta2, theta2_] of zippers ) {
-      let seg1_ = extrapolate(seg1, theta1_, -1);
-      seg1 = extrapolate(seg1, theta1, +1);
+      let seg1_ = extrapolate(seg1, theta1, +1);
+      seg1 = extrapolate(seg1, theta1_, -1);
       console.assert(seg1_ === seg1);
 
-      let seg2_ = extrapolate(seg2, theta2_, -1);
-      seg2 = extrapolate(seg2, theta2, +1);
+      let seg2_ = extrapolate(seg2, theta2, +1);
+      seg2 = extrapolate(seg2, theta2_, -1);
       console.assert(seg2_ === seg2);
 
       contacts.push([seg1, seg2]);
@@ -1735,144 +1771,150 @@ class SphAnalyzer
   }
 
   /**
-   * Partition by disjoint locks.
-   * 
-   * @param {...SphLock} locks - The locks which separate whole space.
-   *   Both of lock and its dual lock should be included simultaneously.
-   * @returns {Array} All part divided by locks, which have entries `{elements, locks}`.
-   *   `elements` is set of elements in this part,
-   *   `locks` is set of locks of boundaries of this part.
-   */
-  partitionBy(...locks) {
-    var bd = locks.flatMap(lock => lock.teeth);
-    locks = new Set(locks);
-    var partition = [];
-
-    while ( locks.size ) {
-      let group = {locks: new Set(), elements: new Set()};
-
-      let lock = locks.values().next().value;
-      locks.delete(lock);
-      group.locks.add(lock);
-      for ( let seg of lock.teeth )
-        group.elements.add(seg.affiliation);
-
-      for ( let elem of group.elements ) for ( let seg of elem.boundaries ) {
-        if ( !bd.includes(seg) ) {
-          for ( let adj_seg of seg.adj.keys() )
-            group.elements.add(adj_seg.affiliation);
-
-        } else if ( !group.locks.has(seg.lock) ) {
-          locks.delete(seg.lock);
-          group.locks.add(seg.lock);
-          for ( let par_seg of seg.lock.teeth )
-            group.elements.add(par_seg.affiliation);
-        }
-      }
-      partition.push(group);
-    }
-    return partition;
-  }
-  /**
-   * Build Lock along extended circle of given segment.
+   * Build track along extended circle of given segment.
    * 
    * @param {SphSeg} seg
-   * @returns {SphLock[]} The locks, or `undefined` if it is unlockable.
+   * @returns {SphTrack} The track, or `undefined` if it is illegal.
    */
-  buildLock(seg) {
+  buildTrack(seg) {
     var [seg_, offset] = seg.adj.entries().next().value;
     var left = this.full(this.ski(seg));
     if ( !left ) return;
     var right = this.full(this.ski(seg_));
     if ( !right ) return;
 
-    var left_lock = new SphLock();
-    var right_lock = new SphLock();
-    left_lock.lock(left);
-    right_lock.lock(right);
-    left_lock.pairWith(right_lock, offset);
-    return [left_lock, right_lock];
+    var track = new SphTrack();
+    track.lay(left, right);
+    for ( let seg of track.left )
+      for ( let [angle, inter_seg, offset] of this.spin(seg) )
+        if ( angle < 2 && angle > 0 && offset == 0 )
+          if ( inter_seg.track ) track.lock(inter_seg.track);
+
+    return track;
   }
   /**
-   * Twist locks with given angles.
+   * Partition by disjoint boundaries.
    * 
-   * @param {Map<SphLock,number>} op - The map that tell you which lock should
+   * @param {...SphSeg[]} fences - The boundaries which separate whole space.
+   *   Both of boundaries and its dual should be included simultaneously.
+   * @returns {Array} All part divided by boundaries, which have entries
+   *   `{elements, fences}`.
+   *   `elements` is set of elements in this region,
+   *   `fences` is set of boundaries of this region.
+   */
+  partitionBy(...fences) {
+    var partition = [];
+
+    var unprocessed = new Set(fences);
+    for ( let bd of unprocessed ) {
+      let region = {fences: new Set(), elements: new Set()};
+
+      region.fences.add(bd);
+      for ( let par_seg of bd )
+        region.elements.add(par_seg.affiliation);
+
+      for ( let elem of region.elements ) for ( let seg of elem.boundaries ) {
+        bd = fences.find(bd => bd.includes(seg));
+
+        if ( bd === undefined ) {
+          for ( let adj_seg of seg.adj.keys() )
+            region.elements.add(adj_seg.affiliation);
+
+        } else if ( !region.fences.has(bd) ) {
+          unprocessed.delete(bd);
+          region.fences.add(bd);
+          for ( let par_seg of bd )
+            region.elements.add(par_seg.affiliation);
+        }
+      }
+      partition.push(region);
+    }
+    return partition;
+  }
+  /**
+   * Twist along tracks with given angles.
+   * 
+   * @param {Map<SphTrack,number>} op - The map that tell you which track should
    *   twist by what angle.
    * @param {SphElem=} hold - The element whose orientation should be fixed.
    */
   twist(op, hold) {
     op = new Map(op);
-    for ( let [lock, theta] of op ) {
-      if ( !op.has(lock.dual) )
-        op.set(lock.dual, theta);
-      console.assert(this.cmp(op.get(lock.dual), theta) == 0);
-    }
 
     // unlock
-    var bd = Array.from(op.keys()).flatMap(lock => lock.teeth);
-    for ( let seg0 of bd )
-      for ( let [angle, seg, offset] of this.spin(seg0) )
-        if ( offset == 0 && angle != 0 && angle != 2 )
-          if ( seg.lock ) seg.lock.unlock();
+    for ( let track of op.keys() )
+      for ( let inter_track of track.locks )
+        inter_track.tearDown();
 
     // twist
-    var partition = this.partitionBy(...op.keys());
-    var group0 = partition.find(g => g.elements.has(hold)) || partition[0];
-    group0.rotation = [0,0,0,1];
-    var processed = new Set([group0]);
+    var tracks = Array.from(op.keys());
+    var partition = this.partitionBy(...tracks.flatMap(track => [track.left, track.right]));
+    var region0 = partition.find(g => g.elements.has(hold)) || partition[0];
+    region0.rotation = [0,0,0,1];
+    var rotated = new Set([region0]);
 
-    for ( let group of processed ) for ( let lock of group.locks ) {
-      let adj_group = partition.find(g => g.locks.has(lock.dual));
+    for ( let region of rotated ) for ( let bd of region.fences ) {
+      let track = tracks.find(track => track.left===bd || track.right===bd);
+      let dual_bd = track.left===bd ? track.right : track.left;
+      let adj_region = partition.find(g => g.fences.has(dual_bd));
 
-      let theta = op.get(lock.dual);
-      let rotation = quaternion(lock.dual.circle.center, theta*Q);
-      q_mul(rotation, group.rotation, rotation);
+      let theta = op.get(track);
+      let rotation = quaternion(bd[0].circle.center, -theta*Q);
+      q_mul(region.rotation, rotation, rotation);
 
-      if ( !processed.has(adj_group) ) {
-        lock.offset = lock.dual.offset = this.mod4(lock.offset - theta);
-
-        adj_group.rotation = rotation;
-        for ( let elem of adj_group.elements )
-          elem.rotate(rotation);
-        processed.add(adj_group);
-
-      } else {
-        console.assert(this.cmp(adj_group.rotation, rotation) == 0);
+      if ( !rotated.has(adj_region) ) {
+        adj_region.rotation = rotation;
+        rotated.add(adj_region);
       }
+      console.assert(this.cmp(adj_region.rotation, rotation) == 0);
     }
 
-    // relink adjacent segments
-    for ( let seg of bd )
-      seg.adj.clear();
+    for ( let region of partition )
+      for ( let elem of region.elements )
+        elem.rotate(region.rotation);
+    for ( let [track, theta] of op )
+      track.offset = this.mod4(track.offset - theta);
 
-    var offset1 = 0, offset2 = 0;
-    for ( let lock of op.keys() )
-      for ( let seg1 of lock.teeth ) {
-        offset2 = 0;
-        for ( let seg2 of lock.dual.teeth ) {
-          let offset = this.mod4(lock.offset-offset1-offset2, [4, seg1.arc, seg2.arc]);
+    // relink adjacent segments
+    for ( let track of op.keys() ) {
+      for ( let seg of track.left )
+        seg.adj.clear();
+      for ( let seg of track.right )
+        seg.adj.clear();
+    }
+
+    for ( let track of op.keys() ) {
+      let offset1 = 0;
+      for ( let seg1 of track.left ) {
+        let offset2 = 0;
+        for ( let seg2 of track.right ) {
+          let offset = this.mod4(track.offset-offset1-offset2, [4, seg1.arc, seg2.arc]);
           if ( this.cmp(offset, seg1.arc+seg2.arc) < 0 )
             seg1.adjacent(seg2, offset);
           offset2 += seg2.arc;
         }
         offset1 += seg1.arc;
       }
+    }
 
-    // lock
-    for ( let seg0 of bd )
-      for ( let [angle, seg, offset] of this.spin(seg0) )
-        if ( offset == 0 && angle != 0 && angle != 2 )
-          if ( !seg.lock ) this.buildLock(seg);
+    // relock
+    for ( let track of op.keys() )
+      for ( let seg0 of track.left )
+        for ( let [angle, inter_seg, offset] of this.spin(seg0) )
+          if ( angle < 2 && angle > 0 && offset == 0 )
+            if ( !inter_seg.track ) this.buildTrack(inter_seg);
   }
 
   /**
    * Make tick at end point of segment.
+   * Tick is diverged segments at end point of segment, which may form another
+   * intersected track.
    * 
    * @param {SphSeg} prev_seg
-   * @returns {object} Tick at `prev_seg.next.vertex`, which have value
+   * @returns {object} Tick at `prev_seg.next.vertex`, which has value
    *   `{segment, subticks, is_free}`, and `subticks = [{angle, segment}, ...]`:
    *   `segment` is next segment along extending circle of this segment;
-   *   `subtick.angle` is rolling angle, with unit of quadrant, range in (0, 2);
+   *   `subtick.angle` is rolling angle;
    *   `subtick.segment` is segment of subtick, which has vertex at tick center;
    *   `is_free` indicate subticks are free or not.
    */
@@ -1904,16 +1946,17 @@ class SphAnalyzer
     return {segment, subticks, is_free};
   }
   /**
-   * Detect latches by given ticks; Latch has information about twistable circle.
+   * Detect latches by given ticks.
+   * Latch is potential to form intersected track at one side of this track.
    * 
    * @param {object[]} ticks
    * @returns {object[]} Array of latches, which has entries `{arc, center, segment}`
    *   or `{arc, center, segment0}` (free latch):
-   *   `arc` is arc of shadow under twistable circle;
-   *   `center` is center of twistable circle;
-   *   `segment` is locked segment;
-   *   `segment0` is segment in which `segment0.next.vertex` is point of twistable
-   *   circle.
+   *   `arc` is arc of shadow under circle of latch;
+   *   `center` is center of latch;
+   *   `segment` is segment which may form a rail;
+   *   `segment0` is segment in which `segment0.next.vertex` is point of circle
+   *   of latch.
    */
   detectLatches(ticks) {
     var latches = [];
@@ -2022,19 +2065,18 @@ class SphAnalyzer
     return latches;
   }
   /**
-   * Detect non-trivial twist angle of lock.
+   * Detect non-trivial twist angle of track.
    * 
-   * @param {SphLock} lock
-   * @returns {Map<number,number[]>} Map from twist angle to unlockable segment,
-   *   has entries `[ang, [seg, arc]]` or `[ang, [seg0, 0]]` (masker key):
-   *   `ang` is twist angle that may unlock intersecting circle;
-   *   `seg` is segment that may become unlockable;
-   *   `arc` is arc of shadow under unlockable circle;
-   *   `seg0` is segment in which `seg0.next.vertex` is point of unlockable circle.
+   * @param {SphTrack} track
+   * @returns {Map<number,number[][]>} Map from twist angle to matches, its
+   *   value is an array with entries `[seg, 0]` or `[seg0, arc]`:
+   *   `seg` is segment that may form intersected track;
+   *   `seg0` is segment in which `seg0.next.vertex` is point of latch;
+   *   `arc` is arc of shadow under circle of latch.
    */
-  decipher(lock) {
+  decipher(track) {
     var ticks1 = [], ticks2 = [];
-    for ( let [segs, ticks] of [[lock.teeth, ticks1], [lock.dual.teeth, ticks2]] ) {
+    for ( let [segs, ticks] of [[track.left, ticks1], [track.right, ticks2]] ) {
       for ( let i=0; i<segs.length; i++ ) {
         let seg = segs[i-1] || segs[segs.length-1];
         let tick = this.makeTick(seg);
@@ -2047,19 +2089,17 @@ class SphAnalyzer
     var latches2 = this.detectLatches(ticks2);
   
     var passwords = new Map(); // theta => [segment, 0] or [segment0, arc]
-    var keys = new Set([]);
     for ( let latch1 of latches1 ) for ( let latch2 of latches2 ) {
       let test;
       if ( latch1.segment && latch2.segment )
         test = this.cmp([latch1.arc, latch1.segment.radius],
-                       [latch2.arc, latch2.segment.radius]) == 0;
+                        [latch2.arc, latch2.segment.radius]) == 0;
       else
         test = this.cmp(latch1.arc, latch2.arc) == 0;
   
   
       if ( test ) {
-        let key = this.mod4(lock.offset-latch1.center-latch2.center, keys);
-        keys.add(key);
+        let key = this.mod4(track.offset-latch1.center-latch2.center, passwords.keys());
         if ( !passwords.has(key) )
           passwords.set(key, []);
   

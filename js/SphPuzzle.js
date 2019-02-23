@@ -121,27 +121,26 @@ class SphPuzzle extends THREE.EventDispatcher
       }
       new_bd.push(...in_bd, ...out_bd);
     }
-    var locks;
+    var tracks;
     if ( new_bd.length )
-      if ( !new_bd[0].lock )
-        locks = this.analyzer.buildLock(new_bd[0]);
-    return locks[0];
+      if ( !new_bd[0].track )
+        tracks = this.analyzer.buildTrack(new_bd[0]);
+    return tracks[0];
   }
-  twist(lock, theta) {
+  twist(track, theta, hold) {
     theta = this.analyzer.mod4(theta);
-    var hold = lock.dual.teeth[0].affiliation;
-    var partition = this.analyzer.partitionBy(lock, lock.dual);
+    var partition = this.analyzer.partitionBy(track.left, track.right);
     if ( partition.length == 1 )
       throw new Error("Untwistable!");
     var moved = partition.filter(g => !g.elements.has(hold))
                          .flatMap(g => Array.from(g.elements));
 
-    this.analyzer.twist([[lock, theta], [lock.dual, theta]], hold);
+    this.analyzer.twist([[track, theta]], hold);
 
     for ( let elem of moved )
       elem.host.dispatchEvent({type:"modified", attr:"orientation"});
 
-    return lock;
+    return track;
   }
 }
 
@@ -603,8 +602,8 @@ class SphPuzzleInfoBuilder
       return this.makeElemInfo(target);
     else if ( target instanceof SphSeg )
       return this.makeSegInfo(target);
-    else if ( target instanceof SphLock )
-      return this.makeLockInfo(target);
+    else if ( target instanceof SphTrack )
+      return this.makeTrackInfo(target);
   }
   makeElemInfo(elem) {
     var info = [];
@@ -635,8 +634,8 @@ class SphPuzzleInfoBuilder
     info.push({type: [0, 4], name: "angle", get: () => seg.angle});
 
     info.push({type: "link", name: "aff.", get: () => seg.affiliation});
-    if ( seg.lock )
-      info.push({type: "link", name: "lock", get: () => seg.lock});
+    if ( seg.track )
+      info.push({type: "link", name: "track", get: () => seg.track});
     info.push({type: "link", name: "prev", get: () => seg.prev});
     info.push({type: "link", name: "next", get: () => seg.next});
     for ( let [adj_seg, offset] of seg.adj )
@@ -644,21 +643,23 @@ class SphPuzzleInfoBuilder
 
     return info;
   }
-  makeLockInfo(lock) {
+  makeTrackInfo(track) {
     var info = [];
 
-    info.push({type: [0, 4], name: "offset", get: () => lock.offset});
+    info.push({type: [0, 4], name: "offset", get: () => track.offset});
 
-    info.push({type: "link", name: "dual", get: () => lock.dual});
     var n = 0;
-    for ( let seg of lock.teeth )
-      info.push({type: "link", name: `tooth.${n++}`, get: () => seg});
+    for ( let seg of track.left )
+      info.push({type: "link", name: `left.${n++}`, get: () => seg});
+    n = 0;
+    for ( let seg of track.right )
+      info.push({type: "link", name: `right.${n++}`, get: () => seg});
 
     return info;
   }
 }
 
-class SphPuzzleSphere
+class SphPuzzleView
 {
   constructor(display, puzzle, selector) {
     this.display = display;
@@ -676,8 +677,8 @@ class SphPuzzleSphere
           case "element":
             this.selector.preselection = seg.affiliation;
             break;
-          case "lock":
-            this.selector.preselection = seg.lock;
+          case "track":
+            this.selector.preselection = seg.track;
             break;
         }
     
@@ -840,8 +841,8 @@ class SphPuzzleSphere
         return [target];
       else if ( target instanceof SphElem )
         return target.boundaries;
-      else if ( target instanceof SphLock )
-        return target.teeth;
+      else if ( target instanceof SphTrack )
+        return [...target.left, ...target.right];
       else
         return [];
     }
@@ -889,7 +890,7 @@ class SphPuzzleWorld
 
     // 3D view
     var display = new Display(id, width, height);
-    this.view = new SphPuzzleSphere(display, this.puzzle, this.selector);
+    this.view = new SphPuzzleView(display, this.puzzle, this.selector);
 
     // gui
     this.gui = new dat.GUI();
@@ -914,54 +915,59 @@ class SphPuzzleWorld
 
 
     this.cmd = {
-      ["merge elements"]: () => this.mergeElemCmd(this.selector),
-      ["merge vertex"]: () => this.mergeVertexCmd(this.selector),
+      ["merge"]: () => this.mergeCmd(this.selector),
       ["interpolate"]: () => this.interpolateCmd(this.selector),
-      ["merge edges"]: () => this.mergeEdgeCmd(this.selector),
-      ["align segments"]: () => this.alignSegCmd(this.selector),
+      ["align"]: () => this.alignSegCmd(this.selector),
       ["slice"]: () => this.sliceCmd(this.selector),
     };
+    var cmd_gui = this.gui.addFolder("commands");
     for ( let name in this.cmd )
-      this.gui.add(this.cmd, name);
+      cmd_gui.add(this.cmd, name);
 
-    this.gui.add(this.view, "selectOn", ["segment", "element", "lock"]).name("select on");
     
     var sel_gui = this.gui.addFolder("select");
+    sel_gui.add(this.view, "selectOn", ["segment", "element", "track"]).name("select on");
     var info_builder = new SphPuzzleInfoBuilder();
     this.sel_panel = new SelectorPanel(sel_gui, this.selector, info_builder);
   }
 
-  mergeElemCmd(selector) {
-    if ( selector.selections.length <= 1 ) {
-      window.alert("Please select two elements at least!");
+  mergeCmd(selector) {
+    if ( selector.selections.length != 2 ) {
+      window.alert("Please select two segments!");
       return;
     }
-    if ( selector.selections.some(elem => !(elem instanceof SphElem)) ) {
-      window.alert("Not element!");
-      return;
-    }
-    var pieces = selector.selections.map(elem => elem.host);
-    var res = this.puzzle.merge(...pieces);
-    selector.select(res.element);
-  }
-  mergeVertexCmd(selector) {
-    if ( selector.selections.length != 1 ) {
-      window.alert("Please select one segment!");
-      return;
-    }
-    var seg = selector.selections[0];
-    if ( !(seg instanceof SphSeg) ) {
+    var [seg1, seg2] = selector.selections;
+    if ( !(seg1 instanceof SphSeg) || !(seg2 instanceof SphSeg) ) {
       window.alert("Not segment!");
       return;
     }
-    if ( seg === seg.prev || !this.puzzle.analyzer.isTrivialVertex(seg) ) {
-      window.alert("Cannot merge!");
-      return;
+
+    if ( seg1.affiliation !== seg2.affiliation ) {
+      let piece1 = seg1.affiliation.host;
+      let piece2 = seg2.affiliation.host;
+      let res = this.puzzle.merge(piece1, piece2);
+      selector.select(seg1);
+      selector.toggle(seg2);
+
+    } else if ( seg1.adj.has(seg2) ) {
+      let piece = this.puzzle.mergeEdge(seg1, seg2);
+      selector.deselect();
+
+    } else if ( seg1.next === seg2 || seg2.next === seg1 ) {
+      if ( seg1.next === seg2 ) seg1 = seg2;
+      if ( seg1 === seg1.prev || !this.puzzle.analyzer.isTrivialVertex(seg1) ) {
+        window.alert("Cannot merge!");
+        return;
+      }
+
+      let prev = seg1.prev;
+      this.puzzle.mergeVertex(seg1);
+      selector.select(prev);
+
+    } else {
+      window.alert("merge what?");
     }
 
-    var prev = seg.prev;
-    this.puzzle.mergeVertex(seg);
-    selector.select(prev);
   }
   interpolateCmd(selector) {
     if ( selector.selections.length != 1 ) {
@@ -992,24 +998,6 @@ class SphPuzzleWorld
     selector.select(seg);
     selector.toggle(seg.next);
   }
-  mergeEdgeCmd(selector) {
-    if ( selector.selections.length != 2 ) {
-      window.alert("Please select two segments!");
-      return;
-    }
-    var [seg1, seg2] = selector.selections;
-    if ( !(seg1 instanceof SphSeg) || !(seg2 instanceof SphSeg) ) {
-      window.alert("Not segment!");
-      return;
-    }
-    if ( seg1.affiliation !== seg2.affiliation || !seg1.adj.has(seg2) ) {
-      window.alert("Cannot merge edges!");
-      return;
-    }
-
-    var piece = this.puzzle.mergeEdge(seg1, seg2);
-    selector.select(piece.element);
-  }
   alignSegCmd(selector) {
     if ( selector.selections.length != 1 && selector.selections.length != 2 ) {
       window.alert("Please select one or two segments!");
@@ -1022,20 +1010,26 @@ class SphPuzzleWorld
     }
 
     if ( seg2 ) {
-      if ( !seg1.lock || seg1.lock.dual !== seg2.lock ) {
+      if ( !seg1.track || seg1.track !== seg2.track ) {
         window.alert("Cannot align segmets!");
         return;
       }
-
-      var offset0 = seg1.lock.offset;
+      if ( seg1.track.right.includes(seg1) )
+        [seg1, seg2] = [seg2, seg1];
+      if ( !seg1.track.left.includes(seg1) || !seg2.track.right.includes(seg2) ) {
+        window.alert("Cannot align segmets!");
+        return;
+      }
+      
+      var offset0 = seg1.track.offset;
       var offset1 = 0;
-      for ( let seg of seg1.lock.teeth ) {
+      for ( let seg of seg1.track.left ) {
         if ( seg === seg1 )
           break;
         offset1 += seg.arc;
       }
       var offset2 = 0;
-      for ( let seg of seg2.lock.teeth ) {
+      for ( let seg of seg2.track.right ) {
         if ( seg === seg2 )
           break;
         offset2 += seg.arc;
@@ -1043,7 +1037,7 @@ class SphPuzzleWorld
       var theta = offset0-offset1-offset2;
 
     } else {
-      if ( !seg1.lock ) {
+      if ( !seg1.track ) {
         window.alert("Cannot align segmets!");
         return;
       }
@@ -1059,7 +1053,8 @@ class SphPuzzleWorld
       }
     }
 
-    this.puzzle.twist(seg1.lock, theta);
+    var hold = seg1.adj.keys().next().value.affiliation;
+    this.puzzle.twist(seg1.track, theta, hold);
   }
   sliceCmd(selector) {
     if ( selector.selections.length > 1 ) {
@@ -1105,9 +1100,9 @@ class SphPuzzleWorld
       }
     }
 
-    var lock = this.puzzle.slice(center, radius);
-    if ( lock )
-      selector.select(lock);
+    var track = this.puzzle.slice(center, radius);
+    if ( track )
+      selector.select(track);
     else
       selector.deselect();
   }
