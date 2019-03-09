@@ -113,23 +113,21 @@ class SphPuzzle extends THREE.EventDispatcher
       let elem = piece.element;
       let [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(elem, circle);
       if ( in_segs.length && out_segs.length ) {
-        let splited = elem.split(out_segs);
-
-        for ( let elem of splited )
-          this.add(this.wrap(elem));
+        let [splited] = elem.split(out_segs);
+        this.add(this.wrap(splited));
         piece.dispatchEvent({type:"modified", attr:"element"});
       }
       new_bd.push(...in_bd, ...out_bd);
     }
-    var tracks;
+    var track;
     if ( new_bd.length )
       if ( !new_bd[0].track )
-        tracks = this.analyzer.buildTrack(new_bd[0]);
-    return tracks[0];
+        track = this.analyzer.buildTrack(new_bd[0]);
+    return track;
   }
   twist(track, theta, hold) {
     theta = this.analyzer.mod4(theta);
-    var partition = this.analyzer.partitionBy(track.left, track.right);
+    var partition = this.analyzer.partitionBy(track.inner, track.outer);
     if ( partition.length == 1 )
       throw new Error("Untwistable!");
     var moved = partition.filter(g => !g.elements.has(hold))
@@ -400,16 +398,6 @@ class Display
 
     return spot;
   }
-  pointTo(event, plane) {
-    var mouse = new THREE.Vector2(
-      event.offsetX/this.width*2 - 1,
-      - event.offsetY/this.height*2 + 1);
-    this.raycaster.setFromCamera(mouse, this.camera);
-  
-    var point = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3());
-    var distance = this.raycaster.ray.distanceToPlane(plane);
-    return {distance, point};
-  }
 
   setCamera(x, y, z, dis) {
   	var vec = new THREE.Vector3(x, y, z);
@@ -646,14 +634,20 @@ class SphPuzzleInfoBuilder
   makeTrackInfo(track) {
     var info = [];
 
-    info.push({type: [0, 4], name: "offset", get: () => track.offset});
+    info.push({type: [0, 4], name: "shift", get: () => track.shift});
+    var radius = track.inner[0].radius;
+    info.push({type: [0, 2], name: "radius", get: () => radius});
 
     var n = 0;
-    for ( let seg of track.left )
-      info.push({type: "link", name: `left.${n++}`, get: () => seg});
+    for ( let [track_, {center, arc, angle}] of track.latches )
+      info.push({type: "link", name: `latch(${center}, ${arc}, ${angle})`, get: () => track_});
+
     n = 0;
-    for ( let seg of track.right )
-      info.push({type: "link", name: `right.${n++}`, get: () => seg});
+    for ( let seg of track.inner )
+      info.push({type: "link", name: `inner.${n++}`, get: () => seg});
+    n = 0;
+    for ( let seg of track.outer )
+      info.push({type: "link", name: `outer.${n++}`, get: () => seg});
 
     return info;
   }
@@ -842,7 +836,7 @@ class SphPuzzleView
       else if ( target instanceof SphElem )
         return target.boundaries;
       else if ( target instanceof SphTrack )
-        return [...target.left, ...target.right];
+        return [...target.inner, ...target.outer];
       else
         return [];
     }
@@ -1014,26 +1008,12 @@ class SphPuzzleWorld
         window.alert("Cannot align segmets!");
         return;
       }
-      if ( seg1.track.right.includes(seg1) )
+      if ( seg1.track.outer.includes(seg1) )
         [seg1, seg2] = [seg2, seg1];
-      if ( !seg1.track.left.includes(seg1) || !seg2.track.right.includes(seg2) ) {
-        window.alert("Cannot align segmets!");
-        return;
-      }
       
-      var offset0 = seg1.track.offset;
-      var offset1 = 0;
-      for ( let seg of seg1.track.left ) {
-        if ( seg === seg1 )
-          break;
-        offset1 += seg.arc;
-      }
-      var offset2 = 0;
-      for ( let seg of seg2.track.right ) {
-        if ( seg === seg2 )
-          break;
-        offset2 += seg.arc;
-      }
+      var offset0 = seg1.track.shift;
+      var [,, offset1] = seg1.track.indexOf(seg1);
+      var [,, offset2] = seg1.track.indexOf(seg2);
       var theta = offset0-offset1-offset2;
 
     } else {
