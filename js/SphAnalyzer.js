@@ -1997,7 +1997,7 @@ class SphAnalyzer
           let [arc] = this.leaf(sub.angle, radius0, sub.segment.radius);
 
           if ( this.cmp([arc, sub.segment.radius], [2, 1]) <= 0 ) {
-            let tick_ = ticks.find(({theta}) => this.mod4(sub.theta-theta, [arc])==arc);
+            let tick_ = ticks.find(({theta}) => this.mod4(tick.theta-theta, [arc])==arc);
             if ( !tick_ )
               continue;
             let is_dual = sub_ => this.cmp([sub_.angle, sub_.segment.radius],

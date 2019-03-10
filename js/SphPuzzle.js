@@ -490,219 +490,6 @@ class Display
   }
 }
 
-class Selector extends THREE.EventDispatcher
-{
-  constructor() {
-    super();
-
-    this.preselection = undefined;
-    this.selections = [];
-  }
-
-  deselect() {
-    for ( let sel of Array.from(this.selections).reverse() )
-      this.removeSelection(sel);
-  }
-  select(target=this.preselection) {
-    for ( let sel of Array.from(this.selections).reverse() )
-      this.removeSelection(sel);
-    if ( target )
-      this.addSelection(target);
-  }
-  toggle(target=this.preselection) {
-    if ( target ) {
-      if ( !this.removeSelection(target) )
-        this.addSelection(target);
-    }
-  }
-  focus(target=this.preselection) {
-    if ( target ) {
-      this.removeSelection(target);
-      this.addSelection(target);
-    }
-  }
-  replace(target=this.preselection) {
-    if ( target ) {
-      if ( this.selections.length )
-        this.removeSelection(this.selections[this.selections.length-1]);
-      this.removeSelection(target);
-      this.addSelection(target);
-    }
-  }
-
-  addSelection(target) {
-    var i = this.selections.indexOf(target);
-    if ( i != -1 )
-      return false;
-    this.selections.push(target);
-    i = this.selections.length - 1;
-    this.dispatchEvent({type:"add", index:i});
-    return true;
-  }
-  removeSelection(target) {
-    var i = this.selections.indexOf(target);
-    if ( i == -1 )
-      return false;
-    this.dispatchEvent({type:"remove", index:i});
-    this.selections.splice(i, 1);
-    return true;
-  }
-}
-
-class SelectorPanel
-{
-  constructor(gui, selector, info_builder) {
-    this.gui = gui;
-    this.selector = selector;
-    this.info_builder = info_builder;
-
-    this.sels_gui = this.gui.addFolder("selections");
-    this.sels_gui.open();
-    this.sels_ctrl = [];
-    this.sel_gui = this.gui.addFolder("detail");
-    this.sel_gui.open();
-    this.sel_ctrl = [];
-
-    this.selector.addEventListener("add", event => {
-      var target = this.selector.selections[event.index];
-      this.addSel(target);
-      this.setInfo(target);
-    });
-    this.selector.addEventListener("remove", event => {
-      this.removeSel(event.index);
-      this.clearInfo();
-    });
-  }
-
-  addSel(target) {
-    var proxy = {};
-    var name = target.name || target.constructor.name;
-    proxy[name] = () => this.selector.focus(target);
-    var link_ctrl = this.sels_gui.add(proxy, name);
-    var dom = link_ctrl.domElement.parentNode.parentNode;
-    dom.addEventListener("mouseenter", () => this.selector.preselection = target);
-    dom.addEventListener("mouseleave", () => this.selector.preselection = undefined);
-    this.sels_ctrl.push(link_ctrl);
-  }
-  removeSel(n) {
-    this.sels_ctrl[n].remove();
-    this.sels_ctrl.splice(n, 1);
-  }
-  setInfo(target) {
-    this.clearInfo();
-    var info = this.info_builder.build(target);
-
-    var proxy = {};
-    proxy.object = () => console.log(target);
-    this.sel_ctrl.push(this.sel_gui.add(proxy, "object"));
-
-    for ( let {name, type, get, set} of info ) {
-      if ( type == "link" ) {
-        proxy[name] = () => this.selector.replace(get());
-        let link_ctrl = this.sel_gui.add(proxy, name);
-        let dom = link_ctrl.domElement.parentNode.parentNode;
-        dom.addEventListener("mouseenter", () => this.selector.preselection = get());
-        dom.addEventListener("mouseleave", () => this.selector.preselection = undefined);
-        this.sel_ctrl.push(link_ctrl);
-
-      } else {
-        proxy[name] = get();
-
-        let ctrl;
-        if ( Array.isArray(type) ) {
-          let [min, max] = type;
-          ctrl = this.sel_gui.add(proxy, name, min, max, 0.01);
-        } else if ( type == "str" ) {
-          ctrl = this.sel_gui.add(proxy, name);
-        } else if ( type == "color" ) {
-          ctrl = this.sel_gui.addColor(proxy, name);
-        }
-
-        if ( set )
-          ctrl.onChange(set);
-        ctrl.onFinishChange(() => { proxy[name]=get(); ctrl.updateDisplay(); });
-        this.sel_ctrl.push(ctrl);
-
-      }
-    }
-  }
-  clearInfo() {
-    for ( let ctrl of this.sel_ctrl )
-      ctrl.remove();
-    this.sel_ctrl = [];
-  }
-}
-
-class SphPuzzleInfoBuilder
-{
-  build(target) {
-    if ( target instanceof SphElem )
-      return this.makeElemInfo(target);
-    else if ( target instanceof SphSeg )
-      return this.makeSegInfo(target);
-    else if ( target instanceof SphTrack )
-      return this.makeTrackInfo(target);
-  }
-  makeElemInfo(elem) {
-    var info = [];
-    info.push({
-      type: "color",
-      name: "color",
-      get: () => elem.host.color,
-      set: color => elem.host.setColor(color)
-    });
-
-    var n = 0;
-    for ( let seg of elem.boundaries )
-      info.push({type: "link", name: `bd.${n++}`, get: () => seg});
-
-    return info;
-  }
-  makeSegInfo(seg) {
-    var info = [];
-
-    info.push({
-      type: "color",
-      name: "color",
-      get: () => seg.affiliation.host.color,
-      set: color => seg.affiliation.host.setColor(color)
-    });
-    info.push({type: [0, 4], name: "arc", get: () => seg.arc});
-    info.push({type: [0, 2], name: "radius", get: () => seg.radius});
-    info.push({type: [0, 4], name: "angle", get: () => seg.angle});
-
-    info.push({type: "link", name: "aff.", get: () => seg.affiliation});
-    if ( seg.track )
-      info.push({type: "link", name: "track", get: () => seg.track});
-    info.push({type: "link", name: "prev", get: () => seg.prev});
-    info.push({type: "link", name: "next", get: () => seg.next});
-    for ( let [adj_seg, offset] of seg.adj )
-      info.push({type: "link", name: `adj(${offset})`, get: () => adj_seg});
-
-    return info;
-  }
-  makeTrackInfo(track) {
-    var info = [];
-
-    info.push({type: [0, 4], name: "shift", get: () => track.shift});
-    var radius = track.inner[0].radius;
-    info.push({type: [0, 2], name: "radius", get: () => radius});
-
-    var n = 0;
-    for ( let [track_, {center, arc, angle}] of track.latches )
-      info.push({type: "link", name: `latch(${center}, ${arc}, ${angle})`, get: () => track_});
-
-    n = 0;
-    for ( let seg of track.inner )
-      info.push({type: "link", name: `inner.${n++}`, get: () => seg});
-    n = 0;
-    for ( let seg of track.outer )
-      info.push({type: "link", name: `outer.${n++}`, get: () => seg});
-
-    return info;
-  }
-}
-
 class SphPuzzleView
 {
   constructor(display, puzzle, selector) {
@@ -925,56 +712,328 @@ class SphPuzzleView
   }
 }
 
-class SphPuzzleWorld
+
+class Selector extends THREE.EventDispatcher
 {
-  constructor(id, width, height, puzzle) {
-    this.puzzle = puzzle;
-    this.selector = new Selector();
+  constructor() {
+    super();
 
+    this.preselection = undefined;
+    this.selections = [];
+  }
 
-    // 3D view
-    var display = new Display(id, width, height);
-    this.view = new SphPuzzleView(display, this.puzzle, this.selector);
+  deselect() {
+    for ( let sel of Array.from(this.selections).reverse() )
+      this.removeSelection(sel);
+  }
+  select(target=this.preselection) {
+    for ( let sel of Array.from(this.selections).reverse() )
+      this.removeSelection(sel);
+    if ( target )
+      this.addSelection(target);
+  }
+  toggle(target=this.preselection) {
+    if ( target ) {
+      if ( !this.removeSelection(target) )
+        this.addSelection(target);
+    }
+  }
+  focus(target=this.preselection) {
+    if ( target ) {
+      this.removeSelection(target);
+      this.addSelection(target);
+    }
+  }
+  replace(target=this.preselection) {
+    if ( target ) {
+      if ( this.selections.length )
+        this.removeSelection(this.selections[this.selections.length-1]);
+      this.removeSelection(target);
+      this.addSelection(target);
+    }
+  }
 
-    // gui
-    this.gui = new dat.GUI();
+  addSelection(target) {
+    var i = this.selections.indexOf(target);
+    if ( i != -1 )
+      return false;
+    this.selections.push(target);
+    i = this.selections.length - 1;
+    this.dispatchEvent({type:"add", index:i});
+    return true;
+  }
+  removeSelection(target) {
+    var i = this.selections.indexOf(target);
+    if ( i == -1 )
+      return false;
+    this.dispatchEvent({type:"remove", index:i});
+    this.selections.splice(i, 1);
+    return true;
+  }
+}
 
-    var gui_style = document.createElement("style");
-    gui_style.innerHTML = `
-      div.dg.ac input[type="text"], div.dg.ac select {
-        font-size: small;
+class SelectorPanel
+{
+  constructor(gui, selector, info_builder) {
+    this.gui = gui;
+    this.selector = selector;
+    this.info_builder = info_builder;
+
+    this.sels_gui = this.gui.addFolder("selections");
+    this.sels_gui.open();
+    this.sels_ctrl = [];
+    this.sel_gui = this.gui.addFolder("detail");
+    this.sel_gui.open();
+    this.sel_ctrl = [];
+
+    this.selector.addEventListener("add", event => {
+      var target = this.selector.selections[event.index];
+      this.addSel(target);
+      this.setInfo(target);
+    });
+    this.selector.addEventListener("remove", event => {
+      this.removeSel(event.index);
+      this.clearInfo();
+    });
+  }
+
+  addSel(target) {
+    var proxy = {};
+    var name = target.name || target.constructor.name;
+    proxy[name] = () => this.selector.focus(target);
+    var link_ctrl = this.sels_gui.add(proxy, name);
+    var dom = link_ctrl.domElement.parentNode.parentNode;
+    dom.addEventListener("mouseenter", () => this.selector.preselection = target);
+    dom.addEventListener("mouseleave", () => this.selector.preselection = undefined);
+    this.sels_ctrl.push(link_ctrl);
+  }
+  removeSel(n) {
+    this.sels_ctrl[n].remove();
+    this.sels_ctrl.splice(n, 1);
+  }
+  setInfo(target) {
+    this.clearInfo();
+    var info = this.info_builder.build(target);
+
+    var proxy = {};
+    proxy.object = () => console.log(target);
+    this.sel_ctrl.push(this.sel_gui.add(proxy, "object"));
+
+    for ( let {name, type, get, set} of info ) {
+      if ( type == "link" ) {
+        proxy[name] = () => this.selector.replace(get());
+        let link_ctrl = this.sel_gui.add(proxy, name);
+        let dom = link_ctrl.domElement.parentNode.parentNode;
+        dom.addEventListener("mouseenter", () => this.selector.preselection = get());
+        dom.addEventListener("mouseleave", () => this.selector.preselection = undefined);
+        this.sel_ctrl.push(link_ctrl);
+
+      } else {
+        proxy[name] = get();
+
+        let ctrl;
+        if ( Array.isArray(type) ) {
+          let [min, max] = type;
+          ctrl = this.sel_gui.add(proxy, name, min, max, 0.01);
+        } else if ( type == "str" ) {
+          ctrl = this.sel_gui.add(proxy, name);
+        } else if ( type == "color" ) {
+          ctrl = this.sel_gui.addColor(proxy, name);
+        }
+
+        if ( set )
+          ctrl.onChange(set);
+        ctrl.onFinishChange(() => { proxy[name]=get(); ctrl.updateDisplay(); });
+        this.sel_ctrl.push(ctrl);
+
       }
-      div.dg.ac select {
-        -moz-appearance: button;
-        -webkit-appearance: button;
-        width: 100%;
-        color: rgb(238, 238, 238);
-        background-color: #393838;
-        border-radius: 0px;
-        border-width: 1px;
-        border-color: #575656;
-        border-style: solid;
-      }`;
-    document.body.appendChild(gui_style);
+    }
+  }
+  clearInfo() {
+    for ( let ctrl of this.sel_ctrl )
+      ctrl.remove();
+    this.sel_ctrl = [];
+  }
+}
+
+class SphPuzzleInfoBuilder
+{
+  build(target) {
+    if ( target instanceof SphElem )
+      return this.makeElemInfo(target);
+    else if ( target instanceof SphSeg )
+      return this.makeSegInfo(target);
+    else if ( target instanceof SphTrack )
+      return this.makeTrackInfo(target);
+  }
+  makeElemInfo(elem) {
+    var info = [];
+    info.push({
+      type: "color",
+      name: "color",
+      get: () => elem.host.color,
+      set: color => elem.host.setColor(color)
+    });
+
+    var n = 0;
+    for ( let seg of elem.boundaries )
+      info.push({type: "link", name: `bd.${n++}`, get: () => seg});
+
+    return info;
+  }
+  makeSegInfo(seg) {
+    var info = [];
+
+    info.push({
+      type: "color",
+      name: "color",
+      get: () => seg.affiliation.host.color,
+      set: color => seg.affiliation.host.setColor(color)
+    });
+    info.push({type: [0, 4], name: "arc", get: () => seg.arc});
+    info.push({type: [0, 2], name: "radius", get: () => seg.radius});
+    info.push({type: [0, 4], name: "angle", get: () => seg.angle});
+
+    info.push({type: "link", name: "aff.", get: () => seg.affiliation});
+    if ( seg.track )
+      info.push({type: "link", name: "track", get: () => seg.track});
+    info.push({type: "link", name: "prev", get: () => seg.prev});
+    info.push({type: "link", name: "next", get: () => seg.next});
+    for ( let [adj_seg, offset] of seg.adj )
+      info.push({type: "link", name: `adj(${offset})`, get: () => adj_seg});
+
+    return info;
+  }
+  makeTrackInfo(track) {
+    var info = [];
+
+    info.push({type: [0, 4], name: "shift", get: () => track.shift});
+    var radius = track.inner[0].radius;
+    info.push({type: [0, 2], name: "radius", get: () => radius});
+
+    var n = 0;
+    for ( let [track_, {center, arc, angle}] of track.latches )
+      info.push({type: "link", name: `latch(${center}, ${arc}, ${angle})`, get: () => track_});
+
+    n = 0;
+    for ( let seg of track.inner )
+      info.push({type: "link", name: `inner.${n++}`, get: () => seg});
+    n = 0;
+    for ( let seg of track.outer )
+      info.push({type: "link", name: `outer.${n++}`, get: () => seg});
+
+    return info;
+  }
+}
 
 
-    this.cmd = {
-      ["merge"]: () => this.mergeCmd(this.selector),
-      ["interpolate"]: () => this.interpolateCmd(this.selector),
-      ["align"]: () => this.alignSegCmd(this.selector),
-      ["slice"]: () => this.sliceCmd(this.selector),
-      ["clean"]: () => this.cleanCmd(this.selector),
-      ["check"]: () => this.checkCmd(this.selector),
-    };
-    var cmd_gui = this.gui.addFolder("commands");
-    for ( let name in this.cmd )
-      cmd_gui.add(this.cmd, name);
+const KEYNAME = "\
+        backspace tab   clear enter   shift ctrl alt pause caps\
+       esc     space pageup pagedown end home left up right down  print\
+   insert delete  0 1 2 3 4 5 6 7 8 9  ;  =\
+    a b c d e f g h i j k l m n o p q r s t u v w x y z\
+                      f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12\
+                     num scroll                            -\
+             ; = , - . / `                           [ \\ ] '  meta".split(" ");
+const MODKEYS = "meta alt shift ctrl".split(" ");
+const EDITKEYS = "backspace delete space tab enter ; = , -  . / ` [ \\ ] '\
+ 0 1 2 3 4 5 6 7 8 9 a b c d e f g h i j k l m n o p q r s t u v w x y z".split(" ");
+class CmdMenu
+{
+  constructor(gui, selector) {
+    this.gui = gui;
+    this.selector = selector;
+  }
+  makeShortcut(arg) {
+    if ( typeof arg == "string" ) { // make shortcut from string
+      var keys = arg.toLowerCase().split("+");
+      if ( keys.some(k => KEYNAME.indexOf(k) == -1) )
+        return "";
+      keys.sort((a,b) => MODKEYS.indexOf(a)-MODKEYS.indexOf(b)).reverse();
+      return keys.join("+");
 
-    
-    var sel_gui = this.gui.addFolder("select");
-    sel_gui.add(this.view, "selectOn", ["segment", "element", "track"]).name("select on");
-    var info_builder = new SphPuzzleInfoBuilder();
-    this.sel_panel = new SelectorPanel(sel_gui, this.selector, info_builder);
+    } else { // make shortcut from event
+      var main = KEYNAME[arg.which || arg.keyCode || 0];
+      if ( MODKEYS.indexOf(main) != -1 ) return "";
+
+      var keys = [];
+      if ( arg.ctrlKey )  keys.push("ctrl");
+      if ( arg.shiftKey ) keys.push("shift");
+      if ( arg.altKey )   keys.push("alt");
+      if ( arg.metaKey )  keys.push("meta");
+      keys.push(main);
+      return keys.join("+") || "";
+    }
+  }
+  addCmd(func, name, shortcut) {
+    if ( name ) {
+      var proxy = {};
+      proxy[name] = () => func(this.selector);
+      this.gui.add(proxy, name);
+    }
+
+    if ( shortcut ) {
+      shortcut = this.makeShortcut(shortcut);
+      window.addEventListener("keydown", event => {
+        if ( this.makeShortcut(event) == shortcut ) {
+          func(this.selector);
+          event.preventDefault();
+        }
+      });
+    }
+  }
+}
+
+class SphPuzzleCmdMenu extends CmdMenu
+{
+  constructor(gui, selector, puzzle) {
+    super(gui, selector);
+    this.puzzle = puzzle;
+
+    // this.addCmd(this.NextOfCmd.bind(this), "", "right");
+    // this.addCmd(this.PrevOfCmd.bind(this), "", "left");
+    // this.addCmd(this.AdjOfCmd.bind(this), "", "down");
+    // this.addCmd(this.AffOfCmd.bind(this), "", "up");
+    // this.addCmd(this.TrackOfCmd.bind(this), "", "tab");
+
+    this.addCmd(this.mergeCmd.bind(this), "merge (shift+M)", "shift+M");
+    this.addCmd(this.interCmd.bind(this), "inter (shift+I)", "shift+I");
+    this.addCmd(this.sliceCmd.bind(this), "slice (shift+S)", "shift+S");
+    this.addCmd(this.cleanCmd.bind(this), "clean (shift+C)", "shift+C");
+    this.addCmd(this.alignCmd.bind(this), "align (shift+A)", "shift+A");
+    this.addCmd(this.twistCmd.bind(this), "twist (shift+T)", "shift+T");
+    this.addCmd(this.checkCmd.bind(this), "check");
+  }
+
+  NextOfCmd(selector) {
+    var sel = selector.selections[selector.selections.length-1];
+    if ( !sel || !(sel instanceof SphSeg) )
+      return;
+    selector.replace(sel.next);
+  }
+  PrevOfCmd(selector) {
+    var sel = selector.selections[selector.selections.length-1];
+    if ( !sel || !(sel instanceof SphSeg) )
+      return;
+    selector.replace(sel.prev);
+  }
+  AdjOfCmd(selector) {
+    var sel = selector.selections[selector.selections.length-1];
+    if ( !sel || !(sel instanceof SphSeg) )
+      return;
+    selector.replace(sel.adj.keys().next().value);
+  }
+  AffOfCmd(selector) {
+    var sel = selector.selections[selector.selections.length-1];
+    if ( !sel || !(sel instanceof SphSeg) )
+      return;
+    selector.replace(sel.affiliation);
+  }
+  TrackOfCmd(selector) {
+    var sel = selector.selections[selector.selections.length-1];
+    if ( !sel || !(sel instanceof SphSeg) )
+      return;
+    selector.replace(sel.track);
   }
 
   mergeCmd(selector) {
@@ -1015,7 +1074,7 @@ class SphPuzzleWorld
     }
 
   }
-  interpolateCmd(selector) {
+  interCmd(selector) {
     if ( selector.selections.length != 1 ) {
       window.alert("Please select one segment!");
       return;
@@ -1043,50 +1102,6 @@ class SphPuzzleWorld
     this.puzzle.interpolate(seg, theta);
     selector.select(seg);
     selector.toggle(seg.next);
-  }
-  alignSegCmd(selector) {
-    if ( selector.selections.length != 1 && selector.selections.length != 2 ) {
-      window.alert("Please select one or two segments!");
-      return;
-    }
-    var [seg1, seg2] = selector.selections;
-    if ( !(seg1 instanceof SphSeg) || seg2 && !(seg2 instanceof SphSeg) ) {
-      window.alert("Not segments!");
-      return;
-    }
-
-    if ( seg2 ) {
-      if ( !seg1.track || seg1.track !== seg2.track ) {
-        window.alert("Cannot align segmets!");
-        return;
-      }
-      if ( seg1.track.outer.includes(seg1) )
-        [seg1, seg2] = [seg2, seg1];
-      
-      var offset0 = seg1.track.shift;
-      var [,, offset1] = seg1.track.indexOf(seg1);
-      var [,, offset2] = seg1.track.indexOf(seg2);
-      var theta = offset0-offset1-offset2;
-
-    } else {
-      if ( !seg1.track ) {
-        window.alert("Cannot align segmets!");
-        return;
-      }
-
-      var theta = eval(window.prompt("angle to twist"));
-      if ( typeof theta != "number" && theta instanceof Number ) {
-        window.alert("Not a number!");
-        return;
-      }
-      if ( Number.isNaN(theta) ) {
-        window.alert("Not a number!");
-        return;
-      }
-    }
-
-    var hold = seg1.adj.keys().next().value.affiliation;
-    this.puzzle.twist(seg1.track, theta, hold);
   }
   sliceCmd(selector) {
     if ( selector.selections.length > 1 ) {
@@ -1146,5 +1161,128 @@ class SphPuzzleWorld
   checkCmd(selector) {
     this.puzzle.check();
     console.log("check!");
+  }
+  alignCmd(selector) {
+    if ( selector.selections.length != 1 && selector.selections.length != 2 ) {
+      window.alert("Please select one or two segments!");
+      return;
+    }
+    var [seg1, seg2] = selector.selections;
+    if ( !(seg1 instanceof SphSeg) || seg2 && !(seg2 instanceof SphSeg) ) {
+      window.alert("Not segments!");
+      return;
+    }
+
+    if ( seg2 ) {
+      if ( !seg1.track || seg1.track !== seg2.track ) {
+        window.alert("Cannot align segmets!");
+        return;
+      }
+      if ( seg1.track.outer.includes(seg1) )
+        [seg1, seg2] = [seg2, seg1];
+      
+      var offset0 = seg1.track.shift;
+      var [,, offset1] = seg1.track.indexOf(seg1);
+      var [,, offset2] = seg1.track.indexOf(seg2);
+      var theta = offset0-offset1-offset2;
+
+    } else {
+      if ( !seg1.track ) {
+        window.alert("Cannot align segmets!");
+        return;
+      }
+
+      var theta = eval(window.prompt("angle to twist"));
+      if ( typeof theta != "number" && theta instanceof Number ) {
+        window.alert("Not a number!");
+        return;
+      }
+      if ( Number.isNaN(theta) ) {
+        window.alert("Not a number!");
+        return;
+      }
+    }
+
+    var hold = seg1.adj.keys().next().value.affiliation;
+    this.puzzle.twist(seg1.track, theta, hold);
+  }
+  twistCmd(selector) {
+    if ( selector.selections.length != 1 ) {
+      window.alert("Please select one track!");
+      return;
+    }
+    var track = selector.selections[0];
+    if ( !(track instanceof SphTrack) ) {
+      window.alert("Not track!");
+      return;
+    }
+
+    var passwords = this.puzzle.analyzer.decipher(track);
+    var keys = Array.from(passwords.keys()).sort();
+    var q = "select shift:\n"
+            + keys.map((key, i) => `${i}: ${key}`).join(",\n")
+            + `.\n (current: ${track.shift})`;
+    var i = parseInt(window.prompt(q));
+    if ( typeof i != "number" && i instanceof Number ) {
+      window.alert("Not a number!");
+      return;
+    }
+    if ( Number.isNaN(i) ) {
+      window.alert("Not a number!");
+      return;
+    }
+    if ( i >= keys.length || i < 0 ) {
+      window.alert("Improper index!");
+      return;
+    }
+
+    var theta = this.puzzle.analyzer.mod4(keys[i]-track.shift);
+    var hold = track.outer[0].affiliation;
+    this.puzzle.twist(track, theta, hold);
+  }
+}
+
+
+class SphPuzzleWorld
+{
+  constructor(id, puzzle) {
+    this.puzzle = puzzle;
+    this.selector = new Selector();
+
+
+    // 3D view
+    var dom = document.getElementById(id);
+    var display = new Display(id, dom.clientWidth, dom.clientHeight);
+    this.view = new SphPuzzleView(display, this.puzzle, this.selector);
+
+    // gui
+    this.gui = new dat.GUI();
+
+    var gui_style = document.createElement("style");
+    gui_style.innerHTML = `
+      div.dg.ac input[type="text"], div.dg.ac select {
+        font-size: small;
+      }
+      div.dg.ac select {
+        -moz-appearance: button;
+        -webkit-appearance: button;
+        width: 100%;
+        color: rgb(238, 238, 238);
+        background-color: #393838;
+        border-radius: 0px;
+        border-width: 1px;
+        border-color: #575656;
+        border-style: solid;
+      }`;
+    document.body.appendChild(gui_style);
+
+
+    var cmd_gui = this.gui.addFolder("commands");
+    this.cmd = new SphPuzzleCmdMenu(cmd_gui, this.selector, this.puzzle);
+    
+    var sel_gui = this.gui.addFolder("select");
+    sel_gui.add(this.view, "selectOn", ["segment", "element", "track"]).name("select on");
+    var info_builder = new SphPuzzleInfoBuilder();
+    this.sel_panel = new SelectorPanel(sel_gui, this.selector, info_builder);
   }
 }
