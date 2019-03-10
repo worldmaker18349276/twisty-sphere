@@ -1487,15 +1487,16 @@ class SphAnalyzer
     var circle = seg0.circle;
     var side = undefined;
     for ( let loop of this.loops(fixed) ) {
-      let meets = Array.from(fixed).flatMap(seg => Array.from(this.meetWith(seg, circle)));
+      let meets = Array.from(loop).flatMap(seg => Array.from(this.meetWith(seg, circle)));
       meets = this.sortMeets(meets);
-      let types = meets.map(meet => meet.type);
+      if ( meets.length == 0 )
+        continue;
     
-      if ( types.find(type => type[1] == "0" || type[1] == "-") )
+      if ( meets.find(({type}) => type[1] == "0" || type[1] == "-") )
         return false;
 
-      let side_ = types[0][0];
-      console.assert(types.every(type => type[0] == side_));
+      let side_ = meets[0].type[0];
+      console.assert(meets.every(({type}) => type[0] == side_));
       if ( side_ != (side || (side = side_)) )
         return false;
     }
@@ -1503,12 +1504,12 @@ class SphAnalyzer
     return true;
   }
   /**
-   * Separate twistable part of given puzzle.
+   * Find twistable part of given elements.
    * 
-   * @param {SphElem[]} elements - The elements to separate.
+   * @param {SphElem[]} elements
    * @returns {SphElem[][]} Set of twistable Elements.
    */
-  separateTwistablePart(elements) {
+  twistablePartOf(elements) {
     elements = Array.from(elements);
     var segments = elements.flatMap(elem => Array.from(elem.boundaries));
     var untwistable = new Set();
@@ -1543,6 +1544,7 @@ class SphAnalyzer
     var res = [];
     var unprocessed = new Set(elements);
     for ( let elem0 of unprocessed ) {
+      unprocessed.delete(elem0);
       let comb = [elem0];
       for ( let elem of comb )
         for ( let seg of elem.boundaries )
@@ -1554,44 +1556,6 @@ class SphAnalyzer
     }
 
     return res;
-  }
-
-  /**
-   * Clean trivial structure of puzzle.
-   * It will: merge untwistable edges, merge trivial edges, and merge trivial
-   * vertices.
-   * 
-   * @param {SphElem[]} elements - The elements to clean.
-   */
-  clean(elements) {
-    // merge untwistable edges
-    var elements = separateTwistablePart(elements).map(([h,...t]) => h.merge(t));
-
-    // merge trivial edges
-    for ( let elem of elements ) {
-      let trivial = [];
-      let boundaries = new Set(elem.boundaries);
-      for ( let seg of boundaries ) {
-        let zippers = this.findZippers(seg);
-        for ( let [seg,,,seg_,,] of zippers ) {
-          boundaries.delete(seg);
-          boundaries.delete(seg_);
-        }
-        if ( zippers.length )
-          trivial.push(zippers);
-      }
-      for ( let zippers of trivial )
-        this.glueAdj(zippers);
-    }
-
-    // merge trivial vertices
-    for ( let elem of elements ) {
-      let trivial = Array.from(elem.boundaries)
-                         .filter(seg => this.isTrivialVertex(seg));
-      for ( let seg of trivial )
-        if ( seg !== seg.prev )
-          this.mergePrev(seg);
-    }
   }
   
   /**
@@ -1778,12 +1742,12 @@ class SphAnalyzer
     return networks;
   }
   /**
-   * separate joint part of given segments.
+   * find joint part of given segments.
    * 
    * @param {SphSeg[]} segments
    * @returns {SphSeg[][]} Set of joint Segments.
    */
-  separateJointPart(segments) {
+  jointPartOf(segments) {
     var networks = this.parseNetworks(segments);
   
     // separate connected part
@@ -2058,7 +2022,7 @@ class SphAnalyzer
    * Detect non-trivial twist angle of track.
    * 
    * @param {SphTrack} track
-   * @returns {Map<number,object[]>} Map from twist angle to matched latches.
+   * @returns {Map<number,object[]>} Map from shift to matched latches.
    */
   decipher(track) {
     var ticks1 = [], ticks2 = [];
@@ -2082,7 +2046,7 @@ class SphAnalyzer
         if ( this.cmp(latch1.angle, 2-latch2.angle) != 0 )
           continue;
 
-      let key = this.mod4(track.shift-latch1.center-latch2.center, passwords.keys());
+      let key = this.mod4(latch1.center+latch2.center, passwords.keys());
       if ( !passwords.has(key) )
         passwords.set(key, []);
 

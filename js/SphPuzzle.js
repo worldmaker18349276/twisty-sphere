@@ -90,7 +90,7 @@ class SphPuzzle extends THREE.EventDispatcher
     piece.dispatchEvent({type:"modified", attr:"element"});
     return piece;
   }
-  merge(piece0, ...pieces) {
+  mergePieces(piece0, ...pieces) {
     var elements = pieces.map(p => p.element);
 
     piece0.element.merge(...elements);
@@ -139,6 +139,56 @@ class SphPuzzle extends THREE.EventDispatcher
       elem.host.dispatchEvent({type:"modified", attr:"orientation"});
 
     return track;
+  }
+
+  clean() {
+    // merge untwistable edges
+    var elements = this.pieces.map(p => p.element);
+    for ( let group of this.analyzer.twistablePartOf(elements) )
+      if ( group.length > 1 )
+        this.mergePieces(...group.map(elem => elem.host));
+
+    var modified = new Set();
+
+    // merge trivial edges
+    for ( let piece of this.pieces ) {
+      let zippers = [];
+      let nontrivial = new Set(piece.element.boundaries);
+      for ( let seg of nontrivial ) {
+        let subzippers = this.analyzer.findZippers(seg);
+        for ( let [seg1,,,seg2,,] of subzippers ) {
+          nontrivial.delete(seg1);
+          nontrivial.delete(seg2);
+        }
+        zippers.push(...subzippers);
+      }
+
+      if ( zippers.length ) {
+        this.analyzer.glueAdj(zippers);
+        modified.add(piece);
+      }
+    }
+
+    // merge trivial vertices
+    for ( let piece of this.pieces ) {
+      let trivial = Array.from(piece.element.boundaries)
+                         .filter(seg => this.analyzer.isTrivialVertex(seg));
+      for ( let seg of trivial )
+        if ( seg !== seg.prev ) {
+          this.analyzer.mergePrev(seg);
+          modified.add(piece);
+        }
+    }
+
+    for ( let piece of modified )
+      piece.dispatchEvent({type:"modified", attr:"element"});
+
+  }
+  check() {
+    for ( let piece of this.pieces )
+      for ( let seg of piece.element.boundaries )
+        this.analyzer.checkGeometry(seg);
+    this.analyzer.checkOrientation(this.pieces.map(p => p.element));
   }
 }
 
@@ -913,6 +963,8 @@ class SphPuzzleWorld
       ["interpolate"]: () => this.interpolateCmd(this.selector),
       ["align"]: () => this.alignSegCmd(this.selector),
       ["slice"]: () => this.sliceCmd(this.selector),
+      ["clean"]: () => this.cleanCmd(this.selector),
+      ["check"]: () => this.checkCmd(this.selector),
     };
     var cmd_gui = this.gui.addFolder("commands");
     for ( let name in this.cmd )
@@ -939,7 +991,7 @@ class SphPuzzleWorld
     if ( seg1.affiliation !== seg2.affiliation ) {
       let piece1 = seg1.affiliation.host;
       let piece2 = seg2.affiliation.host;
-      let res = this.puzzle.merge(piece1, piece2);
+      let res = this.puzzle.mergePieces(piece1, piece2);
       selector.select(seg1);
       selector.toggle(seg2);
 
@@ -1085,5 +1137,14 @@ class SphPuzzleWorld
       selector.select(track);
     else
       selector.deselect();
+  }
+  cleanCmd(selector) {
+    selector.deselect();
+    this.puzzle.clean();
+    window.alert("finish!");
+  }
+  checkCmd(selector) {
+    this.puzzle.check();
+    console.log("check!");
   }
 }
