@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>twisty sphere - example</title>
+  <meta charset="utf-8">
+  <script src="js/three.min.js"></script>
+  <script src="js/dat.gui.min.js"></script>
+  <script src="js/SphAnalyzer.js"></script>
+  <script src="js/SphPuzzle.js"></script>
+</head>
+<body>
+<div id="display" style="width:600px;height:600px;"></div>
+<script>
+
+puzzle = new SphPuzzle();
+
+var s2 = 1/Math.sqrt(2);
+puzzle.slice([  0, s2, s2], 1/2);
+puzzle.slice([  0,-s2, s2], 1/2);
+puzzle.slice([  0, s2,-s2], 1/2);
+puzzle.slice([  0,-s2,-s2], 1/2);
+puzzle.slice([ s2,  0, s2], 1/2);
+puzzle.slice([-s2,  0, s2], 1/2);
+puzzle.slice([ s2,  0,-s2], 1/2);
+puzzle.slice([-s2,  0,-s2], 1/2);
+puzzle.slice([ s2, s2,  0], 1/2);
+puzzle.slice([-s2, s2,  0], 1/2);
+puzzle.slice([ s2,-s2,  0], 1/2);
+puzzle.slice([-s2,-s2,  0], 1/2);
+
+// puzzle.clean();
+// puzzle.check();
+var world = new SphPuzzleWorld("display", puzzle);
+</script>
+</body>
+</html>
