@@ -1,32 +1,8 @@
 "use strict";
 
-class SphPiece extends THREE.EventDispatcher
-{
-  constructor(element, name, color) {
-    super();
-
-    this.element = element;
-    this.name = name;
-    this.color = color;
-    this.element.host = this;
-  }
-  setColor(color) {
-    this.color = color;
-    this.dispatchEvent({type:"modified", attr:"color"});
-  }
-  setName(name) {
-    this.name = name;
-    this.dispatchEvent({type:"modified", attr:"name"});
-  }
-  rotate(q) {
-    this.element.rotate(q);
-    this.dispatchEvent({type:"modified", attr:"orientation"});
-  }
-}
-
 class SphPuzzle extends THREE.EventDispatcher
 {
-  constructor() {
+  constructor(analyzer=new SphAnalyzer()) {
     super();
 
     this.colors = (function *colors() {
@@ -49,73 +25,74 @@ class SphPuzzle extends THREE.EventDispatcher
       var i = 0; while ( true ) yield i++;
     })();
 
-    this.pieces = [];
+    this.elements = [];
     this.add(this.wrap(new SphElem()));
 
-    this.analyzer = new SphAnalyzer();
+    this.analyzer = analyzer;
   }
 
   wrap(element) {
-    var color = this.colors.next().value;
-    var number = this.numbers.next().value;
-    return new SphPiece(element, `SphElem#${number}`, color);
+    element.name = `SphElem#${this.numbers.next().value}`;
+    element.color = this.colors.next().value;
+    element.host = this;
+    return element;
   }
-  add(piece) {
-    this.pieces.push(piece);
-    this.dispatchEvent({type:"added", piece});
+  add(element) {
+    this.elements.push(element);
+    this.dispatchEvent({type:"added", element});
   }
-  remove(piece) {
-    let i = this.pieces.indexOf(piece);
+  remove(element) {
+    let i = this.elements.indexOf(element);
     if ( i == -1 )
       return;
-    this.pieces.splice(i, 1);
-    this.dispatchEvent({type:"removed", piece});
+    this.elements.splice(i, 1);
+    this.dispatchEvent({type:"removed", element});
   }
 
   mergeVertex(seg) {
-    var piece = seg.affiliation.host;
+    var element = seg.affiliation;
     this.analyzer.mergePrev(seg);
-    piece.dispatchEvent({type:"modified", attr:"element"});
-    return piece;
+    this.dispatchEvent({type:"modified", attr:"element", element});
   }
   interpolate(seg, theta) {
-    var piece = seg.affiliation.host;
+    var element = seg.affiliation;
     this.analyzer.interpolate(seg, theta);
-    piece.dispatchEvent({type:"modified", attr:"element"});
-    return piece;
+    this.dispatchEvent({type:"modified", attr:"element", element});
   }
   mergeEdge(seg1, seg2) {
-    var piece = seg1.affiliation.host;
+    var element = seg1.affiliation;
     this.analyzer.glueAdj(this.analyzer.cover(seg1, seg2));
-    piece.dispatchEvent({type:"modified", attr:"element"});
-    return piece;
+    this.dispatchEvent({type:"modified", attr:"element", element});
   }
-  mergePieces(piece0, ...pieces) {
-    var elements = pieces.map(p => p.element);
+  mergeElements(element0, ...elements) {
+    element0.merge(...elements);
 
-    piece0.element.merge(...elements);
+    for ( let element of elements )
+      this.remove(element);
+    this.dispatchEvent({type:"modified", attr:"element", element:element0});
 
-    for ( let piece of pieces )
-      this.remove(piece);
-    piece0.dispatchEvent({type:"modified", attr:"element"});
-
-    return piece0;
+    return element0;
   }
 
+  setColor(element, color) {
+    element.color = color;
+    this.dispatchEvent({type:"modified", attr:"color", element});
+  }
   rotate(q) {
-    for ( let piece of this.pieces )
-      piece.rotate(q);
+    for ( let element of this.elements ) {
+      element.rotate(q);
+      this.dispatchEvent({type:"modified", attr:"orientation", element});
+    }
   }
-  slice(center, radius, pieces=this.pieces.slice()) {
+  slice(center, radius, elements=this.elements.slice()) {
     var circle = new SphCircle({radius, orientation:q_align(center)});
     var new_bd = [];
-    for ( let piece of pieces ) {
-      let elem = piece.element;
-      let [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(elem, circle);
+    for ( let element of elements ) {
+      let [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
       if ( in_segs.length && out_segs.length ) {
-        let [splited] = elem.split(out_segs);
+        let [splited] = element.split(out_segs);
         this.add(this.wrap(splited));
-        piece.dispatchEvent({type:"modified", attr:"element"});
+        this.dispatchEvent({type:"modified", attr:"element", element});
       }
       new_bd.push(...in_bd, ...out_bd);
     }
@@ -136,24 +113,24 @@ class SphPuzzle extends THREE.EventDispatcher
     this.analyzer.twist([[track, theta]], hold);
 
     for ( let elem of moved )
-      elem.host.dispatchEvent({type:"modified", attr:"orientation"});
+      this.dispatchEvent({type:"modified", attr:"orientation", element:elem});
 
     return track;
   }
 
   clean() {
     // merge untwistable edges
-    var elements = this.pieces.map(p => p.element);
+    var elements = this.elements.slice();
     for ( let group of this.analyzer.twistablePartOf(elements) )
       if ( group.length > 1 )
-        this.mergePieces(...group.map(elem => elem.host));
+        this.mergeElements(...group);
 
     var modified = new Set();
 
     // merge trivial edges
-    for ( let piece of this.pieces ) {
+    for ( let element of this.elements ) {
       let zippers = [];
-      let nontrivial = new Set(piece.element.boundaries);
+      let nontrivial = new Set(element.boundaries);
       for ( let seg of nontrivial ) {
         let subzippers = this.analyzer.findZippers(seg);
         for ( let [seg1,,,seg2,,] of subzippers ) {
@@ -165,30 +142,30 @@ class SphPuzzle extends THREE.EventDispatcher
 
       if ( zippers.length ) {
         this.analyzer.glueAdj(zippers);
-        modified.add(piece);
+        modified.add(element);
       }
     }
 
     // merge trivial vertices
-    for ( let piece of this.pieces ) {
-      let trivial = Array.from(piece.element.boundaries)
+    for ( let element of this.elements ) {
+      let trivial = Array.from(element.boundaries)
                          .filter(seg => this.analyzer.isTrivialVertex(seg));
       for ( let seg of trivial )
         if ( seg !== seg.prev ) {
           this.analyzer.mergePrev(seg);
-          modified.add(piece);
+          modified.add(element);
         }
     }
 
-    for ( let piece of modified )
-      piece.dispatchEvent({type:"modified", attr:"element"});
+    for ( let element of modified )
+      this.dispatchEvent({type:"modified", attr:"element", element});
 
   }
   check() {
-    for ( let piece of this.pieces )
-      for ( let seg of piece.element.boundaries )
+    for ( let element of this.elements )
+      for ( let seg of element.boundaries )
         this.analyzer.checkGeometry(seg);
-    this.analyzer.checkOrientation(this.pieces.map(p => p.element));
+    this.analyzer.checkOrientation(this.elements);
   }
 }
 
@@ -537,40 +514,37 @@ class SphPuzzleView
 
     // draw puzzle
     {
-      let modified_handler = event => {
+      for ( let element of this.puzzle.elements )
+        this.drawElement(element);
+
+      this.puzzle.addEventListener("added", event =>
+        this.drawElement(event.element));
+      this.puzzle.addEventListener("removed", event =>
+        this.display.remove(event.element.view, this.root));
+
+      this.puzzle.addEventListener("modified", event => {
         switch ( event.attr ) {
           case "element":
-            this.display.remove(event.target.view, this.root);
-            this.drawPiece(event.target);
+            this.display.remove(event.element.view, this.root);
+            this.drawElement(event.element);
+            this.refresh = true;
             break;
 
           case "color":
-            for ( let obj of event.target.view.children )
+            for ( let obj of event.element.view.children )
               for ( let sub of obj.children )
-                sub.material.color.set(event.target.color);
+                sub.material.color.set(event.element.color);
             break;
 
           case "orientation":
-            for ( let obj of event.target.view.children )
+            for ( let obj of event.element.view.children )
               obj.quaternion.set(...obj.userData.origin.orientation);
             break;
         }
-      };
-
-      for ( let piece of this.puzzle.pieces ) {
-        this.drawPiece(piece);
-        piece.addEventListener("modified", modified_handler);
-      }
-
-      this.puzzle.addEventListener("added", event => {
-        this.drawPiece(event.piece);
-        event.piece.addEventListener("modified", modified_handler);
-      });
-      this.puzzle.addEventListener("removed", event => {
-        this.display.remove(event.piece.view, this.root);
       });
     }
 
+    this.refresh = false;
     this.display.animate(this.hoverRoutine());
   }
 
@@ -647,10 +621,10 @@ class SphPuzzleView
 
     return obj;
   }
-  drawPiece(piece) {
-    piece.view = new THREE.Object3D();
-    for ( let seg of piece.element.boundaries ) {
-      let obj = this.buildSegView(seg, piece.color);
+  drawElement(element) {
+    element.view = new THREE.Object3D();
+    for ( let seg of element.boundaries ) {
+      let obj = this.buildSegView(seg, element.color);
       seg.view = obj;
 
       let holder = obj.children[3];
@@ -659,35 +633,47 @@ class SphPuzzleView
       holder.addEventListener("mouseleave", this.hover_handler);
       holder.addEventListener("click", this.select_handler);
 
-      piece.view.add(obj);
+      element.view.add(obj);
     }
-    this.display.add(piece.view, this.root);
+    this.display.add(element.view, this.root);
   }
 
+  *segsOf(target) {
+    if ( target instanceof SphSeg ) {
+      yield target;
+
+    } else if ( target instanceof SphElem ) {
+      yield* target.boundaries;
+
+    } else if ( target instanceof SphTrack ) {
+      yield* target.inner;
+      yield* target.outer;
+
+    } else if ( target instanceof SphState ) {
+      for ( let segs of target.segments )
+        for ( let seg0 of segs )
+          yield* this.puzzle.analyzer.walk(seg0);
+
+    } else if ( target instanceof SphJoint ) {
+      for ( let [state, [index]] of target )
+        yield* this.puzzle.analyzer.walk(state.get(index));
+
+    }
+  }
   *hoverRoutine() {
     var preselection = undefined;
     var selections = [];
-    function segsOf(target) {
-      if ( target instanceof SphSeg )
-        return [target];
-      else if ( target instanceof SphElem )
-        return target.boundaries;
-      else if ( target instanceof SphTrack )
-        return [...target.inner, ...target.outer];
-      else
-        return [];
-    }
     while ( true ) {
       yield;
 
       // emphasize hovered object
-      if ( this.selector.preselection !== preselection ) {
-        for ( let seg of segsOf(preselection) )
+      if ( this.refresh || this.selector.preselection !== preselection ) {
+        for ( let seg of this.segsOf(preselection) )
           if ( seg && seg.view ) {
             seg.view.children[0].material.linewidth = 1;
             seg.view.children[1].material.linewidth = 1;
           }
-        for ( let seg of segsOf(this.selector.preselection) )
+        for ( let seg of this.segsOf(this.selector.preselection) )
           if ( seg && seg.view ) {
             seg.view.children[0].material.linewidth = 2;
             seg.view.children[1].material.linewidth = 2;
@@ -696,19 +682,280 @@ class SphPuzzleView
       }
 
       // highlight selected objects
-      if ( selections.some(sel => !this.selector.selections.includes(sel))
+      if ( this.refresh
+           || selections.some(sel => !this.selector.selections.includes(sel))
            || this.selector.selections.some(sel => !selections.includes(sel)) ) {
         for ( let sel of selections )
-          for ( let seg of segsOf(sel) )
+          for ( let seg of this.segsOf(sel) )
             if ( seg && seg.view )
               seg.view.children[3].material.opacity = 0;
         for ( let sel of this.selector.selections )
-          for ( let seg of segsOf(sel) )
+          for ( let seg of this.segsOf(sel) )
             if ( seg && seg.view )
               seg.view.children[3].material.opacity = 0.3;
         selections = this.selector.selections.slice();
       }
+
+      this.refresh = false;
     }
+  }
+}
+
+
+class SphNetwork extends THREE.EventDispatcher
+{
+  constructor(analyzer=new SphAnalyzer()) {
+    super();
+
+    this.analyzer = analyzer;
+    this.states = [];
+    this.joints = [];
+    this.bandages = [];
+  }
+
+  addState(state) {
+    this.states.push(state);
+    this.dispatchEvent({type:"stateadded", state});
+  }
+  removeState(state) {
+    var i = this.states.indexOf(state);
+    if ( i == -1 )
+      return;
+    this.states.splice(i, 1);
+    this.dispatchEvent({type:"statemoved", state});
+  }
+  addJoint(joint) {
+    this.joints.push(joint);
+    this.dispatchEvent({type:"jointadded", joint});
+    for ( let [state, [index]] of joint ) {
+      console.assert(this.states.includes(state));
+      this.dispatchEvent({type:"fusionadded", joint, state, index});
+    }
+  }
+  removeJoint(joint) {
+    var i = this.joints.indexOf(joint);
+    if ( i == -1 )
+      return;
+    this.joints.splice(i, 1);
+    for ( let [state, [index]] of joint ) {
+      console.assert(this.states.includes(state));
+      this.dispatchEvent({type:"fusionremoved", joint, state, index});
+    }
+    this.dispatchEvent({type:"jointremoved", joint});
+  }
+  addBandage(bandage) {
+    this.bandages.push(bandage);
+    this.dispatchEvent({type:"bandageadded", bandage});
+    for ( let joint of bandage ) {
+      console.assert(this.joints.includes(joint));
+      this.dispatchEvent({type:"bondadded", bandage, joint});
+    }
+  }
+  removeBandage(bandage) {
+    var i = this.bandages.indexOf(bandage);
+    if ( i == -1 )
+      return;
+    this.bandages.splice(i, 1);
+    for ( let joint of bandage ) {
+      console.assert(this.joints.includes(joint));
+      this.dispatchEvent({type:"bondremoved", bandage, joint});
+    }
+    this.dispatchEvent({type:"bandageremoved", bandage});
+  }
+
+  makeJoint(state, index) {
+    console.assert(this.states.includes(state));
+    var joint = state.jointAt(index, false);
+    if ( !joint ) {
+      joint = state.jointAt(index, true);
+      this.addJoint(joint);
+    }
+    return joint;
+  }
+  fuse(joint, joint_) {
+    joint.fuse(joint_);
+    this.removeJoint(joint_);
+    for ( let [state, [index]] of joint_ )
+      this.dispatchEvent({type:"fusionadded", joint, state, index});
+  }
+  unfuse(joint, state) {
+    if ( !joint.has(state) )
+      return;
+    var [index] = joint.get(state);
+    joint.delete(state);
+    this.dispatchEvent({type:"fusionremoved", joint, state, index});
+    if ( joint.size == 0 )
+      this.removeJoint(joint);
+  }
+  bind(joint1, joint2) {
+    var bandage = joint1.bandage || joint2.bandage || new Set();
+    if ( joint1.bandage && joint2.bandage ) {
+      joint2.bandage = bandage;
+      this.removeBandage(joint2.bandage);
+      for ( let joint of joint2.bandage )
+        if ( !joint1.bandage.has(joint) ) {
+          joint1.bandage.add(joint);
+          this.dispatchEvent({type:"bondadded", bandage, joint});
+        }
+
+    } else {
+      if ( !joint1.bandage && !joint2.bandage )
+        this.addBandage(bandage);
+
+      if ( !bandage.has(joint1) ) {
+        bandage.add(joint1);
+        this.dispatchEvent({type:"bondadded", bandage, joint:joint1});
+      }
+      if ( !bandage.has(joint2) ) {
+        bandage.add(joint2);
+        this.dispatchEvent({type:"bondadded", bandage, joint:joint2});
+      }
+
+      joint1.bandage = bandage;
+      joint2.bandage = bandage;
+    }
+  }
+  unbind(joint) {
+    var bandage = joint.bandage;
+    if ( !bandage )
+      return;
+    bandage.delete(joint);
+    this.dispatchEvent({type:"bondremoved", bandage, joint});
+    if ( bandage.size <= 1 ) {
+      for ( let joint_ of bandage )
+        joint_.bandage = undefined;
+      this.removeBandage(bandage);
+    }
+  }
+
+  clear() {
+    for ( let bandage of this.bandages.slice() )
+      this.removeBandage(bandage);
+
+    for ( let joint of this.joints.slice() )
+      this.removeJoint(joint);
+
+    for ( let state of this.states.slice() )
+      this.removeState(state);
+  }
+  init(puzzle) {
+    this.clear();
+
+    var states = this.analyzer.structurize(puzzle.pieces.map(p => p.element));
+    for ( let state of states )
+      this.addState(state);
+
+    var joints = states.flatMap(state => Array.from(state.joints)).filter(j => j);
+    for ( let joint of new Set(joints) )
+      this.addJoint(joint);
+
+    var bandages = joints.map(joint => joint.bandage).filter(b => b);
+    for ( let bandage of new Set(bandages) )
+      this.addBandage(bandage);
+  }
+}
+
+class SphNetworkView
+{
+  constructor(id, network, selector) {
+    this.numbers = (function *numbers() {
+      var i = 0; while ( true ) yield i++;
+    })();
+
+    this.dom = document.getElementById(id);
+    var nodes = new vis.DataSet(), edges = new vis.DataSet();
+    var options = {physics:true, interaction:{multiselect:true, selectConnectedEdges:false}};
+    this.view = new vis.Network(this.dom, {nodes, edges}, options);
+
+    this.network = network;
+    this.data = [];
+    network.addEventListener("stateadded", event => {
+      var id = this.numbers.next().value;
+      this.data[id] = event.state;
+      nodes.add({id, type:"state", size:20, shape:"diamond"});
+    });
+    network.addEventListener("stateremoved", event => {
+      var id = this.data.indexOf(event.state);
+      if ( id != -1 ) {
+        delete this.data[id];
+        nodes.remove(id);
+      }
+    });
+    network.addEventListener("jointadded", event => {
+      var id = this.numbers.next().value;
+      this.data[id] = event.joint;
+      nodes.add({id, type:"joint", size:5, shape:"dot"});
+    });
+    network.addEventListener("jointremoved", event => {
+      var id = this.data.indexOf(event.joint);
+      if ( id != -1 ) {
+        delete this.data[id];
+        nodes.remove(id);
+      }
+    });
+    network.addEventListener("bandageadded", event => {
+      var id = this.numbers.next().value;
+      this.data[id] = event.bandage;
+      nodes.add({id, type:"bandage", size:0, shape:"dot"});
+    });
+    network.addEventListener("bandageremoved", event => {
+      var id = this.data.indexOf(event.bandage);
+      if ( id != -1 ) {
+        delete this.data[id];
+        nodes.remove(id);
+      }
+    });
+    network.addEventListener("fusionadded", event => {
+      var from = this.data.indexOf(event.joint);
+      var to = this.data.indexOf(event.state);
+      var id = this.numbers.next().value;
+      this.data[id] = [from, to];
+      edges.add({id, type:"fusion", from, to});
+    });
+    network.addEventListener("fusionremoved", event => {
+      var from = this.data.indexOf(event.joint);
+      var to = this.data.indexOf(event.state);
+      var id = this.data.find(v => v[0]==from && v[1]==to);
+      if ( id != -1 ) {
+        delete this.data[id];
+        edges.remove(id);
+      }
+    });
+    network.addEventListener("bondadded", event => {
+      var from = this.data.indexOf(event.bandage);
+      var to = this.data.indexOf(event.joint);
+      var id = this.numbers.next().value;
+      this.data[id] = [from, to];
+      edges.add({id, type:"bond", from, to, dashes:true});
+    });
+    network.addEventListener("bondremoved", event => {
+      var from = this.data.indexOf(event.bandage);
+      var to = this.data.indexOf(event.joint);
+      var id = this.data.find(v => v[0]==from && v[1]==to);
+      if ( id != -1 ) {
+        delete this.data[id];
+        edges.remove(id);
+      }
+    });
+
+    this.selector = selector;
+    this.view.on("select", event => {
+      selector.deselect();
+      for ( let id of event.nodes ) {
+        let obj = this.data[id];
+        let type = nodes.get(id).type;
+        if ( type == "state" ) {
+          selector.focus(obj);
+
+        } else if ( type == "joint" ) {
+          selector.focus(obj);
+
+        } else if ( type == "bandage" ) {
+
+        }
+      }
+    });
+
   }
 }
 
@@ -730,6 +977,12 @@ class Selector extends THREE.EventDispatcher
     for ( let sel of Array.from(this.selections).reverse() )
       this.removeSelection(sel);
     if ( target )
+      this.addSelection(target);
+  }
+  reselect(...targets) {
+    for ( let sel of Array.from(this.selections).reverse() )
+      this.removeSelection(sel);
+    for ( let target of targets )
       this.addSelection(target);
   }
   toggle(target=this.preselection) {
@@ -774,10 +1027,10 @@ class Selector extends THREE.EventDispatcher
 
 class SelectorPanel
 {
-  constructor(gui, selector, info_builder) {
+  constructor(gui, selector) {
     this.gui = gui;
     this.selector = selector;
-    this.info_builder = info_builder;
+    this.info_builders = [new InfoBuilder()];
 
     this.sels_gui = this.gui.addFolder("selections");
     this.sels_gui.open();
@@ -813,7 +1066,7 @@ class SelectorPanel
   }
   setInfo(target) {
     this.clearInfo();
-    var info = this.info_builder.build(target);
+    var info = this.info_builders.reduce((res, b) => res || b.build(target), undefined);
 
     var proxy = {};
     proxy.object = () => console.log(target);
@@ -856,6 +1109,13 @@ class SelectorPanel
   }
 }
 
+class InfoBuilder
+{
+  build(target) {
+    return [];
+  }
+}
+
 class SphPuzzleInfoBuilder
 {
   build(target) {
@@ -871,8 +1131,8 @@ class SphPuzzleInfoBuilder
     info.push({
       type: "color",
       name: "color",
-      get: () => elem.host.color,
-      set: color => elem.host.setColor(color)
+      get: () => elem.color,
+      set: color => elem.host.setColor(elem, color)
     });
 
     var n = 0;
@@ -887,8 +1147,8 @@ class SphPuzzleInfoBuilder
     info.push({
       type: "color",
       name: "color",
-      get: () => seg.affiliation.host.color,
-      set: color => seg.affiliation.host.setColor(color)
+      get: () => seg.affiliation.color,
+      set: color => seg.affiliation.host.setColor(seg.affiliation, color)
     });
     info.push({type: [0, 4], name: "arc", get: () => seg.arc});
     info.push({type: [0, 2], name: "radius", get: () => seg.radius});
@@ -984,7 +1244,7 @@ class CmdMenu
   }
 }
 
-class SphPuzzleCmdMenu extends CmdMenu
+class SphPuzzleWorldCmdMenu extends CmdMenu
 {
   constructor(gui, selector, puzzle) {
     super(gui, selector);
@@ -1048,14 +1308,11 @@ class SphPuzzleCmdMenu extends CmdMenu
     }
 
     if ( seg1.affiliation !== seg2.affiliation ) {
-      let piece1 = seg1.affiliation.host;
-      let piece2 = seg2.affiliation.host;
-      let res = this.puzzle.mergePieces(piece1, piece2);
-      selector.select(seg1);
-      selector.toggle(seg2);
+      this.puzzle.mergeElements(seg1.affiliation, seg2.affiliation);
+      selector.reselect(seg1, seg2);
 
     } else if ( seg1.adj.has(seg2) ) {
-      let piece = this.puzzle.mergeEdge(seg1, seg2);
+      this.puzzle.mergeEdge(seg1, seg2);
       selector.deselect();
 
     } else if ( seg1.next === seg2 || seg2.next === seg1 ) {
@@ -1100,8 +1357,7 @@ class SphPuzzleCmdMenu extends CmdMenu
     }
 
     this.puzzle.interpolate(seg, theta);
-    selector.select(seg);
-    selector.toggle(seg.next);
+    selector.reselect(seg, seg.next);
   }
   sliceCmd(selector) {
     if ( selector.selections.length > 1 ) {
@@ -1278,11 +1534,12 @@ class SphPuzzleWorld
 
 
     var cmd_gui = this.gui.addFolder("commands");
-    this.cmd = new SphPuzzleCmdMenu(cmd_gui, this.selector, this.puzzle);
+    this.cmd = new SphPuzzleWorldCmdMenu(cmd_gui, this.selector, this.puzzle);
     
     var sel_gui = this.gui.addFolder("select");
     sel_gui.add(this.view, "selectOn", ["segment", "element", "track"]).name("select on");
-    var info_builder = new SphPuzzleInfoBuilder();
-    this.sel_panel = new SelectorPanel(sel_gui, this.selector, info_builder);
+    this.sel_panel = new SelectorPanel(sel_gui, this.selector);
+    this.sel_panel.info_builders.unshift(new SphPuzzleInfoBuilder());
+    // this.sel_panel.info_builders.push(new SphNetworkInfoBuilder());
   }
 }
