@@ -727,8 +727,9 @@ class SphNetwork extends THREE.EventDispatcher
   addJoint(joint) {
     this.joints.push(joint);
     this.dispatchEvent({type:"jointadded", joint});
-    for ( let [state, [index]] of joint ) {
+    for ( let [state, orientation] of joint.ports ) {
       console.assert(this.states.includes(state));
+      let index = state.indexOf(joint);
       this.dispatchEvent({type:"fusionadded", joint, state, index});
     }
   }
@@ -737,8 +738,9 @@ class SphNetwork extends THREE.EventDispatcher
     if ( i == -1 )
       return;
     this.joints.splice(i, 1);
-    for ( let [state, [index]] of joint ) {
+    for ( let [state, orientation] of joint.ports ) {
       console.assert(this.states.includes(state));
+      let index = state.indexOf(joint);
       this.dispatchEvent({type:"fusionremoved", joint, state, index});
     }
     this.dispatchEvent({type:"jointremoved", joint});
@@ -775,57 +777,48 @@ class SphNetwork extends THREE.EventDispatcher
   fuse(joint, joint_) {
     joint.fuse(joint_);
     this.removeJoint(joint_);
-    for ( let [state, [index]] of joint_ )
+    for ( let [state, ] of joint_.ports ) {
+      let index = state.indexOf(joint_);
       this.dispatchEvent({type:"fusionadded", joint, state, index});
+    }
   }
   unfuse(joint, state) {
-    if ( !joint.has(state) )
+    if ( !joint.ports.has(state) )
       return;
-    var [index] = joint.get(state);
-    joint.delete(state);
+    var index = state.indexOf(joint);
+    joint.unfuse(state);
     this.dispatchEvent({type:"fusionremoved", joint, state, index});
     if ( joint.size == 0 )
       this.removeJoint(joint);
   }
   bind(joint1, joint2) {
-    var bandage = joint1.bandage || joint2.bandage || new Set();
-    if ( joint1.bandage && joint2.bandage ) {
-      joint2.bandage = bandage;
-      this.removeBandage(joint2.bandage);
-      for ( let joint of joint2.bandage )
-        if ( !joint1.bandage.has(joint) ) {
-          joint1.bandage.add(joint);
-          this.dispatchEvent({type:"bondadded", bandage, joint});
-        }
+    var bandage1 = joint1.bandage.size > 1 ? joint1.bandage : undefined;
+    var bandage2 = joint2.bandage.size > 1 ? joint2.bandage : undefined;
+    joint1.bind(joint2);
 
-    } else {
-      if ( !joint1.bandage && !joint2.bandage )
-        this.addBandage(bandage);
+    if ( !bandage1 && !bandage2 ) {
+      this.addBandage(joint1.bandage);
 
-      if ( !bandage.has(joint1) ) {
-        bandage.add(joint1);
-        this.dispatchEvent({type:"bondadded", bandage, joint:joint1});
-      }
-      if ( !bandage.has(joint2) ) {
-        bandage.add(joint2);
-        this.dispatchEvent({type:"bondadded", bandage, joint:joint2});
-      }
+    } else if ( bandage1 && bandage2 ) {
+      this.removeBandage(bandage2);
+      for ( let joint of bandage2 )
+        this.dispatchEvent({type:"bondadded", bandage:bandage1, joint});
 
-      joint1.bandage = bandage;
-      joint2.bandage = bandage;
+    } else if ( bandage1 && !bandage2 ) {
+      this.dispatchEvent({type:"bondadded", bandage:bandage1, joint:joint2});
+
+    } else if ( !bandage1 && bandage2 ) {
+      this.dispatchEvent({type:"bondadded", bandage:bandage2, joint:joint1});
     }
   }
   unbind(joint) {
     var bandage = joint.bandage;
-    if ( !bandage )
+    if ( bandage.size == 1 )
       return;
-    bandage.delete(joint);
+    joint.unbind();
     this.dispatchEvent({type:"bondremoved", bandage, joint});
-    if ( bandage.size <= 1 ) {
-      for ( let joint_ of bandage )
-        joint_.bandage = undefined;
+    if ( bandage.size <= 1 )
       this.removeBandage(bandage);
-    }
   }
 
   clear() {
@@ -841,17 +834,24 @@ class SphNetwork extends THREE.EventDispatcher
   init(puzzle) {
     this.clear();
 
-    var states = this.analyzer.structurize(puzzle.pieces.map(p => p.element));
+    var states = this.analyzer.structurize(puzzle.elements);
     for ( let state of states )
       this.addState(state);
 
-    var joints = states.flatMap(state => Array.from(state.joints)).filter(j => j);
+    var joints = states.flatMap(state => state.joints.flat(2));
     for ( let joint of new Set(joints) )
       this.addJoint(joint);
 
-    var bandages = joints.map(joint => joint.bandage).filter(b => b);
+    var bandages = joints.map(joint => joint.bandage).filter(b => b.size > 1);
     for ( let bandage of new Set(bandages) )
       this.addBandage(bandage);
+  }
+  trim(state) {
+    var joints = state.joints.flat(2);
+    for ( let joint of joints )
+      this.unfuse(joint, state);
+    this.removeState(state);
+    joints.slice(1).forEach(joint => this.fuse(joint, joints[0]));
   }
 }
 
@@ -864,7 +864,10 @@ class SphNetworkView
 
     this.dom = document.getElementById(id);
     var nodes = new vis.DataSet(), edges = new vis.DataSet();
-    var options = {physics:true, interaction:{multiselect:true, selectConnectedEdges:false}};
+    var options = {
+      physics: true,
+      interaction: {multiselect:true, selectConnectedEdges:false}
+    };
     this.view = new vis.Network(this.dom, {nodes, edges}, options);
 
     this.network = network;
@@ -908,34 +911,22 @@ class SphNetworkView
     network.addEventListener("fusionadded", event => {
       var from = this.data.indexOf(event.joint);
       var to = this.data.indexOf(event.state);
-      var id = this.numbers.next().value;
-      this.data[id] = [from, to];
-      edges.add({id, type:"fusion", from, to});
+      edges.add({id:`${from}-${to}`, type:"fusion", from, to});
     });
     network.addEventListener("fusionremoved", event => {
       var from = this.data.indexOf(event.joint);
       var to = this.data.indexOf(event.state);
-      var id = this.data.find(v => v[0]==from && v[1]==to);
-      if ( id != -1 ) {
-        delete this.data[id];
-        edges.remove(id);
-      }
+      edges.remove(`${from}-${to}`);
     });
     network.addEventListener("bondadded", event => {
       var from = this.data.indexOf(event.bandage);
       var to = this.data.indexOf(event.joint);
-      var id = this.numbers.next().value;
-      this.data[id] = [from, to];
-      edges.add({id, type:"bond", from, to, dashes:true});
+      edges.add({id:`${from}-${to}`, type:"bond", from, to, dashes:true});
     });
     network.addEventListener("bondremoved", event => {
       var from = this.data.indexOf(event.bandage);
       var to = this.data.indexOf(event.joint);
-      var id = this.data.find(v => v[0]==from && v[1]==to);
-      if ( id != -1 ) {
-        delete this.data[id];
-        edges.remove(id);
-      }
+      edges.remove(`${from}-${to}`);
     });
 
     this.selector = selector;
