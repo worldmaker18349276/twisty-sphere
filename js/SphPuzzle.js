@@ -638,26 +638,52 @@ class SphPuzzleView
     this.display.add(element.view, this.root);
   }
 
-  *segsOf(target) {
+  segsOf(target) {
     if ( target instanceof SphSeg ) {
-      yield target;
+      return [target];
 
     } else if ( target instanceof SphElem ) {
-      yield* target.boundaries;
+      return target.boundaries;
 
     } else if ( target instanceof SphTrack ) {
-      yield* target.inner;
-      yield* target.outer;
+      return [...target.inner, ...target.outer];
 
     } else if ( target instanceof SphState ) {
-      for ( let segs of target.segments )
-        for ( let seg0 of segs )
-          yield* this.puzzle.analyzer.walk(seg0);
+      return Array.from(target.mold.items(target.segments)).map(a => a[1]);
 
     } else if ( target instanceof SphJoint ) {
-      for ( let [state, [index]] of target )
-        yield* this.puzzle.analyzer.walk(state.get(index));
+      return Array.from(target.ports.keys())
+                  .map(state => state.get(state.indexOf(target)))
+                  .flatMap(seg => Array.from(this.puzzle.analyzer.walk(seg)));
 
+    } else {
+      return [];
+    }
+  }
+  emphasize(seg) {
+    if ( seg.view ) {
+      seg.view.children[0].material.linewidth = 2;
+      seg.view.children[1].material.linewidth = 2;
+      return true;
+    }
+  }
+  unemphasize(seg) {
+    if ( seg.view ) {
+      seg.view.children[0].material.linewidth = 1;
+      seg.view.children[1].material.linewidth = 1;
+      return true;
+    }
+  }
+  highlight(seg) {
+    if ( seg.view ) {
+      seg.view.children[3].material.opacity = 0.3;
+      return true;
+    }
+  }
+  unhighlight(seg) {
+    if ( seg.view ) {
+      seg.view.children[3].material.opacity = 0;
+      return true;
     }
   }
   *hoverRoutine() {
@@ -668,37 +694,107 @@ class SphPuzzleView
 
       // emphasize hovered object
       if ( this.refresh || this.selector.preselection !== preselection ) {
-        for ( let seg of this.segsOf(preselection) )
-          if ( seg && seg.view ) {
-            seg.view.children[0].material.linewidth = 1;
-            seg.view.children[1].material.linewidth = 1;
-          }
-        for ( let seg of this.segsOf(this.selector.preselection) )
-          if ( seg && seg.view ) {
-            seg.view.children[0].material.linewidth = 2;
-            seg.view.children[1].material.linewidth = 2;
-          }
+        for ( let seg of this.segsOf(preselection) ) if ( seg )
+          this.unemphasize(seg);
+        for ( let seg of this.segsOf(this.selector.preselection) ) if ( seg )
+          this.emphasize(seg);
         preselection = this.selector.preselection;
       }
 
       // highlight selected objects
-      if ( this.refresh
-           || selections.some(sel => !this.selector.selections.includes(sel))
-           || this.selector.selections.some(sel => !selections.includes(sel)) ) {
-        for ( let sel of selections )
-          for ( let seg of this.segsOf(sel) )
-            if ( seg && seg.view )
-              seg.view.children[3].material.opacity = 0;
-        for ( let sel of this.selector.selections )
-          for ( let seg of this.segsOf(sel) )
-            if ( seg && seg.view )
-              seg.view.children[3].material.opacity = 0.3;
-        selections = this.selector.selections.slice();
-      }
+      let new_selections = this.selector.selections
+        .flatMap(sel => this.segsOf(sel));
 
+      for ( let sel of selections )
+        if ( this.refresh || !new_selections.includes(sel) )
+          this.unhighlight(sel);
+      for ( let sel of new_selections )
+        if ( this.refresh || !selections.includes(sel) )
+          this.highlight(sel);
+
+      selections = new_selections;
       this.refresh = false;
     }
   }
+
+  nameOf(target) {
+    if ( target instanceof SphElem ) {
+      return target.name;
+
+    } else if ( target instanceof SphSeg ) {
+      let pre = target.affiliation.name;
+      let n = Array.from(target.affiliation.boundaries).indexOf(target);
+      return `${pre}-bd.${n}`;
+
+    }
+  }
+  infoOf(target) {
+    if ( target instanceof SphElem )
+      return this.makeElemInfo(target);
+    else if ( target instanceof SphSeg )
+      return this.makeSegInfo(target);
+    else if ( target instanceof SphTrack )
+      return this.makeTrackInfo(target);
+  }
+  makeElemInfo(elem) {
+    var info = [];
+    info.push({
+      type: "color",
+      name: "color",
+      get: () => elem.color,
+      set: color => elem.host.setColor(elem, color)
+    });
+
+    var n = 0;
+    for ( let seg of elem.boundaries )
+      info.push({type: "link", name: `bd.${n++}`, get: () => seg});
+
+    return info;
+  }
+  makeSegInfo(seg) {
+    var info = [];
+
+    info.push({
+      type: "color",
+      name: "color",
+      get: () => seg.affiliation.color,
+      set: color => seg.affiliation.host.setColor(seg.affiliation, color)
+    });
+    info.push({type: [0, 4], name: "arc", get: () => seg.arc});
+    info.push({type: [0, 2], name: "radius", get: () => seg.radius});
+    info.push({type: [0, 4], name: "angle", get: () => seg.angle});
+
+    info.push({type: "link", name: "aff.", get: () => seg.affiliation});
+    if ( seg.track )
+      info.push({type: "link", name: "track", get: () => seg.track});
+    info.push({type: "link", name: "prev", get: () => seg.prev});
+    info.push({type: "link", name: "next", get: () => seg.next});
+    for ( let [adj_seg, offset] of seg.adj )
+      info.push({type: "link", name: `adj(${offset})`, get: () => adj_seg});
+
+    return info;
+  }
+  makeTrackInfo(track) {
+    var info = [];
+
+    info.push({type: [0, 4], name: "shift", get: () => track.shift});
+    var radius = track.inner[0].radius;
+    info.push({type: [0, 2], name: "radius", get: () => radius});
+
+    var n = 0;
+    for ( let [track_, {center, arc, angle}] of track.latches )
+      info.push({type: "link", name: `latch(${center}, ${arc}, ${angle})`, get: () => track_});
+
+    n = 0;
+    for ( let seg of track.inner )
+      info.push({type: "link", name: `inner.${n++}`, get: () => seg});
+    n = 0;
+    for ( let seg of track.outer )
+      info.push({type: "link", name: `outer.${n++}`, get: () => seg});
+
+    return info;
+  }
+
 }
 
 
@@ -866,87 +962,190 @@ class SphNetworkView
     var nodes = new vis.DataSet(), edges = new vis.DataSet();
     var options = {
       physics: true,
-      interaction: {multiselect:true, selectConnectedEdges:false}
+      nodes: {chosen:false}, edges: {chosen:false},
+      interaction: {multiselect:true, selectConnectedEdges:false,
+                    hover:true, hoverConnectedEdges:false}
     };
     this.view = new vis.Network(this.dom, {nodes, edges}, options);
 
     this.network = network;
     this.data = [];
-    network.addEventListener("stateadded", event => {
-      var id = this.numbers.next().value;
-      this.data[id] = event.state;
-      nodes.add({id, type:"state", size:20, shape:"diamond"});
-    });
-    network.addEventListener("stateremoved", event => {
-      var id = this.data.indexOf(event.state);
-      if ( id != -1 ) {
-        delete this.data[id];
-        nodes.remove(id);
-      }
-    });
-    network.addEventListener("jointadded", event => {
-      var id = this.numbers.next().value;
-      this.data[id] = event.joint;
-      nodes.add({id, type:"joint", size:5, shape:"dot"});
-    });
-    network.addEventListener("jointremoved", event => {
-      var id = this.data.indexOf(event.joint);
-      if ( id != -1 ) {
-        delete this.data[id];
-        nodes.remove(id);
-      }
-    });
-    network.addEventListener("bandageadded", event => {
-      var id = this.numbers.next().value;
-      this.data[id] = event.bandage;
-      nodes.add({id, type:"bandage", size:0, shape:"dot"});
-    });
-    network.addEventListener("bandageremoved", event => {
-      var id = this.data.indexOf(event.bandage);
-      if ( id != -1 ) {
-        delete this.data[id];
-        nodes.remove(id);
-      }
-    });
-    network.addEventListener("fusionadded", event => {
-      var from = this.data.indexOf(event.joint);
-      var to = this.data.indexOf(event.state);
-      edges.add({id:`${from}-${to}`, type:"fusion", from, to});
-    });
-    network.addEventListener("fusionremoved", event => {
-      var from = this.data.indexOf(event.joint);
-      var to = this.data.indexOf(event.state);
-      edges.remove(`${from}-${to}`);
-    });
-    network.addEventListener("bondadded", event => {
-      var from = this.data.indexOf(event.bandage);
-      var to = this.data.indexOf(event.joint);
-      edges.add({id:`${from}-${to}`, type:"bond", from, to, dashes:true});
-    });
-    network.addEventListener("bondremoved", event => {
-      var from = this.data.indexOf(event.bandage);
-      var to = this.data.indexOf(event.joint);
-      edges.remove(`${from}-${to}`);
-    });
+    // event listeners
+    {
+      network.addEventListener("stateadded", event => {
+        var id = this.numbers.next().value;
+        this.data[id] = event.state;
+        nodes.add({id, type:"state", size:20, shape:"diamond"});
+      });
+      network.addEventListener("stateremoved", event => {
+        var id = this.data.indexOf(event.state);
+        if ( id != -1 ) {
+          delete this.data[id];
+          nodes.remove(id);
+        }
+      });
+      network.addEventListener("jointadded", event => {
+        var id = this.numbers.next().value;
+        this.data[id] = event.joint;
+        nodes.add({id, type:"joint", size:5, shape:"dot"});
+      });
+      network.addEventListener("jointremoved", event => {
+        var id = this.data.indexOf(event.joint);
+        if ( id != -1 ) {
+          delete this.data[id];
+          nodes.remove(id);
+        }
+      });
+      network.addEventListener("bandageadded", event => {
+        var id = this.numbers.next().value;
+        this.data[id] = event.bandage;
+        nodes.add({id, type:"bandage", size:0, shape:"dot"});
+      });
+      network.addEventListener("bandageremoved", event => {
+        var id = this.data.indexOf(event.bandage);
+        if ( id != -1 ) {
+          delete this.data[id];
+          nodes.remove(id);
+        }
+      });
+      network.addEventListener("fusionadded", event => {
+        var from = this.data.indexOf(event.joint);
+        var to = this.data.indexOf(event.state);
+        edges.add({id:`${from}-${to}`, type:"fusion", from, to});
+      });
+      network.addEventListener("fusionremoved", event => {
+        var from = this.data.indexOf(event.joint);
+        var to = this.data.indexOf(event.state);
+        edges.remove(`${from}-${to}`);
+      });
+      network.addEventListener("bondadded", event => {
+        var from = this.data.indexOf(event.bandage);
+        var to = this.data.indexOf(event.joint);
+        edges.add({id:`${from}-${to}`, type:"bond", from, to, dashes:true});
+      });
+      network.addEventListener("bondremoved", event => {
+        var from = this.data.indexOf(event.bandage);
+        var to = this.data.indexOf(event.joint);
+        edges.remove(`${from}-${to}`);
+      });
+    }
 
     this.selector = selector;
-    this.view.on("select", event => {
-      selector.deselect();
-      for ( let id of event.nodes ) {
-        let obj = this.data[id];
-        let type = nodes.get(id).type;
-        if ( type == "state" ) {
-          selector.focus(obj);
+    this.view.on("click", event => {
+      var id = this.view.getNodeAt(event.pointer.DOM);
+      var target = (id !== undefined) && this.data[id];
+      target = (target instanceof SphState || target instanceof SphJoint) && target;
 
-        } else if ( type == "joint" ) {
-          selector.focus(obj);
-
-        } else if ( type == "bandage" ) {
-
-        }
+      if ( event.event.srcEvent.ctrlKey ) {
+        if ( target )
+          this.selector.toggle(target);
+      } else {
+        if ( target )
+          this.selector.select(target);
+        else
+          this.selector.reselect();
       }
     });
+    this.refresh = false;
+    var updater = this.update();
+    var routine = () => (requestAnimationFrame(routine), updater.next());
+    requestAnimationFrame(routine);
+  }
 
+  nodeOf(target) {
+    if ( target instanceof SphState ) {
+      return target;
+
+    } else if ( target instanceof SphJoint ) {
+      return target;
+
+    } else if ( target instanceof SphElem ) {
+      for ( let joint of this.network.joints )
+        for ( let state of joint.ports.keys() )
+          if ( state.get(state.indexOf(joint)).affiliation === target )
+            return joint;
+
+    } else if ( target instanceof SphSeg ) {
+      for ( let state of this.network.states )
+        if ( state.indexOf(target) )
+          return state;
+
+    } else if ( target instanceof SphTrack ) {
+      for ( let state of this.network.states )
+        if ( state.indexOf(target.inner[0]) )
+          return state;
+    }
+  }
+  highlight(sel) {
+    var id = this.data.indexOf(sel);
+    if ( id == -1 )
+      return false;
+    var node = this.view.body.nodes[id];
+    node.setOptions({borderWidth:2});
+    return true;
+  }
+  unhighlight(sel) {
+    var id = this.data.indexOf(sel);
+    if ( id == -1 )
+      return false;
+    var node = this.view.body.nodes[id];
+    node.setOptions({borderWidth:1});
+    return true;
+  }
+  *update() {
+    var selections = [];
+    while ( true ) {
+      yield;
+
+      var new_selections = this.selector.selections
+        .map(sel => this.nodeOf(sel)).filter(sel => sel);
+
+      var changed = false;
+      for ( let sel of selections )
+        if ( this.refresh || !new_selections.includes(sel) )
+          changed = this.unhighlight(sel) || changed;
+      for ( let sel of new_selections )
+        if ( this.refresh || !selections.includes(sel) )
+          changed = this.highlight(sel) || changed;
+      if ( changed )
+        this.view.redraw();
+
+      selections = new_selections;
+      this.refresh = false;
+    }
+  }
+
+  nameOf(target) {
+    return target.constructor.name;
+  }
+  infoOf(target) {
+    if ( target instanceof SphState )
+      return this.makeStateInfo(target);
+    else if ( target instanceof SphJoint )
+      return this.makeJointInfo(target);
+  }
+  makeJointInfo(joint) {
+    var info = [];
+
+    var states = Array.from(joint.ports.keys());
+    var n = 0;
+    for ( let state of states )
+      info.push({type: "link", name: `port.${n++}`, get: () => state});
+    for ( let state of states ) {
+      let index = state.indexOf(joint);
+      let seg = state.get(index);
+      info.push({type: "link", name: `${this.nameOf(state)}[${index}]`, get: () => seg});
+    }
+
+    return info;
+  }
+  makeStateInfo(state) {
+    var info = [];
+    var n = 0;
+    for ( let [index, joint] of state.mold.items(state.joints) )
+      info.push({type: "link", name: `joint.${n++}`, get: () => joint});
+
+    return info;
   }
 }
 
@@ -960,20 +1159,10 @@ class Selector extends THREE.EventDispatcher
     this.selections = [];
   }
 
-  deselect() {
-    for ( let sel of Array.from(this.selections).reverse() )
-      this.removeSelection(sel);
-  }
   select(target=this.preselection) {
     for ( let sel of Array.from(this.selections).reverse() )
       this.removeSelection(sel);
     if ( target )
-      this.addSelection(target);
-  }
-  reselect(...targets) {
-    for ( let sel of Array.from(this.selections).reverse() )
-      this.removeSelection(sel);
-    for ( let target of targets )
       this.addSelection(target);
   }
   toggle(target=this.preselection) {
@@ -988,6 +1177,9 @@ class Selector extends THREE.EventDispatcher
       this.addSelection(target);
     }
   }
+  deselect(target=this.preselection) {
+    this.removeSelection(target);
+  }
   replace(target=this.preselection) {
     if ( target ) {
       if ( this.selections.length )
@@ -995,6 +1187,13 @@ class Selector extends THREE.EventDispatcher
       this.removeSelection(target);
       this.addSelection(target);
     }
+  }
+
+  reselect(...targets) {
+    for ( let sel of Array.from(this.selections).reverse() )
+      this.removeSelection(sel);
+    for ( let target of targets )
+      this.addSelection(target);
   }
 
   addSelection(target) {
@@ -1043,7 +1242,7 @@ class SelectorPanel
 
   addSel(target) {
     var proxy = {};
-    var name = target.name || target.constructor.name;
+    var name = this.info_builders.reduce((res, b) => res || b.nameOf(target), undefined);
     proxy[name] = () => this.selector.focus(target);
     var link_ctrl = this.sels_gui.add(proxy, name);
     var dom = link_ctrl.domElement.parentNode.parentNode;
@@ -1057,7 +1256,7 @@ class SelectorPanel
   }
   setInfo(target) {
     this.clearInfo();
-    var info = this.info_builders.reduce((res, b) => res || b.build(target), undefined);
+    var info = this.info_builders.reduce((res, b) => res || b.infoOf(target), undefined);
 
     var proxy = {};
     proxy.object = () => console.log(target);
@@ -1102,78 +1301,11 @@ class SelectorPanel
 
 class InfoBuilder
 {
-  build(target) {
+  infoOf(target) {
     return [];
   }
-}
-
-class SphPuzzleInfoBuilder
-{
-  build(target) {
-    if ( target instanceof SphElem )
-      return this.makeElemInfo(target);
-    else if ( target instanceof SphSeg )
-      return this.makeSegInfo(target);
-    else if ( target instanceof SphTrack )
-      return this.makeTrackInfo(target);
-  }
-  makeElemInfo(elem) {
-    var info = [];
-    info.push({
-      type: "color",
-      name: "color",
-      get: () => elem.color,
-      set: color => elem.host.setColor(elem, color)
-    });
-
-    var n = 0;
-    for ( let seg of elem.boundaries )
-      info.push({type: "link", name: `bd.${n++}`, get: () => seg});
-
-    return info;
-  }
-  makeSegInfo(seg) {
-    var info = [];
-
-    info.push({
-      type: "color",
-      name: "color",
-      get: () => seg.affiliation.color,
-      set: color => seg.affiliation.host.setColor(seg.affiliation, color)
-    });
-    info.push({type: [0, 4], name: "arc", get: () => seg.arc});
-    info.push({type: [0, 2], name: "radius", get: () => seg.radius});
-    info.push({type: [0, 4], name: "angle", get: () => seg.angle});
-
-    info.push({type: "link", name: "aff.", get: () => seg.affiliation});
-    if ( seg.track )
-      info.push({type: "link", name: "track", get: () => seg.track});
-    info.push({type: "link", name: "prev", get: () => seg.prev});
-    info.push({type: "link", name: "next", get: () => seg.next});
-    for ( let [adj_seg, offset] of seg.adj )
-      info.push({type: "link", name: `adj(${offset})`, get: () => adj_seg});
-
-    return info;
-  }
-  makeTrackInfo(track) {
-    var info = [];
-
-    info.push({type: [0, 4], name: "shift", get: () => track.shift});
-    var radius = track.inner[0].radius;
-    info.push({type: [0, 2], name: "radius", get: () => radius});
-
-    var n = 0;
-    for ( let [track_, {center, arc, angle}] of track.latches )
-      info.push({type: "link", name: `latch(${center}, ${arc}, ${angle})`, get: () => track_});
-
-    n = 0;
-    for ( let seg of track.inner )
-      info.push({type: "link", name: `inner.${n++}`, get: () => seg});
-    n = 0;
-    for ( let seg of track.outer )
-      info.push({type: "link", name: `outer.${n++}`, get: () => seg});
-
-    return info;
+  nameOf(target) {
+    return target.constructor.name;
   }
 }
 
@@ -1304,7 +1436,7 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
 
     } else if ( seg1.adj.has(seg2) ) {
       this.puzzle.mergeEdge(seg1, seg2);
-      selector.deselect();
+      selector.reselect();
 
     } else if ( seg1.next === seg2 || seg2.next === seg1 ) {
       if ( seg1.next === seg2 ) seg1 = seg2;
@@ -1398,10 +1530,10 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
     if ( track )
       selector.select(track);
     else
-      selector.deselect();
+      selector.reselect();
   }
   cleanCmd(selector) {
-    selector.deselect();
+    selector.reselect();
     this.puzzle.clean();
     window.alert("finish!");
   }
@@ -1520,6 +1652,14 @@ class SphPuzzleWorld
         border-width: 1px;
         border-color: #575656;
         border-style: solid;
+      }
+      .property-name {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .function .property-name {
+        width: 100%;
       }`;
     document.body.appendChild(gui_style);
 
@@ -1530,7 +1670,7 @@ class SphPuzzleWorld
     var sel_gui = this.gui.addFolder("select");
     sel_gui.add(this.view, "selectOn", ["segment", "element", "track"]).name("select on");
     this.sel_panel = new SelectorPanel(sel_gui, this.selector);
-    this.sel_panel.info_builders.unshift(new SphPuzzleInfoBuilder());
+    this.sel_panel.info_builders.unshift(this.view);
     // this.sel_panel.info_builders.push(new SphNetworkInfoBuilder());
   }
 }
