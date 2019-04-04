@@ -1,6 +1,38 @@
 "use strict";
 
-class SphPuzzle extends THREE.EventDispatcher
+class Listenable
+{
+  constructor() {
+    this._listeners = {};
+    // name -> [ [clz, callback], ...]
+  }
+  on(name, clz=Object, callback) {
+    var i = (this._listeners[name] || []).findIndex(([c,f]) => c===clz && f===callback);
+    if ( i != -1 )
+      return false;
+    this._listeners[name] = this._listeners[name] || [];
+    this._listeners[name].push([clz, callback]);
+    return true;
+  }
+  off(name, clz=Object, callback) {
+    var i = (this._listeners[name] || []).findIndex(([c,f]) => c===clz && f===callback);
+    if ( i == -1 )
+      return false;
+    this._listeners[name].splice(i, 1);
+    return true;
+  }
+  fire(name, target, event={}) {
+    event.type = name;
+    event.target = target;
+    event.currentTarget = this;
+
+    for ( let [clz, listener] of (this._listeners[name] || []) )
+      if ( target instanceof clz )
+        listener.call(this, event);
+  }
+}
+
+class SphPuzzle extends Listenable
 {
   constructor(analyzer=new SphAnalyzer()) {
     super();
@@ -26,62 +58,96 @@ class SphPuzzle extends THREE.EventDispatcher
     })();
 
     this.elements = [];
-    this.add(this.wrap(new SphElem()));
-
+    this.tracks = [];
     this.analyzer = analyzer;
+
+    this.init();
   }
 
-  wrap(element) {
-    element.name = `SphElem#${this.numbers.next().value}`;
-    element.color = this.colors.next().value;
-    element.host = this;
-    return element;
+  add(target) {
+    if ( target instanceof SphElem ) {
+      target.name = target.name || `SphElem#${this.numbers.next().value}`;
+      target.color = target.color || this.colors.next().value;
+      target.host = this;
+
+      this.elements.push(target);
+      this.fire("added", target);
+
+    } else if ( target instanceof SphTrack ) {
+      this.tracks.push(target);
+      this.fire("added", target);
+    }
   }
-  add(element) {
-    this.elements.push(element);
-    this.dispatchEvent({type:"added", element});
+  remove(target) {
+    if ( target instanceof SphElem ) {
+      let i = this.elements.indexOf(target);
+      if ( i == -1 )
+        return;
+      this.elements.splice(i, 1);
+      this.fire("removed", target);
+
+    } else if ( target instanceof SphTrack ) {
+      let i = this.tracks.indexOf(target);
+      if ( i == -1 )
+        return;
+      this.tracks.splice(i, 1);
+      this.fire("removed", target);
+    }
   }
-  remove(element) {
-    let i = this.elements.indexOf(element);
-    if ( i == -1 )
-      return;
-    this.elements.splice(i, 1);
-    this.dispatchEvent({type:"removed", element});
+  clear() {
+    for ( let element of new Set(this.elements) )
+      this.remove(element);
+    for ( let track of new Set(this.tracks) )
+      this.remove(track);
+  }
+  init(elements=[new SphElem()]) {
+    this.clear();
+    for ( let element of elements ) {
+      this.add(element);
+      for ( let seg of element.boundaries )
+        if ( seg.track )
+          this.add(seg.track);
+    }
   }
 
   mergeVertex(seg) {
     var element = seg.affiliation;
     this.analyzer.mergePrev(seg);
-    this.dispatchEvent({type:"modified", attr:"element", element});
+    this.fire("modified", element, {attr:"element"});
   }
   interpolate(seg, theta) {
     var element = seg.affiliation;
     this.analyzer.interpolate(seg, theta);
-    this.dispatchEvent({type:"modified", attr:"element", element});
+    this.fire("modified", element, {attr:"element"});
   }
   mergeEdge(seg1, seg2) {
+    var cover = this.analyzer.cover(seg1, seg2);
+    if ( cover.length == 0 )
+      return;
     var element = seg1.affiliation;
-    this.analyzer.glueAdj(this.analyzer.cover(seg1, seg2));
-    this.dispatchEvent({type:"modified", attr:"element", element});
+    if ( seg1.track )
+      this.remove(seg1.track);
+    this.analyzer.glueAdj(cover);
+    this.fire("modified", element, {attr:"element"});
   }
   mergeElements(element0, ...elements) {
     element0.merge(...elements);
 
     for ( let element of elements )
       this.remove(element);
-    this.dispatchEvent({type:"modified", attr:"element", element:element0});
+    this.fire("modified", element0, {attr:"element"});
 
     return element0;
   }
 
   setColor(element, color) {
     element.color = color;
-    this.dispatchEvent({type:"modified", attr:"color", element});
+    this.fire("modified", element, {attr:"color"});
   }
   rotate(q) {
     for ( let element of this.elements ) {
       element.rotate(q);
-      this.dispatchEvent({type:"modified", attr:"orientation", element});
+      this.fire("modified", element, {attr:"orientation"});
     }
   }
   slice(center, radius, elements=this.elements.slice()) {
@@ -91,8 +157,8 @@ class SphPuzzle extends THREE.EventDispatcher
       let [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
       if ( in_segs.length && out_segs.length ) {
         let [splited] = element.split(out_segs);
-        this.add(this.wrap(splited));
-        this.dispatchEvent({type:"modified", attr:"element", element});
+        this.add(splited);
+        this.fire("modified", element, {attr:"element"});
       }
       new_bd.push(...in_bd, ...out_bd);
     }
@@ -100,6 +166,10 @@ class SphPuzzle extends THREE.EventDispatcher
     if ( new_bd.length )
       if ( !new_bd[0].track )
         track = this.analyzer.buildTrack(new_bd[0]);
+
+    if ( track )
+      this.add(track);
+
     return track;
   }
   twist(track, theta, hold) {
@@ -110,10 +180,16 @@ class SphPuzzle extends THREE.EventDispatcher
     var moved = partition.filter(g => !g.elements.has(hold))
                          .flatMap(g => Array.from(g.elements));
 
-    this.analyzer.twist([[track, theta]], hold);
+    for ( let track_ of track.latches.keys() )
+      this.remove(track_);
+
+    var new_tracks = this.analyzer.twist([[track, theta]], hold);
 
     for ( let elem of moved )
-      this.dispatchEvent({type:"modified", attr:"orientation", element:elem});
+      this.fire("modified", elem, {attr:"orientation"});
+
+    for ( let track_ of new_tracks )
+      this.add(track_);
 
     return track;
   }
@@ -158,7 +234,7 @@ class SphPuzzle extends THREE.EventDispatcher
     }
 
     for ( let element of modified )
-      this.dispatchEvent({type:"modified", attr:"element", element});
+      this.fire("modified", element, {attr:"element"});
 
   }
   check() {
@@ -517,27 +593,27 @@ class SphPuzzleView
       for ( let element of this.puzzle.elements )
         this.drawElement(element);
 
-      this.puzzle.addEventListener("added", event =>
-        this.drawElement(event.element));
-      this.puzzle.addEventListener("removed", event =>
-        this.display.remove(event.element.view, this.root));
+      this.puzzle.on("added", SphElem, event =>
+        this.drawElement(event.target));
+      this.puzzle.on("removed", SphElem, event =>
+        this.display.remove(event.target.view, this.root));
 
-      this.puzzle.addEventListener("modified", event => {
+      this.puzzle.on("modified", SphElem, event => {
         switch ( event.attr ) {
           case "element":
-            this.display.remove(event.element.view, this.root);
-            this.drawElement(event.element);
+            this.display.remove(event.target.view, this.root);
+            this.drawElement(event.target);
             this.refresh = true;
             break;
 
           case "color":
-            for ( let obj of event.element.view.children )
+            for ( let obj of event.target.view.children )
               for ( let sub of obj.children )
-                sub.material.color.set(event.element.color);
+                sub.material.color.set(event.target.color);
             break;
 
           case "orientation":
-            for ( let obj of event.element.view.children )
+            for ( let obj of event.target.view.children )
               obj.quaternion.set(...obj.userData.origin.orientation);
             break;
         }
@@ -798,7 +874,7 @@ class SphPuzzleView
 }
 
 
-class SphNetwork extends THREE.EventDispatcher
+class SphNetwork extends Listenable
 {
   constructor(analyzer=new SphAnalyzer()) {
     super();
@@ -807,58 +883,95 @@ class SphNetwork extends THREE.EventDispatcher
     this.states = [];
     this.joints = [];
     this.bandages = [];
+
+    this.numbers = (function *numbers() {
+      var i = 0; while ( true ) yield i++;
+    })();
   }
 
-  addState(state) {
-    this.states.push(state);
-    this.dispatchEvent({type:"stateadded", state});
-  }
-  removeState(state) {
-    var i = this.states.indexOf(state);
-    if ( i == -1 )
-      return;
-    this.states.splice(i, 1);
-    this.dispatchEvent({type:"statemoved", state});
-  }
-  addJoint(joint) {
-    this.joints.push(joint);
-    this.dispatchEvent({type:"jointadded", joint});
-    for ( let [state, orientation] of joint.ports ) {
-      console.assert(this.states.includes(state));
-      let index = state.indexOf(joint);
-      this.dispatchEvent({type:"fusionadded", joint, state, index});
+  add(target) {
+    if ( target instanceof SphState ) {
+      target.name = `SphState#${this.numbers.next().value}`;
+      target.host = this;
+      this.states.push(target);
+      this.fire("added", target);
+
+    } else if ( target instanceof SphJoint ) {
+      this.joints.push(target);
+      this.fire("added", target);
+      for ( let [state, orientation] of target.ports ) {
+        console.assert(this.states.includes(state));
+        let index = state.indexOf(target);
+        this.fire("fused", target, {state, index});
+      }
+
+    } else if ( target instanceof Set ) {
+      this.bandages.push(target);
+      this.fire("added", target);
+      for ( let joint of target ) {
+        console.assert(this.joints.includes(joint));
+        this.fire("binded", target, {joint});
+      }
+
     }
   }
-  removeJoint(joint) {
-    var i = this.joints.indexOf(joint);
-    if ( i == -1 )
-      return;
-    this.joints.splice(i, 1);
-    for ( let [state, orientation] of joint.ports ) {
-      console.assert(this.states.includes(state));
-      let index = state.indexOf(joint);
-      this.dispatchEvent({type:"fusionremoved", joint, state, index});
+  remove(target) {
+    if ( target instanceof SphState ) {
+      let i = this.states.indexOf(target);
+      if ( i == -1 )
+        return;
+      this.states.splice(i, 1);
+      this.fire("removed", target);
+
+    } else if ( target instanceof SphJoint ) {
+      let i = this.joints.indexOf(target);
+      if ( i == -1 )
+        return;
+      this.joints.splice(i, 1);
+      for ( let [state, orientation] of target.ports ) {
+        console.assert(this.states.includes(state));
+        let index = state.indexOf(target);
+        this.fire("unfused", target, {state, index});
+      }
+      this.fire("removed", target);
+
+    } else if ( target instanceof Set ) {
+      let i = this.bandages.indexOf(target);
+      if ( i == -1 )
+        return;
+      this.bandages.splice(i, 1);
+      for ( let joint of target ) {
+        console.assert(this.joints.includes(joint));
+        this.fire("unbinded", target, {joint});
+      }
+      this.fire("removed", target);
+
     }
-    this.dispatchEvent({type:"jointremoved", joint});
   }
-  addBandage(bandage) {
-    this.bandages.push(bandage);
-    this.dispatchEvent({type:"bandageadded", bandage});
-    for ( let joint of bandage ) {
-      console.assert(this.joints.includes(joint));
-      this.dispatchEvent({type:"bondadded", bandage, joint});
-    }
+  clear() {
+    for ( let bandage of this.bandages.slice() )
+      this.remove(bandage);
+
+    for ( let joint of this.joints.slice() )
+      this.remove(joint);
+
+    for ( let state of this.states.slice() )
+      this.remove(state);
   }
-  removeBandage(bandage) {
-    var i = this.bandages.indexOf(bandage);
-    if ( i == -1 )
-      return;
-    this.bandages.splice(i, 1);
-    for ( let joint of bandage ) {
-      console.assert(this.joints.includes(joint));
-      this.dispatchEvent({type:"bondremoved", bandage, joint});
-    }
-    this.dispatchEvent({type:"bandageremoved", bandage});
+  init(puzzle) {
+    this.clear();
+
+    var states = this.analyzer.structurize(puzzle.elements);
+    for ( let state of states )
+      this.add(state);
+
+    var joints = states.flatMap(state => state.joints.flat(2));
+    for ( let joint of new Set(joints) )
+      this.add(joint);
+
+    var bandages = joints.map(joint => joint.bandage).filter(b => b.size > 1);
+    for ( let bandage of new Set(bandages) )
+      this.add(bandage);
   }
 
   makeJoint(state, index) {
@@ -866,16 +979,16 @@ class SphNetwork extends THREE.EventDispatcher
     var joint = state.jointAt(index, false);
     if ( !joint ) {
       joint = state.jointAt(index, true);
-      this.addJoint(joint);
+      this.add(joint);
     }
     return joint;
   }
   fuse(joint, joint_) {
     joint.fuse(joint_);
-    this.removeJoint(joint_);
+    this.remove(joint_);
     for ( let [state, ] of joint_.ports ) {
       let index = state.indexOf(joint_);
-      this.dispatchEvent({type:"fusionadded", joint, state, index});
+      this.fire("fused", joint, {state, index});
     }
   }
   unfuse(joint, state) {
@@ -883,9 +996,9 @@ class SphNetwork extends THREE.EventDispatcher
       return;
     var index = state.indexOf(joint);
     joint.unfuse(state);
-    this.dispatchEvent({type:"fusionremoved", joint, state, index});
+    this.fire("unfused", joint, {state, index});
     if ( joint.size == 0 )
-      this.removeJoint(joint);
+      this.remove(joint);
   }
   bind(joint1, joint2) {
     var bandage1 = joint1.bandage.size > 1 ? joint1.bandage : undefined;
@@ -893,18 +1006,18 @@ class SphNetwork extends THREE.EventDispatcher
     joint1.bind(joint2);
 
     if ( !bandage1 && !bandage2 ) {
-      this.addBandage(joint1.bandage);
+      this.add(joint1.bandage);
 
     } else if ( bandage1 && bandage2 ) {
-      this.removeBandage(bandage2);
+      this.remove(bandage2);
       for ( let joint of bandage2 )
-        this.dispatchEvent({type:"bondadded", bandage:bandage1, joint});
+        this.fire("binded", bandage1, {joint});
 
     } else if ( bandage1 && !bandage2 ) {
-      this.dispatchEvent({type:"bondadded", bandage:bandage1, joint:joint2});
+      this.fire("binded", bandage1, {joint:joint2});
 
     } else if ( !bandage1 && bandage2 ) {
-      this.dispatchEvent({type:"bondadded", bandage:bandage2, joint:joint1});
+      this.fire("binded", bandage2, {joint:joint1});
     }
   }
   unbind(joint) {
@@ -912,41 +1025,16 @@ class SphNetwork extends THREE.EventDispatcher
     if ( bandage.size == 1 )
       return;
     joint.unbind();
-    this.dispatchEvent({type:"bondremoved", bandage, joint});
+    this.fire("unbinded", bandage, {joint});
     if ( bandage.size <= 1 )
-      this.removeBandage(bandage);
+      this.remove(bandage);
   }
 
-  clear() {
-    for ( let bandage of this.bandages.slice() )
-      this.removeBandage(bandage);
-
-    for ( let joint of this.joints.slice() )
-      this.removeJoint(joint);
-
-    for ( let state of this.states.slice() )
-      this.removeState(state);
-  }
-  init(puzzle) {
-    this.clear();
-
-    var states = this.analyzer.structurize(puzzle.elements);
-    for ( let state of states )
-      this.addState(state);
-
-    var joints = states.flatMap(state => state.joints.flat(2));
-    for ( let joint of new Set(joints) )
-      this.addJoint(joint);
-
-    var bandages = joints.map(joint => joint.bandage).filter(b => b.size > 1);
-    for ( let bandage of new Set(bandages) )
-      this.addBandage(bandage);
-  }
   trim(state) {
     var joints = state.joints.flat(2);
     for ( let joint of joints )
       this.unfuse(joint, state);
-    this.removeState(state);
+    this.remove(state);
     joints.slice(1).forEach(joint => this.fuse(joint, joints[0]));
   }
 }
@@ -972,59 +1060,59 @@ class SphNetworkView
     this.data = [];
     // event listeners
     {
-      network.addEventListener("stateadded", event => {
+      network.on("added", SphState, event => {
         var id = this.numbers.next().value;
-        this.data[id] = event.state;
+        this.data[id] = event.target;
         nodes.add({id, type:"state", size:20, shape:"diamond"});
       });
-      network.addEventListener("stateremoved", event => {
-        var id = this.data.indexOf(event.state);
+      network.on("removed", SphState, event => {
+        var id = this.data.indexOf(event.target);
         if ( id != -1 ) {
           delete this.data[id];
           nodes.remove(id);
         }
       });
-      network.addEventListener("jointadded", event => {
+      network.on("added", SphJoint, event => {
         var id = this.numbers.next().value;
-        this.data[id] = event.joint;
+        this.data[id] = event.target;
         nodes.add({id, type:"joint", size:5, shape:"dot"});
       });
-      network.addEventListener("jointremoved", event => {
-        var id = this.data.indexOf(event.joint);
+      network.on("removed", SphJoint, event => {
+        var id = this.data.indexOf(event.target);
         if ( id != -1 ) {
           delete this.data[id];
           nodes.remove(id);
         }
       });
-      network.addEventListener("bandageadded", event => {
+      network.on("added", Set, event => {
         var id = this.numbers.next().value;
-        this.data[id] = event.bandage;
+        this.data[id] = event.target;
         nodes.add({id, type:"bandage", size:0, shape:"dot"});
       });
-      network.addEventListener("bandageremoved", event => {
-        var id = this.data.indexOf(event.bandage);
+      network.on("removed", Set, event => {
+        var id = this.data.indexOf(event.target);
         if ( id != -1 ) {
           delete this.data[id];
           nodes.remove(id);
         }
       });
-      network.addEventListener("fusionadded", event => {
-        var from = this.data.indexOf(event.joint);
+      network.on("fused", SphJoint, event => {
+        var from = this.data.indexOf(event.target);
         var to = this.data.indexOf(event.state);
         edges.add({id:`${from}-${to}`, type:"fusion", from, to});
       });
-      network.addEventListener("fusionremoved", event => {
-        var from = this.data.indexOf(event.joint);
+      network.on("unfused", SphJoint, event => {
+        var from = this.data.indexOf(event.target);
         var to = this.data.indexOf(event.state);
         edges.remove(`${from}-${to}`);
       });
-      network.addEventListener("bondadded", event => {
-        var from = this.data.indexOf(event.bandage);
+      network.on("binded", Set, event => {
+        var from = this.data.indexOf(event.target);
         var to = this.data.indexOf(event.joint);
         edges.add({id:`${from}-${to}`, type:"bond", from, to, dashes:true});
       });
-      network.addEventListener("bondremoved", event => {
-        var from = this.data.indexOf(event.bandage);
+      network.on("unbinded", Set, event => {
+        var from = this.data.indexOf(event.target);
         var to = this.data.indexOf(event.joint);
         edges.remove(`${from}-${to}`);
       });
@@ -1116,7 +1204,7 @@ class SphNetworkView
   }
 
   nameOf(target) {
-    return target.constructor.name;
+    return;
   }
   infoOf(target) {
     if ( target instanceof SphState )
@@ -1131,11 +1219,6 @@ class SphNetworkView
     var n = 0;
     for ( let state of states )
       info.push({type: "link", name: `port.${n++}`, get: () => state});
-    for ( let state of states ) {
-      let index = state.indexOf(joint);
-      let seg = state.get(index);
-      info.push({type: "link", name: `${this.nameOf(state)}[${index}]`, get: () => seg});
-    }
 
     return info;
   }

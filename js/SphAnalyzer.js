@@ -1674,6 +1674,7 @@ class SphAnalyzer
    * @param {Map<SphTrack,number>} op - The map that tell you which track should
    *   twist by what angle.
    * @param {SphElem=} hold - The element whose orientation should be fixed.
+   * @returns {SphTrack[]} New tracks after twist.
    */
   twist(op, hold) {
     op = new Map(op);
@@ -1735,11 +1736,14 @@ class SphAnalyzer
     }
 
     // relock
+    var new_tracks = [];
     for ( let track of op.keys() )
       for ( let seg0 of track.inner )
         for ( let [angle, inter_seg, offset] of this.spin(seg0) )
           if ( angle < 2 && angle > 0 && offset == 0 )
-            if ( !inter_seg.track ) this.buildTrack(inter_seg);
+            if ( !inter_seg.track ) new_tracks.push(this.buildTrack(inter_seg));
+
+    return new_tracks;
   }
 
   /**
