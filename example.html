@@ -9,7 +9,8 @@
   <script src="js/SphPuzzle.js"></script>
 </head>
 <body>
-<div id="display" style="width:600px;height:600px;"></div>
+<div id="display" style="display:inline-block;width:600px;height:600px;"></div>
+<div id="network" style="display:inline-block;width:400px;height:400px;border:solid 1px grey;"></div>
 <script>
 
 puzzle = new SphPuzzle();
@@ -28,9 +29,7 @@ puzzle.slice([-s2, s2,  0], 1/2);
 puzzle.slice([ s2,-s2,  0], 1/2);
 puzzle.slice([-s2,-s2,  0], 1/2);
 
-// puzzle.clean();
-// puzzle.check();
-var world = new SphPuzzleWorld("display", puzzle);
+var world = new SphPuzzleWorld("display", "network", puzzle);
 </script>
 </body>
 </html>

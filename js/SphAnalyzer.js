@@ -2806,3 +2806,434 @@ class SphConfig
   }
 }
 
+
+class Listenable
+{
+  constructor() {
+    this._listeners = {};
+    // name -> [ [clz, callback], ...]
+  }
+  on(name, clz=Object, callback) {
+    var i = (this._listeners[name] || []).findIndex(([c,f]) => c===clz && f===callback);
+    if ( i != -1 )
+      return false;
+    this._listeners[name] = this._listeners[name] || [];
+    this._listeners[name].push([clz, callback]);
+    return true;
+  }
+  off(name, clz=Object, callback) {
+    var i = (this._listeners[name] || []).findIndex(([c,f]) => c===clz && f===callback);
+    if ( i == -1 )
+      return false;
+    this._listeners[name].splice(i, 1);
+    return true;
+  }
+  trigger(name, target, event={}) {
+    event.type = name;
+    event.target = target;
+    event.currentTarget = this;
+
+    for ( let [clz, listener] of (this._listeners[name] || []) ) {
+      if ( target === this ) { // root event
+        if ( clz === this )
+          listener.call(this, event);
+
+      } else if ( typeof clz == "function" ) { // delegated event listener
+        if ( target instanceof clz )
+          listener.call(this, event);
+
+      } else { // event listener with specific target
+        if ( target === clz )
+          listener.call(this, event);
+
+      }
+    }
+  }
+}
+
+class SphPuzzle extends Listenable
+{
+  constructor(analyzer=new SphAnalyzer()) {
+    super();
+
+    this.elements = [];
+    this.tracks = [];
+    this.analyzer = analyzer;
+
+    this.init();
+  }
+
+  add(target) {
+    if ( target instanceof SphElem ) {
+      target.host = this;
+
+      this.elements.push(target);
+      this.trigger("added", target);
+
+    } else if ( target instanceof SphTrack ) {
+      target.host = this;
+      this.tracks.push(target);
+      this.trigger("added", target);
+    }
+  }
+  remove(target) {
+    if ( target instanceof SphElem ) {
+      let i = this.elements.indexOf(target);
+      if ( i == -1 )
+        return;
+      this.elements.splice(i, 1);
+      this.trigger("removed", target);
+
+    } else if ( target instanceof SphTrack ) {
+      let i = this.tracks.indexOf(target);
+      if ( i == -1 )
+        return;
+      this.tracks.splice(i, 1);
+      this.trigger("removed", target);
+    }
+  }
+  clear() {
+    for ( let element of new Set(this.elements) )
+      this.remove(element);
+    for ( let track of new Set(this.tracks) )
+      this.remove(track);
+  }
+  init(elements=[new SphElem()]) {
+    this.clear();
+    for ( let element of elements ) {
+      this.add(element);
+      for ( let seg of element.boundaries )
+        if ( seg.track )
+          this.add(seg.track);
+    }
+  }
+
+  mergeVertex(seg) {
+    var element = seg.affiliation;
+    this.analyzer.mergePrev(seg);
+    this.trigger("modified", element, {attr:"element"});
+  }
+  interpolate(seg, theta) {
+    var element = seg.affiliation;
+    this.analyzer.interpolate(seg, theta);
+    this.trigger("modified", element, {attr:"element"});
+  }
+  mergeEdge(seg1, seg2) {
+    var cover = this.analyzer.cover(seg1, seg2);
+    if ( cover.length == 0 )
+      return;
+    var element = seg1.affiliation;
+    if ( seg1.track )
+      this.remove(seg1.track);
+    this.analyzer.glueAdj(cover);
+    this.trigger("modified", element, {attr:"element"});
+  }
+  mergeElements(element0, ...elements) {
+    element0.merge(...elements);
+
+    for ( let element of elements )
+      this.remove(element);
+    this.trigger("modified", element0, {attr:"element"});
+
+    return element0;
+  }
+
+  rotate(q) {
+    for ( let element of this.elements ) {
+      element.rotate(q);
+      this.trigger("modified", element, {attr:"orientation"});
+    }
+  }
+  slice(center, radius, elements=this.elements.slice()) {
+    var circle = new SphCircle({radius, orientation:q_align(center)});
+    var new_bd = [];
+    for ( let element of elements ) {
+      let [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
+      if ( in_segs.length && out_segs.length ) {
+        let [splited] = element.split(out_segs);
+        this.add(splited);
+        this.trigger("modified", element, {attr:"element"});
+      }
+      new_bd.push(...in_bd, ...out_bd);
+    }
+    var track;
+    if ( new_bd.length )
+      if ( !new_bd[0].track )
+        track = this.analyzer.buildTrack(new_bd[0]);
+
+    if ( track )
+      this.add(track);
+
+    return track;
+  }
+  twist(track, theta, hold) {
+    theta = this.analyzer.mod4(theta);
+    var partition = this.analyzer.partitionBy(track.inner, track.outer);
+    if ( partition.length == 1 )
+      throw new Error("Untwistable!");
+    var moved = partition.filter(g => !g.elements.has(hold))
+                         .flatMap(g => Array.from(g.elements));
+
+    for ( let track_ of track.latches.keys() )
+      this.remove(track_);
+
+    var new_tracks = this.analyzer.twist([[track, theta]], hold);
+
+    for ( let elem of moved )
+      this.trigger("modified", elem, {attr:"orientation"});
+
+    for ( let track_ of new_tracks )
+      this.add(track_);
+
+    return track;
+  }
+
+  clean() {
+    // merge untwistable edges
+    var elements = this.elements.slice();
+    for ( let group of this.analyzer.twistablePartOf(elements) )
+      if ( group.length > 1 )
+        this.mergeElements(...group);
+
+    var modified = new Set();
+
+    // merge trivial edges
+    for ( let element of this.elements ) {
+      let zippers = [];
+      let nontrivial = new Set(element.boundaries);
+      for ( let seg of nontrivial ) {
+        let subzippers = this.analyzer.findZippers(seg);
+        for ( let [seg1,,,seg2,,] of subzippers ) {
+          nontrivial.delete(seg1);
+          nontrivial.delete(seg2);
+        }
+        zippers.push(...subzippers);
+      }
+
+      if ( zippers.length ) {
+        this.analyzer.glueAdj(zippers);
+        modified.add(element);
+      }
+    }
+
+    // merge trivial vertices
+    for ( let element of this.elements ) {
+      let trivial = Array.from(element.boundaries)
+                         .filter(seg => this.analyzer.isTrivialVertex(seg));
+      for ( let seg of trivial )
+        if ( seg !== seg.prev ) {
+          this.analyzer.mergePrev(seg);
+          modified.add(element);
+        }
+    }
+
+    for ( let element of modified )
+      this.trigger("modified", element, {attr:"element"});
+
+  }
+  check() {
+    for ( let element of this.elements )
+      for ( let seg of element.boundaries )
+        this.analyzer.checkGeometry(seg);
+    this.analyzer.checkOrientation(this.elements);
+  }
+}
+
+class SphNetwork extends Listenable
+{
+  constructor(analyzer=new SphAnalyzer()) {
+    super();
+
+    this.analyzer = analyzer;
+    this.states = [];
+    this.joints = [];
+    this.bandages = [];
+
+    this.numbers = (function *numbers() {
+      var i = 0; while ( true ) yield i++;
+    })();
+  }
+
+  add(target) {
+    if ( target instanceof SphState ) {
+      target.host = this;
+      this.states.push(target);
+      this.trigger("added", target);
+
+    } else if ( target instanceof SphJoint ) {
+      target.host = this;
+      this.joints.push(target);
+      this.trigger("added", target);
+      for ( let [state, orientation] of target.ports ) {
+        console.assert(this.states.includes(state));
+        let index = state.indexOf(target);
+        this.trigger("fused", target, {state, index});
+      }
+
+    } else if ( target instanceof Set ) {
+      this.bandages.push(target);
+      this.trigger("added", target);
+      for ( let joint of target ) {
+        console.assert(this.joints.includes(joint));
+        this.trigger("binded", target, {joint});
+      }
+
+    }
+  }
+  remove(target) {
+    if ( target instanceof SphState ) {
+      let i = this.states.indexOf(target);
+      if ( i == -1 )
+        return;
+      this.states.splice(i, 1);
+      this.trigger("removed", target);
+
+    } else if ( target instanceof SphJoint ) {
+      let i = this.joints.indexOf(target);
+      if ( i == -1 )
+        return;
+      this.joints.splice(i, 1);
+      for ( let [state, orientation] of target.ports ) {
+        console.assert(this.states.includes(state));
+        let index = state.indexOf(target);
+        this.trigger("unfused", target, {state, index});
+      }
+      this.trigger("removed", target);
+
+    } else if ( target instanceof Set ) {
+      let i = this.bandages.indexOf(target);
+      if ( i == -1 )
+        return;
+      this.bandages.splice(i, 1);
+      for ( let joint of target ) {
+        console.assert(this.joints.includes(joint));
+        this.trigger("unbinded", target, {joint});
+      }
+      this.trigger("removed", target);
+
+    }
+  }
+  clear() {
+    for ( let bandage of this.bandages.slice() )
+      this.remove(bandage);
+
+    for ( let joint of this.joints.slice() )
+      this.remove(joint);
+
+    for ( let state of this.states.slice() )
+      this.remove(state);
+  }
+  init(puzzle) {
+    this.clear();
+
+    var states = this.analyzer.structurize(puzzle.elements);
+    for ( let state of states )
+      this.add(state);
+
+    var joints = states.flatMap(state => state.joints.flat(2));
+    for ( let joint of new Set(joints) )
+      this.add(joint);
+
+    var bandages = joints.map(joint => joint.bandage).filter(b => b.size > 1);
+    for ( let bandage of new Set(bandages) )
+      this.add(bandage);
+  }
+
+  makeJoint(state, index) {
+    console.assert(this.states.includes(state));
+    var joint = state.jointAt(index, false);
+    if ( !joint ) {
+      joint = state.jointAt(index, true);
+      this.add(joint);
+    }
+    return joint;
+  }
+  fuse(joint, joint_) {
+    joint.fuse(joint_);
+    this.remove(joint_);
+    for ( let [state, ] of joint_.ports ) {
+      let index = state.indexOf(joint_);
+      this.trigger("fused", joint, {state, index});
+    }
+  }
+  unfuse(joint, state) {
+    if ( !joint.ports.has(state) )
+      return;
+    var index = state.indexOf(joint);
+    joint.unfuse(state);
+    this.trigger("unfused", joint, {state, index});
+    if ( joint.size == 0 )
+      this.remove(joint);
+  }
+  bind(joint1, joint2) {
+    var bandage1 = joint1.bandage.size > 1 ? joint1.bandage : undefined;
+    var bandage2 = joint2.bandage.size > 1 ? joint2.bandage : undefined;
+    joint1.bind(joint2);
+
+    if ( !bandage1 && !bandage2 ) {
+      this.add(joint1.bandage);
+
+    } else if ( bandage1 && bandage2 ) {
+      this.remove(bandage2);
+      for ( let joint of bandage2 )
+        this.trigger("binded", bandage1, {joint});
+
+    } else if ( bandage1 && !bandage2 ) {
+      this.trigger("binded", bandage1, {joint:joint2});
+
+    } else if ( !bandage1 && bandage2 ) {
+      this.trigger("binded", bandage2, {joint:joint1});
+    }
+  }
+  unbind(joint) {
+    var bandage = joint.bandage;
+    if ( bandage.size == 1 )
+      return;
+    joint.unbind();
+    this.trigger("unbinded", bandage, {joint});
+    if ( bandage.size <= 1 )
+      this.remove(bandage);
+  }
+
+  trim(state) {
+    var joints = state.joints.flat(2);
+    for ( let joint of joints )
+      this.unfuse(joint, state);
+    this.remove(state);
+    joints.slice(1).forEach(joint => this.fuse(joint, joints[0]));
+  }
+
+  /*
+  recognize() {
+    for ( let n=0; n<this.states.length; n++ ) if ( this.outdated[n] ) {
+      let state = this.states[n];
+      let graph = this.graphs[n];
+  
+      let [config, perms] = this.analyzer.recognize(state.configuration,
+                                                    state.segments,
+                                                    graph.configurations);
+  
+      graph.add(config);
+      this.transit(n, perm, config);
+      this.outdated[n] = false;
+    }
+  }
+  assemble(state, config) {
+    // for ( let state of this.globetrot(state0, index0, orientation0) )
+    //   this.assemble(state.configuration, state.segments, index0, orientation0);
+  
+    this.analyzer.assemble(config, state.segments);
+    for ( let param_i of state.segments ) for ( let param_ij of param_i ) {
+      for ( let seg of this.analyzer.walk(param_ij) )
+        if ( !seg.track ) this.analyzer.buildTrack(seg);
+      // param_ij.affiliation.host.dispatchEvent({type:"modified", attr:"orientation"});
+    }
+    this.transit(state, config.I(), config);
+  }
+  transit(state, perm, config) {
+    state.transit(perm, config);
+    this.dispatchEvent({type:"modified", state});
+  }
+  */
+}
+
