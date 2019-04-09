@@ -431,6 +431,151 @@ class Panel
   }
 }
 
+class Diagram
+{
+  constructor(id) {
+    this.dom = document.getElementById(id);
+
+    this.nodes_options = new vis.DataSet();
+    this.edges_options = new vis.DataSet();
+    this.view = new vis.Network(
+      this.dom,
+      {nodes:this.nodes_options, edges:this.edges_options},
+      {
+        physics: true,
+        nodes: {chosen:false}, edges: {chosen:false},
+        interaction: {selectable:false, selectConnectedEdges:false,
+                      hover:true, hoverConnectedEdges:false}
+      }
+    );
+
+    this.nodes = new Map();
+    this.edges = new Map();
+    this.numbers = (function *numbers() {
+      var i = 0; while ( true ) if ( yield i++ ) i = -1;
+    })();
+
+    var make_target = event => { event.target = this.getKeyAt(event.pointer.DOM); };
+    this.view.on("click", make_target);
+    this.view.on("hoverNode", make_target);
+    this.view.on("blurNode", make_target);
+  }
+
+  getKeyAt(vec) {
+    var id = this.view.getNodeAt(vec);
+    if ( id === undefined )
+      return;
+    return this.getKey(id);
+  }
+  getNodeOptions(key) {
+    var id = this.nodes.get(key);
+    if ( id === undefined )
+      return;
+    return this.nodes_options.get(id);
+  }
+  getEdgeOptions(key) {
+    var id = this.edges.get(key);
+    if ( id === undefined )
+      return;
+    return this.edges_options.get(id);
+  }
+  addNode(key, options={}) {
+    var id = this.nodes.get(key);
+    if ( id !== undefined )
+      this.removeNode(key);
+    else
+      id = this.numbers.next().value;
+
+    this.nodes.set(key, id);
+    this.nodes_options.add(Object.assign({id}, options));
+    return key;
+  }
+  addEdge(key_from, key_to, key=[key_from, key_to], options={}) {
+    var from = this.nodes.get(key_from);
+    var to = this.nodes.get(key_to);
+    if ( from === undefined || to === undefined )
+      throw new Error();
+
+    var id = this.edges.get(key);
+    if ( id !== undefined )
+      this.removeEdge(key);
+    else
+      id = this.numbers.next().value;
+
+    this.edges.set(key, id);
+    this.edges_options.add(Object.assign({id, from, to}, options));
+    return key;
+  }
+  updateNodeOptions(key, patch={}) {
+    var id = this.nodes.get(key);
+    if ( id === undefined )
+      throw new Error();
+
+    var options = this.nodes_options.get(id);
+    this.nodes_options.update(Object.assign(options, patch, {id}));
+  }
+  updateEdgeOptions(key, patch={}) {
+    var id = this.edges.get(key);
+    if ( id === undefined )
+      throw new Error();
+
+    var options = this.edges_options.get(id);
+    this.edges_options.update(Object.assign(options, patch, {id}));
+  }
+  removeNode(key) {
+    var id = this.nodes.get(key);
+    if ( id === undefined )
+      return;
+
+    this.nodes.delete(key);
+    this.nodes_options.remove(id);
+    if ( this.nodes.size == 0 && this.edges.size == 0 )
+      this.numbers.next(true);
+  }
+  removeEdge(key) {
+    var id = this.edges.get(key);
+    if ( id === undefined )
+      return;
+
+    this.edges.delete(key);
+    this.edges_options.remove(id);
+    if ( this.nodes.size == 0 && this.edges.size == 0 )
+      this.numbers.next(true);
+  }
+
+  getKey(id) {
+    for ( let [key, id_] of this.nodes )
+      if ( id == id_ )
+        return key;
+    for ( let [key, id_] of this.edges )
+      if ( id == id_ )
+        return key;
+  }
+  *edgesBetween(key_from, key_to) {
+    var from = key_from && this.nodes.get(key_from);
+    var to = key_to && this.nodes.get(key_to);
+    for ( let [key, id] of this.edges ) {
+      let options = this.edges_options.get(id);
+      if ( key_from === undefined || options.from == from )
+        if ( key_to === undefined || options.to == to )
+          yield key;
+    }
+  }
+
+  emphasizeNode(key) {
+    this.updateNodeOptions(key, {color:{background:"#D2E5FF"}});
+  }
+  unemphasizeNode(key) {
+    this.updateNodeOptions(key, {color:{background:"#97C2FC"}});
+  }
+  highlightNode(key) {
+    this.updateNodeOptions(key, {borderWidth:2});
+  }
+  unhighlightNode(key) {
+    this.updateNodeOptions(key, {borderWidth:1});
+  }
+}
+
 
 class Selector extends Listenable
 {
@@ -553,7 +698,11 @@ class SelectPanel
     for ( let builder of this.prop_builders )
       if ( properties = builder.prop(target, "replace") )
         break;
-    properties.unshift({type:"button", name:"object", callback:()=>console.log(target)});
+    properties.unshift({
+      type: "button",
+      name: `console.log(${target.name||"object"})`,
+      callback: () => console.log(target)
+    });
     this.detail_panel.clear();
     this.detail_panel.add(...properties);
   }
@@ -618,9 +767,8 @@ class SphPuzzleView
         event.target.name = event.target.name || track_id.next().value;
       });
       this.puzzle.on("modified", SphElem, event => {
-        if ( event.attr == "element" )
-          for ( let seg of event.target.boundaries )
-            seg.name = seg.name || seg_id.next().value;
+        for ( let seg of event.target.boundaries )
+          seg.name = seg.name || seg_id.next().value;
       });
     }
 
@@ -672,24 +820,18 @@ class SphPuzzleView
       this.puzzle.on("removed", SphElem, event =>
         this.display.remove(event.target.view, this.root));
       this.puzzle.on("modified", SphElem, event => {
-        switch ( event.attr ) {
-          case "element":
-            this.display.remove(event.target.view, this.root);
-            this.drawElement(event.target);
-            this.refresh = true;
-            break;
-
-          case "color":
-            for ( let obj of event.target.view.children )
-              for ( let sub of obj.children )
-                sub.material.color.set(event.target.color);
-            break;
-
-          case "orientation":
-            for ( let obj of event.target.view.children )
-              obj.quaternion.set(...obj.userData.origin.orientation);
-            break;
-        }
+        this.display.remove(event.target.view, this.root);
+        this.drawElement(event.target);
+        this.refresh = true;
+      });
+      this.puzzle.on("rotated", SphElem, event => {
+        for ( let obj of event.target.view.children )
+          obj.quaternion.set(...obj.userData.origin.orientation);
+      });
+      this.puzzle.on("recolored", SphElem, event => {
+        for ( let obj of event.target.view.children )
+          for ( let sub of obj.children )
+            sub.material.color.set(event.target.color);
       });
     }
 
@@ -699,11 +841,11 @@ class SphPuzzleView
 
   setName(target, name) {
     target.name = name;
-    target.host.trigger("modified", target, {attr:"name"});
+    target.host.trigger("renamed", target);
   }
   setColor(element, color) {
     element.color = color;
-    element.host.trigger("modified", element, {attr:"color"});
+    element.host.trigger("recolored", element);
   }
 
   // 3D view
@@ -937,13 +1079,15 @@ class SphPuzzleView
     detail.push({type: "number", min: 0, max: 4, name: "angle", get: () => seg.angle});
 
     detail.push(this.link(seg.affiliation, sel_mode, "affiliation"));
-    if ( seg.track )
-      detail.push(this.link(seg.track, sel_mode, "track"));
     detail.push(this.link(seg.prev, sel_mode, "prev"));
     detail.push(this.link(seg.next, sel_mode, "next"));
 
+    if ( seg.track )
+      detail.push(this.link(seg.track, sel_mode, "track"));
+    var adj = [];
     for ( let [adj_seg, offset] of seg.adj )
-      detail.push(this.link(adj_seg, sel_mode, `adj(${offset})`));
+      adj.push(this.link(adj_seg, sel_mode, `${adj_seg.name} → ${offset}`));
+    detail.push({type: "folder", name: "adj", open: true, properties: adj});
 
     return detail;
   }
@@ -954,8 +1098,10 @@ class SphPuzzleView
     var radius = track.inner[0].radius;
     detail.push({type: "number", min: 0, max: 2, name: "radius", get: () => radius});
 
+    var latches = [];
     for ( let [track_, {center, arc, angle}] of track.latches )
-      detail.push(this.link(track_, sel_mode, `latch(${center}, ${arc}, ${angle})`));
+      latches.push(this.link(track_, sel_mode, `${track_.name} → (${center}, ${arc}, ${angle})`));
+    detail.push({type: "folder", name: "latches", open: true, properties: latches});
 
     var inner = [];
     for ( let seg of track.inner )
@@ -964,7 +1110,7 @@ class SphPuzzleView
 
     var outer = [];
     for ( let seg of track.outer )
-      detail.push(this.link(seg, sel_mode));
+      outer.push(this.link(seg, sel_mode));
     detail.push({type: "folder", name: "outer", properties: outer});
 
     return detail;
@@ -973,117 +1119,98 @@ class SphPuzzleView
 
 class SphNetworkView
 {
-  constructor(dom, network, selector) {
-    this.dom = dom;
+  constructor(diagram, network, selector) {
+    this.diagram = diagram;
     this.network = network;
     this.selector = selector;
 
-    var nodes = new vis.DataSet(), edges = new vis.DataSet();
-    this.nodes = nodes;
-    this.edges = edges;
-    this.view = new vis.Network(this.dom, {nodes, edges}, {
-      physics: true,
-      nodes: {chosen:false}, edges: {chosen:false},
-      interaction: {multiselect:true, selectConnectedEdges:false}
-    });
-
-    this.data = {};
     {
-      this.numbers = (function *numbers() {
-        var i = 0; while ( true ) if ( yield i++ ) i = -1;
-      })();
-
       for ( let state of network.states )
-        this.addNode(state);
+        this.drawState(state);
       for ( let joint of network.joints ) {
-        this.addNode(joint);
+        this.drawJoint(joint);
         for ( let state of joint.ports.keys() )
-          this.addEdge(joint, state);
+          this.drawFusion(joint, state);
       }
-      for ( let bandage of network.bandages ) {
-        this.addNode(bandage);
+      var bandages = network.joints.map(j => j.bandage).filter(b => b.size > 1);
+      for ( let bandage of new Set(bandages) ) {
+        let joint0 = bandage.values().next().value;
+        let id = this.diagram.nodes.get(joint0);
         for ( let joint of bandage )
-          this.addEdge(bandage, joint);
+          this.diagram.updateNodeOptions(joint, {bandage:id});
       }
       
       network.on("added", Object, event => {
-        this.addNode(event.target);
+        if ( event.target instanceof SphState )
+          this.drawState(event.target);
+        else if ( event.target instanceof SphJoint )
+          this.drawJoint(event.target);
       });
       network.on("removed", Object, event => {
-        this.removeNode(event.target);
+        this.eraseNode(event.target);
       });
       network.on("fused", SphJoint, event => {
-        this.addEdge(event.target, event.state);
+        this.drawFusion(event.target, event.state);
       });
       network.on("unfused", SphJoint, event => {
-        this.removeEdge(event.target, event.state);
+        this.eraseFusion(event.target, event.state);
       });
-      network.on("binded", Set, event => {
-        this.addEdge(event.target, event.joint);
+      network.on("binded", SphJoint, event => {
+        var id = this.diagram.nodes.get(event.target);
+        for ( let joint of event.joints )
+          this.diagram.updateNodeOptions(joint, {bandage:id});
       });
-      network.on("unbinded", Set, event => {
-        this.removeEdge(event.target, event.joint);
+      network.on("unbinded", SphJoint, event => {
+        this.diagram.updateNodeOptions(event.target, {bandage:undefined});
       });
     }
 
-    this.view.on("click", event => {
-      var id = this.view.getNodeAt(event.pointer.DOM);
-      var target = (id !== undefined) && this.data[id];
-      target = (target instanceof SphState || target instanceof SphJoint) && target;
-
+    this.diagram.view.on("click", event => {
       if ( event.event.srcEvent.ctrlKey ) {
-        if ( target )
-          this.selector.toggle(target);
+        if ( event.target instanceof SphState || event.target instanceof SphJoint )
+          this.selector.toggle(event.target);
       } else {
-        if ( target )
-          this.selector.select(target);
+        if ( event.target instanceof SphState || event.target instanceof SphJoint )
+          this.selector.select(event.target);
         else
           this.selector.reselect();
       }
     });
-    this.refresh = false;
+    this.diagram.view.on("hoverNode", event => {
+      if ( event.target instanceof SphState || event.target instanceof SphJoint )
+        this.selector.preselection = event.target;
+      else
+        this.selector.preselection = undefined;
+    });
+    this.diagram.view.on("blurNode", event => {
+      this.selector.preselection = undefined;
+    });
+
     var updater = this.update();
     var routine = () => (requestAnimationFrame(routine), updater.next());
     requestAnimationFrame(routine);
   }
 
   // network view
-  addNode(target) {
-    if ( target.id && this.data[target.id] )
+  drawState(state) {
+    this.diagram.addNode(state, {size:20, shape:"diamond"});
+    state.name = state.name || `state${this.diagram.nodes.get(state)}`;
+  }
+  drawJoint(joint) {
+    this.diagram.addNode(joint, {size:5, shape:"dot"});
+    joint.name = joint.name || `joint${this.diagram.nodes.get(joint)}`;
+  }
+  eraseNode(target) {
+    this.diagram.removeNode(target);
+  }
+  drawFusion(target1, target2) {
+    this.diagram.addEdge(target1, target2);
+  }
+  eraseFusion(target1, target2) {
+    var key = this.diagram.edgesBetween(target1, target2).next().value;
+    if ( key === undefined )
       return;
-
-    target.id = target.id || this.numbers.next().value;
-    this.data[target.id] = target;
-
-    if ( target instanceof SphState ) {
-      target.name = target.name || `state${target.id}`;
-      this.nodes.add({id:target.id, type:"state", size:20, shape:"diamond"});
-    } else if ( target instanceof SphJoint ) {
-      target.name = target.name || `joint${target.id}`;
-      this.nodes.add({id:target.id, type:"joint", size:5, shape:"dot"});
-    } else if ( target instanceof Set ) {
-      target.name = target.name || `bandage${target.id}`;
-      this.nodes.add({id:target.id, type:"bandage", size:0, shape:"dot"});
-    }
-  }
-  addEdge(target1, target2) {
-    var from = target1.id;
-    var to = target2.id;
-    if ( target1 instanceof SphJoint )
-      this.edges.add({id:`${from}-${to}`, type:"fusion", from, to});
-    else if ( target1 instanceof Set )
-      this.edges.add({id:`${from}-${to}`, type:"bond", from, to, dashes:true});
-  }
-  removeNode(target) {
-    delete this.data[target.id];
-    this.nodes.remove(target.id);
-    if ( Object.keys(this.data).length == 0 )
-      this.numbers.next(true);
-  }
-  removeEdge(target1, target2) {
-    var from = target1.id;
-    var to = target2.id;
-    edges.remove(`${from}-${to}`);
+    this.diagram.removeEdge(key);
   }
 
   nodeOf(target) {
@@ -1110,43 +1237,40 @@ class SphNetworkView
           return state;
     }
   }
-  highlight(sel) {
-    var node = this.view.body.nodes[sel.id];
-    node.setOptions({borderWidth:2});
-    return true;
-  }
-  unhighlight(sel) {
-    var node = this.view.body.nodes[sel.id];
-    node.setOptions({borderWidth:1});
-    return true;
-  }
   *update() {
+    var preselection = undefined;
     var selections = [];
     while ( true ) {
       yield;
 
+      // emphasize hovered object
+      if ( this.selector.preselection !== preselection ) {
+        let node;
+        if ( node = this.nodeOf(preselection) )
+          this.diagram.unemphasizeNode(node);
+        if ( node = this.nodeOf(this.selector.preselection) )
+          this.diagram.emphasizeNode(node);
+        preselection = this.selector.preselection;
+      }
+
+      // highlight selected objects
       var new_selections = this.selector.selections
         .map(sel => this.nodeOf(sel)).filter(sel => sel);
 
-      var changed = false;
       for ( let sel of selections )
-        if ( this.refresh || !new_selections.includes(sel) )
-          changed = this.unhighlight(sel) || changed;
+        if ( !new_selections.includes(sel) )
+          this.diagram.unhighlightNode(sel);
       for ( let sel of new_selections )
-        if ( this.refresh || !selections.includes(sel) )
-          changed = this.highlight(sel) || changed;
-      if ( changed )
-        this.view.redraw();
+        if ( !selections.includes(sel) )
+          this.diagram.highlightNode(sel);
 
       selections = new_selections;
-      this.refresh = false;
     }
   }
 
   // prop view
   link(target, sel_mode, name=target.name) {
-    if ( !(target instanceof SphState) && !(target instanceof SphJoint)
-         && !(target instanceof Set) )
+    if ( !(target instanceof SphState) && !(target instanceof SphJoint) )
       return;
 
     var property = {type: "button", name: name};
@@ -1167,33 +1291,29 @@ class SphNetworkView
       return this.makeStateProperties(target);
     else if ( target instanceof SphJoint )
       return this.makeJointProperties(target);
-    else if ( target instanceof Set )
-      return this.makeBandageProperties(target);
   }
   makeStateProperties(state, sel_mode) {
     var detail = [];
 
+    var joints = [];
     for ( let [index, joint] of state.mold.items(state.joints) )
-      detail.push(this.link(joint, sel_mode, `${state.name}[${index}]`));
+      joints.push(this.link(joint, sel_mode, `${index} → ${joint.name}`));
+    detail.push({type:"folder", name:"joints", open:"true", properties:joints});
 
     return detail;
   }
   makeJointProperties(joint, sel_mode) {
     var detail = [];
 
-    if ( joint.bandage.size > 1 )
-      detail.push(this.link(joint.bandage, sel_mode));
+    var ports = [];
+    for ( let [state, orientation] of joint.ports )
+      ports.push(this.link(state, sel_mode, `${state.name} → (${orientation})`));
+    detail.push({type:"folder", name:"ports", open:true, properties:ports});
 
-    for ( let state of Array.from(joint.ports.keys()) )
-      detail.push(this.link(state, sel_mode, `${state.name}[${state.indexOf(joint)}]`));
-
-    return detail;
-  }
-  makeBandageProperties(bandage, sel_mode) {
-    var detail = [];
-
-    for ( let joint of bandage )
-      detail.push(this.link(joint, sel_mode));
+    var bandage = [];
+    for ( let joint_ of joint.bandage )
+      bandage.push(this.link(joint_, sel_mode));
+    detail.push({type:"folder", name:"bandage", properties:bandage});
 
     return detail;
   }
@@ -1251,7 +1371,6 @@ class SphNetworkTreeViewPanel
 
     this.states = this.panel.ctrls[this.panel.addFolder("states")];
     this.joints = this.panel.ctrls[this.panel.addFolder("joints")];
-    this.bandages = this.panel.ctrls[this.panel.addFolder("bandages")];
 
     this.data = new Map();
 
@@ -1259,15 +1378,11 @@ class SphNetworkTreeViewPanel
       this.addState(state);
     for ( let joint of this.network.joints )
       this.addJoint(joint);
-    for ( let bandage of this.network.bandages )
-      this.addBandage(bandage);
 
     this.network.on("added", SphState, event => this.addState(event.target));
     this.network.on("added", SphJoint, event => this.addJoint(event.target));
-    this.network.on("added", Set, event => this.addBandage(event.target));
     this.network.on("removed", SphState, event => this.removeState(event.target));
     this.network.on("removed", SphJoint, event => this.removeJoint(event.target));
-    this.network.on("removed", Set, event => this.removeBandage(event.target));
   }
 
   addState(state) {
@@ -1278,10 +1393,6 @@ class SphNetworkTreeViewPanel
     var id = this.joints.add(this.prop_builder.link(joint, "select"));
     this.data.set(joint, id);
   }
-  addBandage(bandage) {
-    var id = this.bandages.add(this.prop_builder.link(bandage, "select"));
-    this.data.set(bandage, id);
-  }
   removeState(state) {
     var id = this.data.get(state);
     this.states.remove(id);
@@ -1289,10 +1400,6 @@ class SphNetworkTreeViewPanel
   removeJoint(joint) {
     var id = this.data.get(joint);
     this.joints.remove(id);
-  }
-  removeBandage(bandage) {
-    var id = this.data.get(bandage);
-    this.bandages.remove(id);
   }
 }
 
@@ -1608,7 +1715,7 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
 
 class SphPuzzleWorld
 {
-  constructor(id_display, id_network, puzzle) {
+  constructor(puzzle, id_display, id_network) {
     this.puzzle = puzzle;
     this.network = new SphNetwork();
     this.network.init(this.puzzle);
@@ -1621,8 +1728,8 @@ class SphPuzzleWorld
     this.view = new SphPuzzleView(display, this.puzzle, this.selector);
 
     // network view
-    var netdom = document.getElementById(id_network);
-    this.netview = new SphNetworkView(netdom, this.network, this.selector);
+    var diagram = new Diagram(id_network);
+    this.netview = new SphNetworkView(diagram, this.network, this.selector);
 
     // panel
     this.panel = new Panel();

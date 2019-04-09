@@ -206,7 +206,7 @@ class SphCircle
 }
 
 /**
- * Boundary segment (and its starting vertex) of element of sliding sphere.
+ * Boundary segment (and its starting vertex) of element of spherical twisty puzzle.
  * It is fundamental piece of structure of BREP, and has information about
  * spherical arc, vertex, connection of segments, adjacency, etc.
  * 
@@ -271,7 +271,7 @@ class SphSeg
 }
 
 /**
- * Element of sliding sphere.
+ * Element of spherical twisty puzzle.
  * It represent the region defined by boundaries (BREP).  The element without
  * boundary indicate full space of spherical surface.
  * 
@@ -321,7 +321,7 @@ class SphElem
 }
 
 /**
- * Track of sliding sphere.
+ * Track of spherical twisty puzzle.
  * It represent the full circle of gap between elements, which is able to twist.
  * 
  * @class
@@ -1294,11 +1294,12 @@ class SphAnalyzer
     return meets;
   }
   /**
-   * Check if point is inside given region (not including boundaries).
+   * Check if point is inside given region.
    * 
    * @param {SphSeg[]} boundaries - The boundaries of the region.
    * @param {number[]} point - The point to check.
-   * @returns {boolean} True if point is in this element.
+   * @returns {boolean} True if point is inside this element, or undefined if it
+   *   is at the boundary of element.
    */
   contains(boundaries, point) {
     if ( boundaries.size == 0 )
@@ -1308,7 +1309,7 @@ class SphAnalyzer
     var vertex = boundaries.values().next().value.vertex;
     var radius = angleTo(point, vertex)/2/Q;
     if ( this.cmp(radius, 0) == 0 )
-      return false;
+      return;
 
     var orientation = q_mul(q_align(vertex, point), quaternion([0,1,0], radius*Q));
     var circle = new SphCircle({orientation, radius});
@@ -1318,7 +1319,7 @@ class SphAnalyzer
     console.assert(meets.length > 0);
     meets = this.sortMeets(meets);
     if ( meets.find(meet => this.mod4(meet.theta, [0]) == 0) )
-      return false;
+      return;
     else
       return ["-0", "+-", "--"].includes(meets[0].type);
   }
@@ -1430,6 +1431,7 @@ class SphAnalyzer
         inside = true;
       if ( inside === undefined )
         inside = this.contains(elem.boundaries, circle.vectorAt(0));
+      console.assert(inside !== undefined);
 
       if ( inside ) {
 
@@ -1883,6 +1885,184 @@ class SphAnalyzer
   
     return passwords;
   }
+  // makeShield() {}
+  // detectLatchesWithShields() {}
+  // decipherByShields() {}
+  // sealUnlockable(tracks) {}
+
+  /*
+  sortPasswords(passwords) {
+    passwords = Array.from(passwords);
+  
+    // sort latches
+    for ( let match of passwords ) {
+      let latches = match[1];
+      latches = latches.map(e => e.angle ? [e.center, e.arc, e.angle] : [e.center, e.arc]);
+  
+      // center => gap
+      latches.sort(this.cmp.bind(this));
+      let centers = latches.map(e => e[0]);
+      for ( let i=0; i<latches.length; i++ )
+        latches[i][0] = (centers[i+1]||center[0]+4) - centers[i];
+  
+      // cyclic sort latches
+      let latches0 = latches.slice();
+      let centers0 = [];
+      for ( let i=0; i<latches.length; i++ ) {
+        switch ( this.cmp(latches, latches0) ) {
+          case 0:
+            centers0.push(centers[i]);
+            break;
+  
+          case -1:
+            latches0 = latches.slice();
+            centers0 = [centers[i]];
+            break;
+        }
+        latches.push(latches.shift());
+      }
+  
+      match[1] = latches0;
+      match.push(centers0);
+    }
+  
+    // sort matches
+    // shift => shift_offset
+    passwords.sort(this.cmp.bind(this));
+    var shifts = passwords.map(e => e[0]);
+    for ( let i=0; i<passwords.length; i++ )
+      passwords[i][0] = (shifts[i+1]||shift[0]+4) - shifts[i];
+  
+    // center => center_offset
+  
+    // cyclic sort matches
+    var passwords0 = passwords.slice();
+    var shifts0 = [];
+    for ( let i=0; i<passwords.length; i++ ) {
+      switch ( this.cmp(passwords, passwords0) ) {
+        case 0:
+          shifts0.push(shifts[i]);
+          break;
+  
+        case -1:
+          passwords0 = passwords.slice();
+          shifts0 = [shifts[i]];
+          break;
+      }
+      passwords.push(passwords.shift());
+    }
+  }
+  basisOf(loops) {
+    // build tracks
+    var tracks = [];
+    for ( let loop of loops ) for ( let seg of loop )
+      if ( seg.track && !tracks.includes(seg.track) ) {
+        let track = {};
+        track.inner = seg.track.inner.map(seg => seg.index);
+        track.outer = seg.track.outer.map(seg => seg.index);
+        track.shift = seg.track.shift;
+  
+        track.passwords = [];
+        for ( let [ang, matches] of seg.track.passwords )
+          track.passwords.push([ang, matches.map(([seg, arc]) => [seg.index, arc])]);
+  
+        tracks.push(track);
+      }
+  }
+  // Sort (in-place) transition between configuration and returns symmetries.
+  // 
+  // @param {object[][]} perm - Permutation of this operation.
+  // @param {SphConfig} config_from - The start configuration of this operation.
+  // @param {SphConfig} config_to - The final configuration of this operation.
+  // @returns {object[][]} The list of symmetries of this operation, with entries
+  //   `[perm_from, perm_to]`:
+  //   `perm_from` is permutation of symmetry of start configuration;
+  //   `perm_to` is permutation of symmetry of final configuration,
+  //   and they obey `perm == perm_from**-1 * perm * perm_to`.
+  sortTransition(perm, config_from, config_to) {
+    var min_perm = [[[config_from.types[0].count]]];
+    var sym = [];
+  
+    if ( config_from === config_to ) {
+      for ( perm_from of config_from.symmetries ) {
+        let _perm = config_from.followedBy(config_from.inverse(perm_from), perm);
+        let _perm_ = config_to.followedBy(_perm, perm_from);
+        let sgn = this.cmp(_perm_, min_perm);
+  
+        if ( sgn < 0 ) {
+          min_perm = _perm_;
+          sym = [[perm_from, perm_from]];
+        } else if ( sgn == 0 ) {
+          sym.push([perm_from, perm_from]);
+        }
+      }
+  
+    } else {
+      for ( perm_from of config_from.symmetries ) {
+        let _perm = config_from.followedBy(config_from.inverse(perm_from), perm);
+        for ( perm_to of config_to.symmetries ) {
+          let _perm_ = config_to.followedBy(_perm, perm_to);
+          let sgn = this.cmp(_perm_, min_perm);
+  
+          if ( sgn < 0 ) {
+            min_perm = _perm_;
+            sym = [[perm_from, perm_to]];
+          } else if ( sgn == 0 ) {
+            sym.push([perm_from, perm_to]);
+          }
+        }
+      }
+  
+    }
+  
+    for ( let i=0; i<perm.length; i++ )
+      for ( let j=0; j<perm[i].length; j++ )
+        perm[i][j] = min_perm[i][j];
+  
+    return sym;
+  }
+  subtypeOf(config, perm, subtypes) {
+    const gcd = (a,b) => (!b)?a:gcd(b,a%b);
+  
+    if ( !subtypes ) {
+      subtypes = [];
+      for ( let i=0; i<config.types.length; i++ ) {
+        subtypes[i] = [];
+        for ( let j=0; j<config.types[i].count; j++ )
+          subtypes[i][j] = {dk:config.types[i].fold, indices:[[j, 0]]};
+      }
+    }
+  
+    for ( let i=0; i<config.types.length; i++ ) {
+      let type = config.types[i];
+      for ( let j=0; j<config.types[i].count; j++ ) {
+        let [j_, dk] = perm[i][j];
+        let subtype1 = subtypes[i][j];
+        let subtype2 = subtypes[i][j_];
+  
+        if ( subtype1 === subtype2 ) {
+          subtype1.dk = gcd(subtype1.dk, dk);
+  
+        } else {
+          subtype1.dk = gcd(subtype1.dk, subtype2.dk);
+          let [, k1] = subtype1.indices.find(([j1,k1]) => j1==j);
+          let [, k2] = subtype2.indices.find(([j2,k2]) => j2==j_);
+          let dk_ = k1+dk-k2;
+          let indices_ = subtype2.indices.map(([j2,k2]) => [j2, k2+dk_]);
+          subtype1.indices.push(...indices_);
+          for ( let [j2, k2] of subtype2.indices )
+            subtypes[i][j2] = subtype1;
+        }
+      }
+  
+      for ( let {dk, indices} of new Set(subtypes[i]) )
+        for ( let index of indices )
+          index[1] = (index[1] % dk + dk) % dk;
+    }
+  
+    return subtypes;
+  }
+  */
 
   /**
    * Assemble segments following given configuration.
@@ -2252,7 +2432,52 @@ class SphAnalyzer
   }
 
   /**
-   * Determine shape of element of sliding sphere.
+   * Find the joint hold at given point.
+   * 
+   * @param {SphState} state0
+   * @param {number[]} point
+   * @returns {Array} `[[state, index], ...]`.
+   */
+  hold(state0, point) {
+    var prev_joint;
+    var next_states = [state0];
+
+    while ( next_states.length > 0 ) {
+      let has_next = false;
+      for ( let state of next_states ) {
+        // find the loop containing `point`
+        let index;
+        for ( let [[i,j,k,l], seg] of state.mold.items(state.segments) )
+          if ( k == 0 && l == 0 ) {
+            let res = this.contains(Array.from(this.walk(seg)), point);
+            if ( res === undefined || res == true ) {
+              index = [i,j];
+              break;
+            }
+          }
+
+        // trivial joint
+        let joint = index && state.jointAt(index);
+        if ( joint === undefined || joint.ports.size == 1 )
+          return [[state, index]];
+
+        // non-trivial joint
+        if ( joint !== prev_joint ) {
+          has_next = true;
+          prev_joint = joint;
+          next_states = Array.from(joint.ports.keys()).filter(st => st!==state);
+          break;
+        }
+      }
+
+      if ( !has_next )
+        return Array.from(prev_joint.ports.keys())
+                    .map(state => [state, state.indexOf(prev_joint)]);
+    }
+  }
+
+  /**
+   * Determine shape of element of spherical twisty puzzle.
    * 
    * @param {SphSeg} seg0 - Segment of the loop to determine.
    * @returns {Array} Shape and first referenced segment of given loop.
@@ -2807,42 +3032,42 @@ class SphConfig
 }
 
 
+/**
+ * Proxy of event system for javascript object.
+ * 
+ * @class
+ */
 class Listenable
 {
   constructor() {
     this._listeners = {};
-    // name -> [ [clz, callback], ...]
   }
-  on(name, clz=Object, callback) {
-    var i = (this._listeners[name] || []).findIndex(([c,f]) => c===clz && f===callback);
+  on(type, target=Object, listener) {
+    var i = (this._listeners[type] || []).findIndex(([c,f]) => c===target && f===listener);
     if ( i != -1 )
       return false;
-    this._listeners[name] = this._listeners[name] || [];
-    this._listeners[name].push([clz, callback]);
+    this._listeners[type] = this._listeners[type] || [];
+    this._listeners[type].push([target, listener]);
     return true;
   }
-  off(name, clz=Object, callback) {
-    var i = (this._listeners[name] || []).findIndex(([c,f]) => c===clz && f===callback);
+  off(type, target=Object, listener) {
+    var i = (this._listeners[type] || []).findIndex(([c,f]) => c===target && f===listener);
     if ( i == -1 )
       return false;
-    this._listeners[name].splice(i, 1);
+    this._listeners[type].splice(i, 1);
     return true;
   }
-  trigger(name, target, event={}) {
-    event.type = name;
+  trigger(type, target, event={}) {
+    event.type = type;
     event.target = target;
     event.currentTarget = this;
 
-    for ( let [clz, listener] of (this._listeners[name] || []) ) {
-      if ( target === this ) { // root event
-        if ( clz === this )
-          listener.call(this, event);
-
-      } else if ( typeof clz == "function" ) { // delegated event listener
+    for ( let [clz, listener] of (this._listeners[type] || []) ) {
+      if ( typeof clz == "function" ) {
         if ( target instanceof clz )
           listener.call(this, event);
 
-      } else { // event listener with specific target
+      } else {
         if ( target === clz )
           listener.call(this, event);
 
@@ -2851,6 +3076,25 @@ class Listenable
   }
 }
 
+/**
+ * Fully functional spherical twisty puzzle.
+ * It provide easy-to-use methods to edit, play and analyze this puzzle, but all
+ * crucial algorithms should be implemented by analyzer.
+ * It also equips with event system, which is useful for making GUI.  The possible
+ * events are:
+ * `{ type:"added"|"removed", target:SphElem|SphTrack }`, triggered after
+ * adding/removing element/track.
+ * `{ type:"rotated", target:SphElem }`, triggered after moving element.
+ * `{ type:"modified", target:SphElem }`, triggered after modifying element, such
+ * as adding/removing segments, modifying segment.  Notice that modifying
+ * nonspatial properties like `next`, `prev`, `adj` and `track` will not trigger
+ * this event.
+ * 
+ * @class
+ * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
+ * @property {SphElem[]} elements - All elements of this puzzle.
+ * @property {SphTrack[]} tracks - All tracks of this puzzle.
+ */
 class SphPuzzle extends Listenable
 {
   constructor(analyzer=new SphAnalyzer()) {
@@ -2866,7 +3110,6 @@ class SphPuzzle extends Listenable
   add(target) {
     if ( target instanceof SphElem ) {
       target.host = this;
-
       this.elements.push(target);
       this.trigger("added", target);
 
@@ -2903,7 +3146,7 @@ class SphPuzzle extends Listenable
     for ( let element of elements ) {
       this.add(element);
       for ( let seg of element.boundaries )
-        if ( seg.track )
+        if ( seg.track && !this.tracks.includes(seg.track) )
           this.add(seg.track);
     }
   }
@@ -2911,12 +3154,12 @@ class SphPuzzle extends Listenable
   mergeVertex(seg) {
     var element = seg.affiliation;
     this.analyzer.mergePrev(seg);
-    this.trigger("modified", element, {attr:"element"});
+    this.trigger("modified", element);
   }
   interpolate(seg, theta) {
     var element = seg.affiliation;
     this.analyzer.interpolate(seg, theta);
-    this.trigger("modified", element, {attr:"element"});
+    this.trigger("modified", element);
   }
   mergeEdge(seg1, seg2) {
     var cover = this.analyzer.cover(seg1, seg2);
@@ -2926,14 +3169,14 @@ class SphPuzzle extends Listenable
     if ( seg1.track )
       this.remove(seg1.track);
     this.analyzer.glueAdj(cover);
-    this.trigger("modified", element, {attr:"element"});
+    this.trigger("modified", element);
   }
   mergeElements(element0, ...elements) {
     element0.merge(...elements);
 
     for ( let element of elements )
       this.remove(element);
-    this.trigger("modified", element0, {attr:"element"});
+    this.trigger("modified", element0);
 
     return element0;
   }
@@ -2941,7 +3184,7 @@ class SphPuzzle extends Listenable
   rotate(q) {
     for ( let element of this.elements ) {
       element.rotate(q);
-      this.trigger("modified", element, {attr:"orientation"});
+      this.trigger("rotated", element);
     }
   }
   slice(center, radius, elements=this.elements.slice()) {
@@ -2952,7 +3195,7 @@ class SphPuzzle extends Listenable
       if ( in_segs.length && out_segs.length ) {
         let [splited] = element.split(out_segs);
         this.add(splited);
-        this.trigger("modified", element, {attr:"element"});
+        this.trigger("modified", element);
       }
       new_bd.push(...in_bd, ...out_bd);
     }
@@ -2980,7 +3223,7 @@ class SphPuzzle extends Listenable
     var new_tracks = this.analyzer.twist([[track, theta]], hold);
 
     for ( let elem of moved )
-      this.trigger("modified", elem, {attr:"orientation"});
+      this.trigger("rotated", elem);
 
     for ( let track_ of new_tracks )
       this.add(track_);
@@ -3028,7 +3271,7 @@ class SphPuzzle extends Listenable
     }
 
     for ( let element of modified )
-      this.trigger("modified", element, {attr:"element"});
+      this.trigger("modified", element);
 
   }
   check() {
@@ -3039,19 +3282,31 @@ class SphPuzzle extends Listenable
   }
 }
 
+/**
+ * Network structure of puzzle.
+ * It equips with event system, which is useful for making GUI.  The possible
+ * events are:
+ * `{ type:"added"|"removed", target:SphState|SphJoint }`, triggered after
+ * adding/removing state/joint.
+ * `{ type:"fused"|"unfused", target:SphJoint, state:SphState, index:number[] }`,
+ * triggered after fusing/unfusing joint and state.
+ * `{ type:"binded", target:SphJoint, joints:Set<SphJoint> }`, triggered
+ * after binding joints.
+ * `{ type:"unbinded", target:SphJoint }`, triggered after unbinding joint.
+ * 
+ * @class
+ * @property {SphAnalyzer} analyzer - All algorithms of this network.
+ * @property {SphState[]} states - All states of this network.
+ * @property {SphJoint[]} joints - All joints of this network.
+ */
 class SphNetwork extends Listenable
 {
   constructor(analyzer=new SphAnalyzer()) {
     super();
-
     this.analyzer = analyzer;
+
     this.states = [];
     this.joints = [];
-    this.bandages = [];
-
-    this.numbers = (function *numbers() {
-      var i = 0; while ( true ) yield i++;
-    })();
   }
 
   add(target) {
@@ -3063,20 +3318,16 @@ class SphNetwork extends Listenable
     } else if ( target instanceof SphJoint ) {
       target.host = this;
       this.joints.push(target);
-      this.trigger("added", target);
-      for ( let [state, orientation] of target.ports ) {
-        console.assert(this.states.includes(state));
-        let index = state.indexOf(target);
-        this.trigger("fused", target, {state, index});
-      }
 
-    } else if ( target instanceof Set ) {
-      this.bandages.push(target);
       this.trigger("added", target);
-      for ( let joint of target ) {
-        console.assert(this.joints.includes(joint));
-        this.trigger("binded", target, {joint});
-      }
+
+      for ( let [state, orientation] of target.ports )
+        if ( this.states.includes(state) )
+          this.trigger("fused", target, {state, index:state.indexOf(target)});
+
+      for ( let joint of target.bandage )
+        if ( joint !== target && this.joints.includes(joint) )
+          this.trigger("binded", joint, {bandage:target.bandage});
 
     }
   }
@@ -3093,30 +3344,20 @@ class SphNetwork extends Listenable
       if ( i == -1 )
         return;
       this.joints.splice(i, 1);
-      for ( let [state, orientation] of target.ports ) {
-        console.assert(this.states.includes(state));
-        let index = state.indexOf(target);
-        this.trigger("unfused", target, {state, index});
-      }
-      this.trigger("removed", target);
 
-    } else if ( target instanceof Set ) {
-      let i = this.bandages.indexOf(target);
-      if ( i == -1 )
-        return;
-      this.bandages.splice(i, 1);
-      for ( let joint of target ) {
-        console.assert(this.joints.includes(joint));
-        this.trigger("unbinded", target, {joint});
-      }
+      for ( let [state, orientation] of target.ports )
+        if ( this.states.includes(state) )
+          this.trigger("unfused", target, {state, index:state.indexOf(target)});
+
+      for ( let joint of target.bandage )
+        if ( joint !== target && this.joints.includes(joint) )
+          this.trigger("unbinded", joint, {bandage:target.bandage});
+
       this.trigger("removed", target);
 
     }
   }
   clear() {
-    for ( let bandage of this.bandages.slice() )
-      this.remove(bandage);
-
     for ( let joint of this.joints.slice() )
       this.remove(joint);
 
@@ -3133,10 +3374,6 @@ class SphNetwork extends Listenable
     var joints = states.flatMap(state => state.joints.flat(2));
     for ( let joint of new Set(joints) )
       this.add(joint);
-
-    var bandages = joints.map(joint => joint.bandage).filter(b => b.size > 1);
-    for ( let bandage of new Set(bandages) )
-      this.add(bandage);
   }
 
   makeJoint(state, index) {
@@ -3166,33 +3403,35 @@ class SphNetwork extends Listenable
       this.remove(joint);
   }
   bind(joint1, joint2) {
-    var bandage1 = joint1.bandage.size > 1 ? joint1.bandage : undefined;
-    var bandage2 = joint2.bandage.size > 1 ? joint2.bandage : undefined;
     joint1.bind(joint2);
-
-    if ( !bandage1 && !bandage2 ) {
-      this.add(joint1.bandage);
-
-    } else if ( bandage1 && bandage2 ) {
-      this.remove(bandage2);
-      for ( let joint of bandage2 )
-        this.trigger("binded", bandage1, {joint});
-
-    } else if ( bandage1 && !bandage2 ) {
-      this.trigger("binded", bandage1, {joint:joint2});
-
-    } else if ( !bandage1 && bandage2 ) {
-      this.trigger("binded", bandage2, {joint:joint1});
-    }
+    this.trigger("binded", joint1, {joints:joint1.bandage});
   }
   unbind(joint) {
     var bandage = joint.bandage;
     if ( bandage.size == 1 )
       return;
     joint.unbind();
-    this.trigger("unbinded", bandage, {joint});
-    if ( bandage.size <= 1 )
-      this.remove(bandage);
+    this.trigger("unbinded", joint);
+  }
+
+  indexOf(target) {
+    var index;
+    if ( target instanceof SphSeg ) {
+      for ( let state of this.states )
+        if ( index = state.indexOf(target) )
+          return [state, index];
+
+    } else if ( target instanceof SphElem ) {
+      for ( let state of this.states )
+        if ( index = state.indexOf(target.boundaries.values().next().value) )
+          return [state, [index[0], index[1]]];
+
+    } else if ( target instanceof SphTrack ) {
+      for ( let state of this.states )
+        if ( index = state.indexOf(target.inner[0]) )
+          return [state];
+
+    }
   }
 
   trim(state) {
@@ -3202,38 +3441,5 @@ class SphNetwork extends Listenable
     this.remove(state);
     joints.slice(1).forEach(joint => this.fuse(joint, joints[0]));
   }
-
-  /*
-  recognize() {
-    for ( let n=0; n<this.states.length; n++ ) if ( this.outdated[n] ) {
-      let state = this.states[n];
-      let graph = this.graphs[n];
-  
-      let [config, perms] = this.analyzer.recognize(state.configuration,
-                                                    state.segments,
-                                                    graph.configurations);
-  
-      graph.add(config);
-      this.transit(n, perm, config);
-      this.outdated[n] = false;
-    }
-  }
-  assemble(state, config) {
-    // for ( let state of this.globetrot(state0, index0, orientation0) )
-    //   this.assemble(state.configuration, state.segments, index0, orientation0);
-  
-    this.analyzer.assemble(config, state.segments);
-    for ( let param_i of state.segments ) for ( let param_ij of param_i ) {
-      for ( let seg of this.analyzer.walk(param_ij) )
-        if ( !seg.track ) this.analyzer.buildTrack(seg);
-      // param_ij.affiliation.host.dispatchEvent({type:"modified", attr:"orientation"});
-    }
-    this.transit(state, config.I(), config);
-  }
-  transit(state, perm, config) {
-    state.transit(perm, config);
-    this.dispatchEvent({type:"modified", state});
-  }
-  */
 }
 
