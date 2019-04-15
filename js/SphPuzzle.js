@@ -509,7 +509,7 @@ class Diagram
   updateNodeOptions(key, patch={}) {
     var id = this.nodes.get(key);
     if ( id === undefined )
-      throw new Error();
+      return;
 
     var options = this.nodes_options.get(id);
     this.nodes_options.update(Object.assign(options, patch, {id}));
@@ -517,7 +517,7 @@ class Diagram
   updateEdgeOptions(key, patch={}) {
     var id = this.edges.get(key);
     if ( id === undefined )
-      throw new Error();
+      return;
 
     var options = this.edges_options.get(id);
     this.edges_options.update(Object.assign(options, patch, {id}));
@@ -944,7 +944,7 @@ class SphPuzzleView
       return [target];
 
     } else if ( target instanceof SphElem ) {
-      return target.boundaries;
+      return Array.from(target.boundaries);
 
     } else if ( target instanceof SphTrack ) {
       return [...target.inner, ...target.outer];
@@ -1141,31 +1141,45 @@ class SphNetworkView
       }
       
       network.on("added", Object, event => {
+        if ( this.outdated )
+          return;
         if ( event.target instanceof SphState )
           this.drawState(event.target);
         else if ( event.target instanceof SphJoint )
           this.drawJoint(event.target);
       });
       network.on("removed", Object, event => {
+        if ( this.outdated )
+          return;
         this.eraseNode(event.target);
       });
       network.on("fused", SphJoint, event => {
+        if ( this.outdated )
+          return;
         this.drawFusion(event.target, event.state);
       });
       network.on("unfused", SphJoint, event => {
+        if ( this.outdated )
+          return;
         this.eraseFusion(event.target, event.state);
       });
       network.on("binded", SphJoint, event => {
+        if ( this.outdated )
+          return;
         var id = this.diagram.nodes.get(event.target);
-        for ( let joint of event.joints )
+        for ( let joint of event.bandage )
           this.diagram.updateNodeOptions(joint, {bandage:id});
       });
       network.on("unbinded", SphJoint, event => {
+        if ( this.outdated )
+          return;
         this.diagram.updateNodeOptions(event.target, {bandage:undefined});
       });
     }
 
     this.diagram.view.on("click", event => {
+      if ( network.outdated )
+        return;
       if ( event.event.srcEvent.ctrlKey ) {
         if ( event.target instanceof SphState || event.target instanceof SphJoint )
           this.selector.toggle(event.target);
@@ -1177,12 +1191,16 @@ class SphNetworkView
       }
     });
     this.diagram.view.on("hoverNode", event => {
+      if ( network.outdated )
+        return;
       if ( event.target instanceof SphState || event.target instanceof SphJoint )
         this.selector.preselection = event.target;
       else
         this.selector.preselection = undefined;
     });
     this.diagram.view.on("blurNode", event => {
+      if ( network.outdated )
+        return;
       this.selector.preselection = undefined;
     });
 
@@ -1225,6 +1243,10 @@ class SphNetworkView
         for ( let state of joint.ports.keys() )
           if ( state.get(state.indexOf(joint)).affiliation === target )
             return joint;
+      for ( let state of this.network.states )
+        for ( let seg of state.segments.flat(2) )
+          if ( seg.affiliation === target )
+            return state;
 
     } else if ( target instanceof SphSeg ) {
       for ( let state of this.network.states )
@@ -1242,6 +1264,9 @@ class SphNetworkView
     var selections = [];
     while ( true ) {
       yield;
+
+      if ( this.network.outdated )
+        continue;
 
       // emphasize hovered object
       if ( this.selector.preselection !== preselection ) {
@@ -1319,6 +1344,221 @@ class SphNetworkView
   }
 }
 
+class SphConfigView
+{
+  constructor(container_id, network, selector) {
+    this.container = document.getElementById(container_id);
+    this.network = network;
+    this.selector = selector;
+
+    var style = css`
+      .seg-button-placeholder {
+        display: inline-block;
+        box-sizing: border-box;
+        padding: 6px;
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .seg-button {
+        display: inline-block;
+        box-sizing: border-box;
+        color: white;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        padding-left: 6px;
+        font-size: 12px;
+
+        width: 100%;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      ts-list {
+        margin: 12px 8px;
+        float: left;
+        clear: both;
+      }
+      ts-elem.emphasized ts-option[slot='selected'] {
+        background-color: var(--emcolor);
+      }
+      `;
+    document.body.appendChild(style);
+
+    this.current_tab = undefined;
+    for ( let state of network.states )
+      this.drawTab(state);
+    network.on("added", SphState, event => this.drawTab(event.target));
+    network.on("removed", SphState, event => this.eraseTab(event.target));
+    selector.on("add", SphState, event => this.showTab(event.target));
+
+    var updater = this.update();
+    var routine = () => (requestAnimationFrame(routine), updater.next());
+    requestAnimationFrame(routine);
+  }
+
+  makeSegButton(seg) {
+    if ( seg ) {
+      let btn = html`<span class="seg-button">${seg.name}, ..</span>`.children[0];
+      btn.host = seg;
+      return btn;
+
+    } else {
+      return html`<span class="seg-button-placeholder">SphSeg000, ..</span>`.children[0];
+    }
+  }
+  makeParamTable(state) {
+    const TsList = customElements.get("ts-list");
+    var res = [];
+
+    for ( let i=0; i<state.mold.shapes.length; i++ ) {
+      let list = new TsList();
+      list.disabled = true;
+      list.setPlaceholder(this.makeSegButton());
+
+      const N = state.mold.shapes[i].fold || 1;
+      for ( let j=0; j<state.mold.shapes[i].count; j++ ) {
+        let btns = [];
+        for ( let k=0; k<N; k++ )
+          btns.push(this.makeSegButton(state.mold.get(state.segments, [i,j,k])));
+
+        let dropdown = list.addElem(...btns);
+        const elem = state.segments[i][j].affiliation;
+        dropdown.host = elem;
+
+        let joint = state.jointAt([i,j]) || elem;
+        dropdown.addEventListener("mouseenter", () => this.selector.preselection = joint);
+        dropdown.addEventListener("mouseleave", () => this.selector.preselection = undefined);
+        dropdown.addEventListener("focus", () => this.selector.select(joint));
+        dropdown.addEventListener("blur", () => this.selector.select());
+      }
+
+      res.push(list);
+    }
+    return res;
+  }
+  drawTab(state) {
+    var tab = document.createElement("div");
+    tab.style.setProperty("display", "none");
+    tab.classList.add("config-tab");
+
+    for ( let list of this.makeParamTable(state) )
+      tab.appendChild(list);
+    state.tab = tab;
+    tab.host = state;
+    this.container.appendChild(tab);
+
+    this.showTab(state);
+  }
+  eraseTab(state) {
+    this.container.removeChild(state.tab);
+    if ( this.current_tab === state.tab )
+      delete this.current_tab;
+  }
+  showTab(state) {
+    if ( this.current_tab )
+      this.current_tab.style.setProperty("display", "none");
+    state.tab.style.setProperty("display", "block");
+    this.current_tab = state.tab;
+  }
+
+  jointsOf(target) {
+    if ( target instanceof SphSeg ) {
+      let index, joint;
+      for ( let state of this.network.states )
+        if ( index = state.indexOf(target.affiliation) )
+          return (joint = state.jointAt(index)) ? Array.from(joint.bandage) : [target.affiliation];
+      console.assert(false);
+
+    } else if ( target instanceof SphElem ) {
+      let index, joint;
+      for ( let state of this.network.states )
+        if ( index = state.indexOf(target) )
+          return (joint = state.jointAt(index)) ? Array.from(joint.bandage) : [target];
+      console.assert(false);
+
+    } else if ( target instanceof SphJoint ) {
+      return [target];
+
+    } else {
+      return [];
+    }
+  }
+  emphasize(joint) {
+    var index;
+    for ( let state of this.network.states )
+      if ( index = state.indexOf(joint) ) {
+        let table = state.tab.querySelectorAll("ts-list");
+        let elem = table[index[0]].elems[index[1]];
+
+        elem.classList.add("emphasized");
+      }
+  }
+  unemphasize(joint) {
+    var index;
+    for ( let state of this.network.states )
+      if ( index = state.indexOf(joint) ) {
+        let table = state.tab.querySelectorAll("ts-list");
+        let elem = table[index[0]].elems[index[1]];
+
+        elem.classList.remove("emphasized");
+      }
+  }
+  highlight(joint) {
+    var index;
+    for ( let state of this.network.states )
+      if ( index = state.indexOf(joint) ) {
+        let table = state.tab.querySelectorAll("ts-list");
+        let elem = table[index[0]].elems[index[1]];
+
+        elem.highlight();
+      }
+  }
+  unhighlight(joint) {
+    var index;
+    for ( let state of this.network.states )
+      if ( index = state.indexOf(joint) ) {
+        let table = state.tab.querySelectorAll("ts-list");
+        let elem = table[index[0]].elems[index[1]];
+
+        elem.unhighlight();
+      }
+  }
+
+  *update() {
+    var preselection = undefined;
+    var selections = [];
+    while ( true ) {
+      yield;
+
+      if ( this.network.outdated )
+        continue;
+
+      // emphasize hovered object
+      if ( this.selector.preselection !== preselection ) {
+        for ( let sel of this.jointsOf(preselection) )
+          this.unemphasize(sel);
+        for ( let sel of this.jointsOf(this.selector.preselection) )
+          this.emphasize(sel);
+        preselection = this.selector.preselection;
+      }
+
+      // highlight selected objects
+      let new_selections = this.selector.selections
+        .flatMap(sel => this.jointsOf(sel));
+
+      for ( let sel of selections )
+        if ( !new_selections.includes(sel) )
+          this.unhighlight(sel);
+      for ( let sel of new_selections )
+        if ( !selections.includes(sel) )
+          this.highlight(sel);
+
+      selections = new_selections;
+    }
+  }
+}
 
 class SphPuzzleTreeViewPanel
 {
@@ -1477,6 +1717,9 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
     this.addCmd(this.alignCmd.bind(this), "align (shift+A)", "shift+A");
     this.addCmd(this.twistCmd.bind(this), "twist (shift+T)", "shift+T");
     this.addCmd(this.checkCmd.bind(this), "check");
+
+    this.addCmd(this.structCmd.bind(this), "structurize (shift+X)", "shift+X");
+    this.addCmd(this.unbandageCmd.bind(this), "unbandage");
   }
 
   NextOfCmd(selector) {
@@ -1511,37 +1754,51 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
   }
 
   mergeCmd(selector) {
-    if ( selector.selections.length != 2 ) {
-      window.alert("Please select two segments!");
-      return;
-    }
-    var [seg1, seg2] = selector.selections;
-    if ( !(seg1 instanceof SphSeg) || !(seg2 instanceof SphSeg) ) {
-      window.alert("Not segment!");
-      return;
-    }
-
-    if ( seg1.affiliation !== seg2.affiliation ) {
-      this.puzzle.mergeElements(seg1.affiliation, seg2.affiliation);
-      selector.reselect(seg1, seg2);
-
-    } else if ( seg1.adj.has(seg2) ) {
-      this.puzzle.mergeEdge(seg1, seg2);
-      selector.reselect();
-
-    } else if ( seg1.next === seg2 || seg2.next === seg1 ) {
-      if ( seg1.next === seg2 ) seg1 = seg2;
-      if ( seg1 === seg1.prev || !this.puzzle.analyzer.isTrivialVertex(seg1) ) {
-        window.alert("Cannot merge!");
+    if ( selector.selections.length == 1 ) {
+      let state = selector.selections[0];
+      if ( !(state instanceof SphState) ) {
+        window.alert("Not state!");
         return;
       }
 
-      let prev = seg1.prev;
-      this.puzzle.mergeVertex(seg1);
-      selector.select(prev);
+      this.selector.reselect();
+      this.puzzle.trim(state);
+
+    } else if ( selector.selections.length == 2 ) {
+      var [seg1, seg2] = selector.selections;
+      if ( !(seg1 instanceof SphSeg) || !(seg2 instanceof SphSeg) ) {
+        window.alert("Not segment!");
+        return;
+      }
+
+      if ( seg1.affiliation !== seg2.affiliation ) {
+        selector.reselect();
+        this.puzzle.mergeElements(seg1.affiliation, seg2.affiliation);
+        selector.reselect(seg1, seg2);
+
+      } else if ( seg1.adj.has(seg2) ) {
+        selector.reselect();
+        this.puzzle.mergeEdge(seg1, seg2);
+
+      } else if ( seg1.next === seg2 || seg2.next === seg1 ) {
+        if ( seg1.next === seg2 ) seg1 = seg2;
+        if ( seg1 === seg1.prev || !this.puzzle.analyzer.isTrivialVertex(seg1) ) {
+          window.alert("Cannot merge!");
+          return;
+        }
+
+        selector.reselect();
+        let prev = seg1.prev;
+        this.puzzle.mergeVertex(seg1);
+        selector.select(prev);
+
+      } else {
+        window.alert("merge what?");
+      }
 
     } else {
-      window.alert("merge what?");
+      window.alert("Please select two segments or one state!");
+
     }
 
   }
@@ -1710,15 +1967,35 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
     var hold = track.outer[0].affiliation;
     this.puzzle.twist(track, theta, hold);
   }
+
+  structCmd(selector) {
+    this.puzzle.structurize();
+  }
+  unbandageCmd(selector) {
+    if ( selector.selections.length != 1 ) {
+      window.alert("Please select one joint!");
+      return;
+    }
+    var joint = selector.selections[0];
+    if ( !(joint instanceof SphJoint) ) {
+      window.alert("Not joint!");
+      return;
+    }
+    if ( joint.bandage.size == 1 ) {
+      window.alert("No need to unbandage!");
+      return;
+    }
+
+    var elem = this.puzzle.unbandage(joint);
+    this.selector.select(elem);
+  }
 }
 
 
 class SphPuzzleWorld
 {
-  constructor(puzzle, id_display, id_network) {
+  constructor(puzzle, id_display, id_network, id_config) {
     this.puzzle = puzzle;
-    this.network = new SphNetwork();
-    this.network.init(this.puzzle);
     this.selector = new Selector();
 
 
@@ -1729,13 +2006,14 @@ class SphPuzzleWorld
 
     // network view
     var diagram = new Diagram(id_network);
-    this.netview = new SphNetworkView(diagram, this.network, this.selector);
+    this.diag = new SphNetworkView(diagram, this.puzzle.network, this.selector);
+
+    this.conf = new SphConfigView(id_config, this.puzzle.network, this.selector);
 
     // panel
     this.panel = new Panel();
 
-    var panel_style = document.createElement("style");
-    panel_style.innerHTML = `
+    var panel_style = css`
       div.dg.ac input[type="text"], div.dg.ac select {
         font-size: small;
       }
@@ -1761,18 +2039,18 @@ class SphPuzzleWorld
     document.body.appendChild(panel_style);
 
 
-    var pzl_panel = this.panel.ctrls[this.panel.addFolder("puzzle")];
-    this.pzl_tree = new SphPuzzleTreeViewPanel(pzl_panel, this.puzzle, this.view);
-    var net_panel = this.panel.ctrls[this.panel.addFolder("network")];
-    this.net_tree = new SphNetworkTreeViewPanel(net_panel, this.network, this.netview);
-
     var cmd_panel = this.panel.ctrls[this.panel.addFolder("commands")];
     this.cmd = new SphPuzzleWorldCmdMenu(cmd_panel, this.selector, this.puzzle);
     
+    // var pzl_panel = this.panel.ctrls[this.panel.addFolder("puzzle")];
+    // this.pzl_tree = new SphPuzzleTreeViewPanel(pzl_panel, this.puzzle, this.view);
+    // var net_panel = this.panel.ctrls[this.panel.addFolder("network")];
+    // this.net_tree = new SphNetworkTreeViewPanel(net_panel, this.puzzle.network, this.diag);
+
     var sel_panel = this.panel.ctrls[this.panel.addFolder("select", true)];
     sel_panel.gui.add(this.view, "selectOn", ["segment", "element", "track"]).name("select on");
     this.sel = new SelectPanel(sel_panel, this.selector);
     this.sel.addPropBuilder(this.view);
-    this.sel.addPropBuilder(this.netview);
+    this.sel.addPropBuilder(this.diag);
   }
 }

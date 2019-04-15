@@ -1,11 +1,23 @@
-
-function html(strings, ...vars) {
+function str(strings, ...vars) {
   var res = strings[0];
   for ( let i=1; i<strings.length; i++ )
     res = res + vars[i-1] + strings[i];
+  return res;
+}
+function html(strings, ...vars) {
   var template = document.createElement("template");
-  template.innerHTML = res;
-  return template;
+  template.innerHTML = str(strings, ...vars);
+  return template.content;
+}
+function css(strings, ...vars) {
+  var style = document.createElement("style");
+  style.innerHTML = str(strings, ...vars);
+  return style;
+}
+function js(strings, ...vars) {
+  var js = document.createElement("script");
+  js.innerHTML = str(strings, ...vars);
+  return js;
 }
 
 const tslist = html`
@@ -21,7 +33,10 @@ const tslist = html`
   --bdcolor: #3C9F30;
   --fmcolor: #2C8F50;
 }
-.placeholder {
+:host(:focus), :host(:focus-within) {
+  z-index: 2;
+}
+::slotted(ts-option[slot='placeholder']) {
   display: block;
   box-sizing: border-box;
   border: 1px solid white;
@@ -89,8 +104,7 @@ const tselem = html`
   border-top: 1px solid var(--bdcolor);
   border-bottom: 1px solid var(--bdcolor);
 }
-::slotted(ts-option:hover),
-:host(.emphasized)>.selected>::slotted(ts-option) {
+::slotted(ts-option:hover) {
   background-color: var(--emcolor);
 }
 .frame {
@@ -124,7 +138,7 @@ customElements.define("ts-list", class extends HTMLElement {
   constructor() {
     super();
     var shadowRoot = this.attachShadow({mode: "open"});
-    shadowRoot.appendChild(tslist.content.cloneNode(true));
+    shadowRoot.appendChild(tslist.cloneNode(true));
   }
 
   connectedCallback() {
@@ -174,6 +188,7 @@ customElements.define("ts-list", class extends HTMLElement {
       elem.appendChild(option);
     }
     this.appendChild(elem);
+    return elem;
   }
 });
 
@@ -181,7 +196,7 @@ customElements.define("ts-elem", class extends HTMLElement {
   constructor() {
     super();
     var shadowRoot = this.attachShadow({mode: "open"});
-    shadowRoot.appendChild(tselem.content.cloneNode(true));
+    shadowRoot.appendChild(tselem.cloneNode(true));
   }
   connectedCallback() {
     // init attr
@@ -300,6 +315,13 @@ customElements.define("ts-elem", class extends HTMLElement {
 
     this.appendChild(next);
     this.style.setProperty("--pos-y", y);
+  }
+
+  highlight() {
+    this.classList.add("highlighted");
+  }
+  unhighlight() {
+    this.classList.remove("highlighted");
   }
 
   _transitionend_handler(event) {

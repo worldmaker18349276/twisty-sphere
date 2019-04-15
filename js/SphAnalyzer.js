@@ -2921,11 +2921,16 @@ class SphState
     return this.mold.get(this.segments, index);
   }
   indexOf(val) {
-    var it;
     if ( val instanceof SphSeg ) {
       for ( let [index, seg] of this.mold.items(this.segments) )
         if ( seg === val )
           return index;
+
+    } else if ( val instanceof SphElem ) {
+      for ( let [[i, j, k, l], seg] of this.mold.items(this.segments) )
+        if ( k == 0 && l == 0 )
+          if ( seg.affiliation === val )
+            return [i, j];
 
     } else if ( val instanceof SphJoint ) {
       for ( let [index, joint] of this.mold.items(this.joints) )
@@ -2984,7 +2989,7 @@ class SphJoint
     }
   }
   unfuse(state) {
-    if ( this.delete(state) ) {
+    if ( this.ports.delete(state) ) {
       let index = state.indexOf(this);
       if ( index )
         state.mold.set(state.joints, index, undefined);
@@ -3094,15 +3099,17 @@ class Listenable
  * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
  * @property {SphElem[]} elements - All elements of this puzzle.
  * @property {SphTrack[]} tracks - All tracks of this puzzle.
+ * @property {SphNetwork} network - network structure of this puzzle.
  */
 class SphPuzzle extends Listenable
 {
   constructor(analyzer=new SphAnalyzer()) {
     super();
 
+    this.analyzer = analyzer;
     this.elements = [];
     this.tracks = [];
-    this.analyzer = analyzer;
+    this.network = new SphNetwork();
 
     this.init();
   }
@@ -3155,11 +3162,13 @@ class SphPuzzle extends Listenable
     var element = seg.affiliation;
     this.analyzer.mergePrev(seg);
     this.trigger("modified", element);
+    this.network.expire();
   }
   interpolate(seg, theta) {
     var element = seg.affiliation;
     this.analyzer.interpolate(seg, theta);
     this.trigger("modified", element);
+    this.network.expire();
   }
   mergeEdge(seg1, seg2) {
     var cover = this.analyzer.cover(seg1, seg2);
@@ -3170,10 +3179,18 @@ class SphPuzzle extends Listenable
       this.remove(seg1.track);
     this.analyzer.glueAdj(cover);
     this.trigger("modified", element);
+    this.network.expire();
   }
   mergeElements(element0, ...elements) {
-    element0.merge(...elements);
+    if ( !this.network.outdated ) {
+      var joint0 = this.network.makeJoint(...this.network.indexOf(element0));
+      var joints = elements.map(elem => this.network.indexOf(elem))
+                           .map(index => this.network.makeJoint(...index));
+      for ( let joint of joints )
+        this.network.bind(joint0, joint);
+    }
 
+    element0.merge(...elements);
     for ( let element of elements )
       this.remove(element);
     this.trigger("modified", element0);
@@ -3206,6 +3223,7 @@ class SphPuzzle extends Listenable
 
     if ( track )
       this.add(track);
+    this.network.expire();
 
     return track;
   }
@@ -3273,6 +3291,7 @@ class SphPuzzle extends Listenable
     for ( let element of modified )
       this.trigger("modified", element);
 
+    this.network.expire();
   }
   check() {
     for ( let element of this.elements )
@@ -3280,12 +3299,60 @@ class SphPuzzle extends Listenable
         this.analyzer.checkGeometry(seg);
     this.analyzer.checkOrientation(this.elements);
   }
+
+  // network
+  structurize() {
+    this.network.clear();
+    this.network.outdated = false;
+
+    var states = this.analyzer.structurize(this.elements);
+    for ( let state of states )
+      this.network.add(state);
+
+    var joints = states.flatMap(state => state.joints.flat(2));
+    for ( let joint of new Set(joints) )
+      this.network.add(joint);
+  }
+  trim(state) {
+    var segs = state.segments.flat(2).flatMap(seg => Array.from(this.analyzer.walk(seg)));
+    var tracks = state.segments.flat(2).map(seg => seg.track).filter(track => track);
+    var elems = state.segments.flat(2).map(seg => seg.affiliation);
+    elems[0].merge(...elems.slice(1));
+    elems[0].withdraw(...segs);
+
+    for ( let track of tracks )
+      this.remove(track);
+    for ( let elem of elems.slice(1) )
+      this.remove(elem);
+    this.trigger("modified", elems[0]);
+
+    var joints = state.joints.flat(2);
+    for ( let joint of joints )
+      this.network.unfuse(joint, state);
+    this.network.remove(state);
+    joints.slice(1).forEach(joint => this.network.fuse(joint, joints[0]));
+  }
+  unbandage(joint) {
+    if ( joint.bandage.size == 1 )
+      return;
+    this.network.unbind(joint);
+
+    var segs = Array.from(joint.ports.keys())
+                    .map(state => state.get(state.indexOf(joint)))
+                    .flatMap(seg => Array.from(this.analyzer.walk(seg)));
+    var elem = segs[0].affiliation;
+    var elem0 = elem.split(segs)[0];
+    this.add(elem0);
+    this.trigger("modified", elem);
+    return elem0;
+  }
 }
 
 /**
  * Network structure of puzzle.
  * It equips with event system, which is useful for making GUI.  The possible
  * events are:
+ * `{ type:"outdated", target:SphNetwork }`, triggered when outdated.
  * `{ type:"added"|"removed", target:SphState|SphJoint }`, triggered after
  * adding/removing state/joint.
  * `{ type:"fused"|"unfused", target:SphJoint, state:SphState, index:number[] }`,
@@ -3295,16 +3362,16 @@ class SphPuzzle extends Listenable
  * `{ type:"unbinded", target:SphJoint }`, triggered after unbinding joint.
  * 
  * @class
- * @property {SphAnalyzer} analyzer - All algorithms of this network.
+ * @property {boolean} outdated
  * @property {SphState[]} states - All states of this network.
  * @property {SphJoint[]} joints - All joints of this network.
  */
 class SphNetwork extends Listenable
 {
-  constructor(analyzer=new SphAnalyzer()) {
+  constructor() {
     super();
-    this.analyzer = analyzer;
 
+    this.outdated = true;
     this.states = [];
     this.joints = [];
   }
@@ -3364,16 +3431,11 @@ class SphNetwork extends Listenable
     for ( let state of this.states.slice() )
       this.remove(state);
   }
-  init(puzzle) {
-    this.clear();
-
-    var states = this.analyzer.structurize(puzzle.elements);
-    for ( let state of states )
-      this.add(state);
-
-    var joints = states.flatMap(state => state.joints.flat(2));
-    for ( let joint of new Set(joints) )
-      this.add(joint);
+  expire() {
+    if ( this.outdated )
+      return;
+    this.outdated = true;
+    this.trigger("outdated", this);
   }
 
   makeJoint(state, index) {
@@ -3404,7 +3466,7 @@ class SphNetwork extends Listenable
   }
   bind(joint1, joint2) {
     joint1.bind(joint2);
-    this.trigger("binded", joint1, {joints:joint1.bandage});
+    this.trigger("binded", joint1, {bandage:joint1.bandage});
   }
   unbind(joint) {
     var bandage = joint.bandage;
@@ -3432,14 +3494,6 @@ class SphNetwork extends Listenable
           return [state];
 
     }
-  }
-
-  trim(state) {
-    var joints = state.joints.flat(2);
-    for ( let joint of joints )
-      this.unfuse(joint, state);
-    this.remove(state);
-    joints.slice(1).forEach(joint => this.fuse(joint, joints[0]));
   }
 }
 
