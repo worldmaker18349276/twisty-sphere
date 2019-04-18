@@ -1,5 +1,23 @@
 "use strict";
 
+function str(strings, ...vars) {
+  var res = strings[0];
+  for ( let i=1; i<strings.length; i++ )
+    res = res + vars[i-1] + strings[i];
+  return res;
+}
+function html(strings, ...vars) {
+  var template = document.createElement("template");
+  template.innerHTML = str(strings, ...vars);
+  return template.content;
+}
+function css(strings, ...vars) {
+  var style = document.createElement("style");
+  style.innerHTML = str(strings, ...vars);
+  return style;
+}
+
+
 class Display
 {
   constructor(id, width, height) {
@@ -1351,40 +1369,35 @@ class SphConfigView
     this.network = network;
     this.selector = selector;
 
-    var style = css`
-      .seg-button-placeholder {
-        display: inline-block;
-        box-sizing: border-box;
-        padding: 6px;
-        font-size: 12px;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        overflow: hidden;
+    document.body.appendChild(css`
+      .emphasized {
+        font-weight: bold;
       }
-      .seg-button {
+      .highlighted {
+        outline: 1px solid red;
+      }
+      .list::before {
+        content: '[';
+      }
+      .list::after {
+        content: ']';
+      }
+      .item {
         display: inline-block;
-        box-sizing: border-box;
-        color: white;
-        padding-top: 6px;
-        padding-bottom: 6px;
-        padding-left: 6px;
-        font-size: 12px;
 
-        width: 100%;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        overflow: hidden;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
       }
-      ts-list {
-        margin: 12px 8px;
-        float: left;
-        clear: both;
+      .item:not(:last-child)::after {
+        content: ', ';
+        white-space: pre;
       }
-      ts-elem.emphasized ts-option[slot='selected'] {
-        background-color: var(--emcolor);
+      .dragging {
+        opacity: 0.3;
       }
-      `;
-    document.body.appendChild(style);
+    `);
 
     this.current_tab = undefined;
     for ( let state of network.states )
@@ -1398,40 +1411,91 @@ class SphConfigView
     requestAnimationFrame(routine);
   }
 
-  makeSegButton(seg) {
-    if ( seg ) {
-      let btn = html`<span class="seg-button">${seg.name}, ..</span>`.children[0];
-      btn.host = seg;
-      return btn;
-
-    } else {
-      return html`<span class="seg-button-placeholder">SphSeg000, ..</span>`.children[0];
-    }
-  }
   makeParamTable(state) {
-    const TsList = customElements.get("ts-list");
     var res = [];
 
     for ( let i=0; i<state.mold.shapes.length; i++ ) {
-      let list = new TsList();
-      list.disabled = true;
-      list.setPlaceholder(this.makeSegButton());
+      let list = document.createElement("div");
+      list.classList.add("list");
 
-      const N = state.mold.shapes[i].fold || 1;
+      const L = state.mold.shapes[i].patch.length;
       for ( let j=0; j<state.mold.shapes[i].count; j++ ) {
-        let btns = [];
-        for ( let k=0; k<N; k++ )
-          btns.push(this.makeSegButton(state.mold.get(state.segments, [i,j,k])));
+        let item = document.createElement("div");
+        item.classList.add("item");
+        item.draggable = true;
+        item.tabIndex = 0;
+        item.host = state.segments[i][j];
+        item.textContent = state.segments[i][j].name;
 
-        let dropdown = list.addElem(...btns);
-        const elem = state.segments[i][j].affiliation;
-        dropdown.host = elem;
+        item.addEventListener("wheel", function(event) {
+          if ( this.parentNode.getAttribute("disabled") )
+            return;
+          if ( event.deltaY == 0 )
+            return;
+          var list = Array.from(this.parentNode.children);
+          var j = list.indexOf(this);
+          console.assert(this.host === state.segments[i][j]);
 
-        let joint = state.jointAt([i,j]) || elem;
-        dropdown.addEventListener("mouseenter", () => this.selector.preselection = joint);
-        dropdown.addEventListener("mouseleave", () => this.selector.preselection = undefined);
-        dropdown.addEventListener("focus", () => this.selector.select(joint));
-        dropdown.addEventListener("blur", () => this.selector.select());
+          if ( event.deltaY > 0 ) {
+            for ( let l=0; l<L; l++ )
+              state.segments[i][j] = state.segments[i][j].next;
+          } else {
+            for ( let l=0; l<L; l++ )
+              state.segments[i][j] = state.segments[i][j].prev;
+          }
+
+          this.host = state.segments[i][j];
+          this.textContent = this.host.name;
+          event.preventDefault();
+        });
+
+        item.addEventListener("dragstart", function(event) {
+          if ( this.parentNode.getAttribute("disabled") )
+            return;
+          event.dataTransfer.setData("Text", "");
+          event.dataTransfer.dropEffect = "move";
+          this.classList.add("dragging");
+        });
+        item.addEventListener("dragend", function(event) {
+          this.classList.remove("dragging");
+          this.focus();
+        });
+        item.addEventListener("dragover", function(event) {
+          var target = this.parentNode.querySelector(".item.dragging");
+          if ( !target )
+            return;
+          event.preventDefault();
+          event.dataTransfer.effectAllowed = "move";
+        });
+        item.addEventListener("dragenter", function(event) {
+          var target = this.parentNode.querySelector(".item.dragging");
+          if ( !target || this === target )
+            return;
+
+          var list = Array.from(this.parentNode.children);
+          var j = list.indexOf(this);
+          var j0 = list.indexOf(target);
+          console.assert(this.host === state.segments[i][j]);
+          console.assert(target.host === state.segments[i][j0]);
+
+          if ( j < j0 ) {
+            this.parentNode.insertBefore(target, this);
+            state.segments[i].splice(j, 0, ...state.segments[i].splice(j0, 1));
+          } else if ( this.nextElementSibling ) {
+            this.parentNode.insertBefore(target, this.nextElementSibling);
+            state.segments[i].splice(j, 0, ...state.segments[i].splice(j0, 1));
+          } else {
+            this.parentNode.appendChild(target);
+            state.segments[i].push(...state.segments[i].splice(j0, 1));
+          }
+        });
+
+        item.addEventListener("mouseenter", event => this.selector.preselection=this.jointsOf(event.target.host)[0]);
+        item.addEventListener("mouseleave", () => this.selector.preselection=undefined);
+        item.addEventListener("focus", event => this.selector.select(this.jointsOf(event.target.host)[0]));
+        item.addEventListener("blur", () => this.selector.select());
+
+        list.appendChild(item);
       }
 
       res.push(list);
@@ -1467,8 +1531,8 @@ class SphConfigView
     if ( target instanceof SphSeg ) {
       let index, joint;
       for ( let state of this.network.states )
-        if ( index = state.indexOf(target.affiliation) )
-          return (joint = state.jointAt(index)) ? Array.from(joint.bandage) : [target.affiliation];
+        if ( index = state.indexOf(target) )
+          return (joint = state.jointAt(index)) ? [joint] : [target.affiliation];
       console.assert(false);
 
     } else if ( target instanceof SphElem ) {
@@ -1489,8 +1553,8 @@ class SphConfigView
     var index;
     for ( let state of this.network.states )
       if ( index = state.indexOf(joint) ) {
-        let table = state.tab.querySelectorAll("ts-list");
-        let elem = table[index[0]].elems[index[1]];
+        let table = state.tab.querySelectorAll("div.list");
+        let elem = table[index[0]].children[index[1]];
 
         elem.classList.add("emphasized");
       }
@@ -1499,8 +1563,8 @@ class SphConfigView
     var index;
     for ( let state of this.network.states )
       if ( index = state.indexOf(joint) ) {
-        let table = state.tab.querySelectorAll("ts-list");
-        let elem = table[index[0]].elems[index[1]];
+        let table = state.tab.querySelectorAll("div.list");
+        let elem = table[index[0]].children[index[1]];
 
         elem.classList.remove("emphasized");
       }
@@ -1509,20 +1573,20 @@ class SphConfigView
     var index;
     for ( let state of this.network.states )
       if ( index = state.indexOf(joint) ) {
-        let table = state.tab.querySelectorAll("ts-list");
-        let elem = table[index[0]].elems[index[1]];
+        let table = state.tab.querySelectorAll("div.list");
+        let elem = table[index[0]].children[index[1]];
 
-        elem.highlight();
+        elem.classList.add("highlighted");
       }
   }
   unhighlight(joint) {
     var index;
     for ( let state of this.network.states )
       if ( index = state.indexOf(joint) ) {
-        let table = state.tab.querySelectorAll("ts-list");
-        let elem = table[index[0]].elems[index[1]];
+        let table = state.tab.querySelectorAll("div.list");
+        let elem = table[index[0]].children[index[1]];
 
-        elem.unhighlight();
+        elem.classList.remove("highlighted");
       }
   }
 
