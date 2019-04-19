@@ -968,7 +968,7 @@ class SphPuzzleView
       return [...target.inner, ...target.outer];
 
     } else if ( target instanceof SphState ) {
-      return Array.from(target.mold.items(target.segments)).map(a => a[1]);
+      return Array.from(target.model.items(target.segments)).map(a => a[1]);
 
     } else if ( target instanceof SphJoint ) {
       return Array.from(target.ports.keys())
@@ -1339,7 +1339,7 @@ class SphNetworkView
     var detail = [];
 
     var joints = [];
-    for ( let [index, joint] of state.mold.items(state.joints) )
+    for ( let [index, joint] of state.model.items(state.joints) )
       joints.push(this.link(joint, sel_mode, `${index} → ${joint.name}`));
     detail.push({type:"folder", name:"joints", open:"true", properties:joints});
 
@@ -1374,7 +1374,7 @@ class SphConfigView
         font-weight: bold;
       }
       .highlighted {
-        outline: 1px solid red;
+        outline: 1px dashed gray;
       }
       .list::before {
         content: '[';
@@ -1414,16 +1414,15 @@ class SphConfigView
   makeParamTable(state) {
     var res = [];
 
-    for ( let i=0; i<state.mold.shapes.length; i++ ) {
+    for ( let i=0; i<state.model.shapes.length; i++ ) {
       let list = document.createElement("div");
       list.classList.add("list");
 
-      const L = state.mold.shapes[i].patch.length;
-      for ( let j=0; j<state.mold.shapes[i].count; j++ ) {
+      const L = state.model.shapes[i].patch.length;
+      for ( let j=0; j<state.model.shapes[i].count; j++ ) {
         let item = document.createElement("div");
         item.classList.add("item");
         item.draggable = true;
-        item.tabIndex = 0;
         item.host = state.segments[i][j];
         item.textContent = state.segments[i][j].name;
 
@@ -1492,8 +1491,19 @@ class SphConfigView
 
         item.addEventListener("mouseenter", event => this.selector.preselection=this.jointsOf(event.target.host)[0]);
         item.addEventListener("mouseleave", () => this.selector.preselection=undefined);
-        item.addEventListener("focus", event => this.selector.select(this.jointsOf(event.target.host)[0]));
-        item.addEventListener("blur", () => this.selector.select());
+        item.addEventListener("click", event => {
+          var target = this.jointsOf(event.target.host)[0];
+
+          if ( event.ctrlKey ) {
+            if ( target )
+              this.selector.toggle(target);
+          } else {
+            if ( target )
+              this.selector.select(target);
+            else
+              this.selector.reselect();
+          }
+        });
 
         list.appendChild(item);
       }

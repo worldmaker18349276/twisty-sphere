@@ -2075,7 +2075,7 @@ class SphAnalyzer
    */
   assemble(config, param, index0=[0,0], orientation0=[0,0,0,1]) {
     if ( param ) {
-      for ( let [, seg] of config.mold.items(param) ) {
+      for ( let [, seg] of config.model.items(param) ) {
         seg.adj = new Map();
         seg.orientation = undefined;
         if ( seg.track ) seg.track.tearDown();
@@ -2084,20 +2084,20 @@ class SphAnalyzer
     } else {
       // build elements
       param = [];
-      for ( let i=0; i<config.mold.shapes.length; i++ )
-        for ( let j=0; j<config.mold.shapes[i].count; j++ )
-          config.mold.set(param, [i,j], this.shapeBy(config.mold, [i,j]));
+      for ( let i=0; i<config.model.shapes.length; i++ )
+        for ( let j=0; j<config.model.shapes[i].count; j++ )
+          config.model.set(param, [i,j], this.shapeBy(config.model, [i,j]));
     }
 
     // set adjacencies
     for ( let [index1, index2, offset] of config.adjacencies ) {
-      let seg1 = config.mold.get(param, index1);
-      let seg2 = config.mold.get(param, index2);
+      let seg1 = config.model.get(param, index1);
+      let seg2 = config.model.get(param, index2);
       seg1.adjacent(seg2, offset);
     }
 
     // fix orientation
-    var seg0 = config.mold.get(param, index0);
+    var seg0 = config.model.get(param, index0);
     seg0.orientation = orientation0;
     var located = new Set([seg0]);
 
@@ -2132,21 +2132,21 @@ class SphAnalyzer
    * It will sort elements by order of encountering, and yields adjacent relation
    * when passing through.
    * 
-   * @param {SphMold} mold - The mold of puzzle to explore.
+   * @param {SphModel} model - The model of puzzle to explore.
    * @param {SphSeg} seg0 - The first segment to explore.
    * @param {Symbol} INDEX - The symbol to access index of segment.
    * @yields {Array} The adjacency just passed through.
    * @returns {Array} The permutation of sorted configuration.
    */
-  *crawl(mold, seg0, INDEX) {
-    var perm = mold.shapes.map(() => []);
-    var P = Array(mold.shapes.length).fill(0);
+  *crawl(model, seg0, INDEX) {
+    var perm = model.shapes.map(() => []);
+    var P = Array(model.shapes.length).fill(0);
     var path = [];
 
     var add = seg => {
       var [i, j, k] = seg[INDEX];
       if ( perm[i][j] === undefined ) {
-        let N = mold.shapes[i].fold;
+        let N = model.shapes[i].fold;
         N = N == 0 ? 1 : N;
         perm[i][j] = [P[i]++, (N-k)%N];
         path.push(...this.walk(seg));
@@ -2165,8 +2165,8 @@ class SphAnalyzer
       for ( let [seg_, offset] of adj ) {
         add(seg_);
 
-        let index  = mold.apply(perm, seg [INDEX]);
-        let index_ = mold.apply(perm, seg_[INDEX]);
+        let index  = model.apply(perm, seg [INDEX]);
+        let index_ = model.apply(perm, seg_[INDEX]);
         if ( this.cmp(index, index_) > 0 )
           [index_, index] = [index, index_];
         yield [index, index_, offset];
@@ -2174,7 +2174,7 @@ class SphAnalyzer
 
       explored.add(seg);
     }
-    console.assert(P.every((n, i) => n == mold.shapes[i].count));
+    console.assert(P.every((n, i) => n == model.shapes[i].count));
 
     return perm;
   }
@@ -2184,20 +2184,20 @@ class SphAnalyzer
    * possible permutations.
    * The multiple permutations means geometric symmetry of this configuration.
    * 
-   * @param {SphMold} mold - The mold of puzzle to build.
+   * @param {SphModel} model - The model of puzzle to build.
    * @param {SphSeg[][]} param - The segments of puzzle to analyze.
    * @param {SphConfig[]} known - Sorted list of known sorted configurations.
    * @returns {Array} Sorted configuration and possible permutations.
    */
-  recognize(mold, param, known=[]) {
-    const shape = mold.shapes[0];
+  recognize(model, param, known=[]) {
+    const shape = model.shapes[0];
     if ( shape.fold == 0 )
       throw new Error("too trivial!");
 
     // determine indices of segments and compute length of adjacency table
     const INDEX = Symbol("index");
     var length = 0;
-    for ( let [index, seg] of mold.items(param) ) {
+    for ( let [index, seg] of model.items(param) ) {
       seg[INDEX] = index;
       length += seg.adj.size;
     }
@@ -2223,8 +2223,8 @@ class SphAnalyzer
     // find the smallest adjacency table
     for ( let j=0; j<shape.count; j++ )
       for ( let k=0; k<shape.fold; k++ ) {
-        let seg0 = mold.get(param, [0, j, k]);
-        let buffer_ = [], crawler_ = this.crawl(mold, seg0, INDEX);
+        let seg0 = model.get(param, [0, j, k]);
+        let buffer_ = [], crawler_ = this.crawl(model, seg0, INDEX);
 
         // find minimal lazy array (lexical order)
         let sgn = cmp(buffer_, crawler_, buffer, crawler);
@@ -2244,7 +2244,7 @@ class SphAnalyzer
               let res = crawler.next();
               console.assert(res.done);
               permutations = config_.symmetries
-                .map(perm => mold.followedBy(res.value, perm));
+                .map(perm => model.followedBy(res.value, perm));
               return [config_, permutations];
 
             } else if ( sgn < 0 ) {
@@ -2262,14 +2262,14 @@ class SphAnalyzer
     permutations.unshift(res.value);
 
     // structure of config
-    config = new SphConfig({mold});
+    config = new SphConfig({model});
     config.adjacencies = buffer;
-    var perm0 = mold.inverse(res.value);
-    config.symmetries = permutations.map(perm => mold.followedBy(perm0, perm))
+    var perm0 = model.inverse(res.value);
+    config.symmetries = permutations.map(perm => model.followedBy(perm0, perm))
                                     .sort(this.cmp.bind(this));
 
     // clear INDEX
-    for ( let [index, seg] of mold.items(param) )
+    for ( let [index, seg] of model.items(param) )
       delete seg[INDEX];
 
     return [config, permutations];
@@ -2447,7 +2447,7 @@ class SphAnalyzer
       for ( let state of next_states ) {
         // find the loop containing `point`
         let index;
-        for ( let [[i,j,k,l], seg] of state.mold.items(state.segments) )
+        for ( let [[i,j,k,l], seg] of state.model.items(state.segments) )
           if ( k == 0 && l == 0 ) {
             let res = this.contains(Array.from(this.walk(seg)), point);
             if ( res === undefined || res == true ) {
@@ -2517,13 +2517,13 @@ class SphAnalyzer
   /**
    * Make element by shape of element.
    * 
-   * @param {SphMold} mold - Mold of the loop to make.
+   * @param {SphModel} model - Model of the loop to make.
    * @param {object} index - The index of sement to make.
    * @returns {SphSeg} The segment with `index`.
    */
-  shapeBy(mold, index) {
+  shapeBy(model, index) {
     var [i, j, k=0, l=0] = index;
-    var {fold, patch} = mold.shapes[i];
+    var {fold, patch} = model.shapes[i];
     fold = fold == 0 ? 1 : fold;
     var n = k*patch.length+l;
     var L = fold*patch.length;
@@ -2554,22 +2554,22 @@ class SphAnalyzer
     // classify by shapes
     for ( let network of networks ) {
       console.assert(network.profile.length == 0);
-      let mold = new SphMold();
-      network.state = new SphState({mold});
+      let model = new SphModel();
+      network.state = new SphState({model});
 
       // add shapes
       for ( let loop of network.loops ) {
         let [shape, seg] = this.shapeOf(loop[0]);
         shape.count = 0;
-        shape = mold.shapes.find(({patch}) => this.cmp(patch, shape.patch) == 0) || shape;
-        let index = mold.add(shape);
-        mold.set(network.state.segments, index, seg);
+        shape = model.shapes.find(({patch}) => this.cmp(patch, shape.patch) == 0) || shape;
+        let index = model.add(shape);
+        model.set(network.state.segments, index, seg);
       }
 
       // sort shapes
-      let keys = mold.shapes.map(({patch}, i) => [patch, i]);
+      let keys = model.shapes.map(({patch}, i) => [patch, i]);
       keys = keys.sort((a, b) => this.cmp(a[0], b[0])).map(a => a[1]);
-      mold.shapes = keys.map(i => mold.shapes[i]);
+      model.shapes = keys.map(i => model.shapes[i]);
       network.state.segments = keys.map(i => network.state.segments[i]);
     }
 
@@ -2628,7 +2628,7 @@ class SphAnalyzer
     var q0 = (yield state) || (compass && compass.slice());
     var index0 = pointer && pointer.slice();
 
-    for ( let [index, joint] of state.mold.items(state.joints) ) if ( joint !== from )
+    for ( let [index, joint] of state.model.items(state.joints) ) if ( joint !== from )
       for ( let state_ of joint.keys() ) if ( state_ !== state ) {
         if ( pointer ) {
           let orientation  = joint.get(state );
@@ -2708,7 +2708,7 @@ class SphAnalyzer
  *   `patch` is unrepeated part of segments of element, which is list of
  *   `[arc, radius, angle]`.
  */
-class SphMold
+class SphModel
 {
   constructor() {
     this.shapes = [];
@@ -2901,7 +2901,7 @@ class SphMold
  * Bandage fixes relative orientations between connected pieces.
  * 
  * @class
- * @property {SphMold} mold - The mold of segments in this network.
+ * @property {SphModel} model - The model of segments in this network.
  * @property {SphSeg[][]} segments - The concrete object of segments in this
  *   network in the parameters form.
  * @property {SphJoint[][]} joints - The joints of segments in this network in
@@ -2910,37 +2910,37 @@ class SphMold
  */
 class SphState
 {
-  constructor({mold}={}) {
-    this.mold = mold;
+  constructor({model}={}) {
+    this.model = model;
     this.segments = [];
     this.joints = [];
-    this.configuration = new SphConfig({mold});
+    this.configuration = new SphConfig({model});
   }
 
   get(index) {
-    return this.mold.get(this.segments, index);
+    return this.model.get(this.segments, index);
   }
   indexOf(val) {
     if ( val instanceof SphSeg ) {
-      for ( let [index, seg] of this.mold.items(this.segments) )
+      for ( let [index, seg] of this.model.items(this.segments) )
         if ( seg === val )
           return index;
 
     } else if ( val instanceof SphElem ) {
-      for ( let [[i, j, k, l], seg] of this.mold.items(this.segments) )
+      for ( let [[i, j, k, l], seg] of this.model.items(this.segments) )
         if ( k == 0 && l == 0 )
           if ( seg.affiliation === val )
             return [i, j];
 
     } else if ( val instanceof SphJoint ) {
-      for ( let [index, joint] of this.mold.items(this.joints) )
+      for ( let [index, joint] of this.model.items(this.joints) )
         if ( joint === val )
           return index;
     }
   }
   jointAt([i, j], make_if_absent=false) {
     var joint;
-    for ( var [index, joint_] of this.mold.items(this.joints) )
+    for ( var [index, joint_] of this.model.items(this.joints) )
       if ( index[0]==i && index[1]==j ) {
         joint = joint_;
         break;
@@ -2948,22 +2948,22 @@ class SphState
 
     if ( !joint && make_if_absent ) {
       joint = new SphJoint(this, this.get([i,j]).orientation.slice());
-      this.mold.set(this.joints, [i,j], joint);
+      this.model.set(this.joints, [i,j], joint);
     }
     return joint;
   }
   disjoint([i, j]) {
-    for ( var [index, ] of this.mold.items(this.joints) )
+    for ( var [index, ] of this.model.items(this.joints) )
       if ( index[0]==i && index[1]==j ) {
-        this.mold.set(this.joints, index);
+        this.model.set(this.joints, index);
         break;
       }
   }
   
   transit(perm, config=this.configuration) {
     this.configuration = config;
-    this.segments = this.mold.map(this.segments, perm);
-    this.joints = this.mold.map(this.joints, perm);
+    this.segments = this.model.map(this.segments, perm);
+    this.joints = this.model.map(this.joints, perm);
   }
 }
 
@@ -2985,14 +2985,14 @@ class SphJoint
       this.ports.set(state, orientation);
       let index = state.indexOf(joint);
       if ( index )
-        state.mold.set(state.joints, index, this);
+        state.model.set(state.joints, index, this);
     }
   }
   unfuse(state) {
     if ( this.ports.delete(state) ) {
       let index = state.indexOf(this);
       if ( index )
-        state.mold.set(state.joints, index, undefined);
+        state.model.set(state.joints, index, undefined);
     }
   }
 
@@ -3018,7 +3018,7 @@ class SphJoint
  * jumbling rule of this state.
  * 
  * @class
- * @property {SphMold} mold - The mold of segments in this network.
+ * @property {SphModel} model - The model of segments in this network.
  * @property {Array} adjacencies - Table of adjacencies, which has entries
  *   `[index1, index2, offset]`;
  *   `index1` and `index2` are indices of adjacent segments, where `index1` is
@@ -3027,8 +3027,8 @@ class SphJoint
  */
 class SphConfig
 {
-  constructor({mold, adjacencies=[]}={}) {
-    this.mold = mold;
+  constructor({model, adjacencies=[]}={}) {
+    this.model = model;
     this.adjacencies = adjacencies;
     // adjacency = [index1, index2, offset]
     this.symmetries = undefined;
