@@ -449,16 +449,16 @@ class Panel
   }
 }
 
-class Diagram
+class Graph
 {
   constructor(id) {
     this.dom = document.getElementById(id);
 
-    this.nodes_options = new vis.DataSet();
-    this.edges_options = new vis.DataSet();
+    this.nodes = new vis.DataSet();
+    this.edges = new vis.DataSet();
     this.view = new vis.Network(
       this.dom,
-      {nodes:this.nodes_options, edges:this.edges_options},
+      {nodes:this.nodes, edges:this.edges},
       {
         physics: true,
         nodes: {chosen:false}, edges: {chosen:false},
@@ -467,130 +467,74 @@ class Diagram
       }
     );
 
-    this.nodes = new Map();
-    this.edges = new Map();
-    this.numbers = (function *numbers() {
-      var i = 0; while ( true ) if ( yield i++ ) i = -1;
-    })();
-
-    var make_target = event => { event.target = this.getKeyAt(event.pointer.DOM); };
+    var make_target = event => {
+      var id = this.view.getNodeAt(event.pointer.DOM);
+      event.target = id && this.nodes.get(id);
+    };
     this.view.on("click", make_target);
     this.view.on("hoverNode", make_target);
     this.view.on("blurNode", make_target);
   }
 
-  getKeyAt(vec) {
-    var id = this.view.getNodeAt(vec);
-    if ( id === undefined )
-      return;
-    return this.getKey(id);
+  disable() {
+    this.view.setOptions({
+      physics: {enabled:false},
+      interaction: {dragNodes:false, dragView:false, zoomView:false}
+    });
   }
-  getNodeOptions(key) {
-    var id = this.nodes.get(key);
-    if ( id === undefined )
-      return;
-    return this.nodes_options.get(id);
+  enable() {
+    this.view.setOptions({
+      physics: {enabled:true},
+      interaction: {dragNodes:true, dragView:true, zoomView:true}
+    });
   }
-  getEdgeOptions(key) {
-    var id = this.edges.get(key);
-    if ( id === undefined )
-      return;
-    return this.edges_options.get(id);
-  }
-  addNode(key, options={}) {
-    var id = this.nodes.get(key);
-    if ( id !== undefined )
-      this.removeNode(key);
-    else
-      id = this.numbers.next().value;
 
-    this.nodes.set(key, id);
-    this.nodes_options.add(Object.assign({id}, options));
-    return key;
+  addNode(options={}) {
+    return this.nodes.add(options)[0];
   }
-  addEdge(key_from, key_to, key=[key_from, key_to], options={}) {
-    var from = this.nodes.get(key_from);
-    var to = this.nodes.get(key_to);
+  addEdge(from, to, options={}) {
     if ( from === undefined || to === undefined )
       throw new Error();
-
-    var id = this.edges.get(key);
-    if ( id !== undefined )
-      this.removeEdge(key);
-    else
-      id = this.numbers.next().value;
-
-    this.edges.set(key, id);
-    this.edges_options.add(Object.assign({id, from, to}, options));
-    return key;
+    return this.edges.add(Object.assign(options, {from, to}))[0];
   }
-  updateNodeOptions(key, patch={}) {
-    var id = this.nodes.get(key);
+  getNode(id) {
     if ( id === undefined )
       return;
-
-    var options = this.nodes_options.get(id);
-    this.nodes_options.update(Object.assign(options, patch, {id}));
+    return this.nodes.get(id);
   }
-  updateEdgeOptions(key, patch={}) {
-    var id = this.edges.get(key);
+  getEdge(id) {
     if ( id === undefined )
       return;
-
-    var options = this.edges_options.get(id);
-    this.edges_options.update(Object.assign(options, patch, {id}));
+    return this.edges.get(id);
   }
-  removeNode(key) {
-    var id = this.nodes.get(key);
+  updateNode(id, patch={}) {
     if ( id === undefined )
       return;
-
-    this.nodes.delete(key);
-    this.nodes_options.remove(id);
-    if ( this.nodes.size == 0 && this.edges.size == 0 )
-      this.numbers.next(true);
+    var options = this.nodes.get(id);
+    this.nodes.update(Object.assign(options, patch, {id}));
   }
-  removeEdge(key) {
-    var id = this.edges.get(key);
+  updateEdge(id, patch={}) {
     if ( id === undefined )
       return;
-
-    this.edges.delete(key);
-    this.edges_options.remove(id);
-    if ( this.nodes.size == 0 && this.edges.size == 0 )
-      this.numbers.next(true);
+    var options = this.edges.get(id);
+    this.edges.update(Object.assign(options, patch, {id}));
+  }
+  removeNode(id) {
+    if ( id === undefined )
+      return;
+    this.nodes.remove(id);
+  }
+  removeEdge(id) {
+    if ( id === undefined )
+      return;
+    this.edges.remove(id);
   }
 
-  getKey(id) {
-    for ( let [key, id_] of this.nodes )
-      if ( id == id_ )
-        return key;
-    for ( let [key, id_] of this.edges )
-      if ( id == id_ )
-        return key;
-  }
-  *edgesBetween(key_from, key_to) {
-    var from = key_from && this.nodes.get(key_from);
-    var to = key_to && this.nodes.get(key_to);
-    for ( let [key, id] of this.edges ) {
-      let options = this.edges_options.get(id);
-      if ( key_from === undefined || options.from == from )
-        if ( key_to === undefined || options.to == to )
-          yield key;
-    }
-  }
-
-  emphasizeNode(key) {
-    this.updateNodeOptions(key, {color:{background:"#D2E5FF"}});
-  }
-  unemphasizeNode(key) {
-    this.updateNodeOptions(key, {color:{background:"#97C2FC"}});
-  }
-  highlightNode(key) {
-    this.updateNodeOptions(key, {borderWidth:2});
-  }
-  unhighlightNode(key) {
-    this.updateNodeOptions(key, {borderWidth:1});
+  *edgesBetween(from, to) {
+    for ( let options of this.edges.get() )
+      if ( from === undefined || options.from == from )
+        if ( to === undefined || options.to == to )
+          yield options.id;
   }
 }
 
@@ -730,65 +674,16 @@ class SelectPanel
 }
 
 
-class SphPuzzleView
+class SphPuzzleView extends Listenable
 {
   constructor(display, puzzle, selector) {
+    super();
+
     this.display = display;
     this.puzzle = puzzle;
     this.selector = selector;
 
-    // add additional properties
-    {
-      let colors = (function *colors() {
-        while ( true ) {
-          // ref: https://sashat.me/2017/01/11/list-of-20-simple-distinct-colors/
-          yield *["#e6194B", "#3cb44b",
-                  "#ffe119", "#4363d8",
-                  "#f58231", "#911eb4",
-                  "#42d4f4", "#f032e6",
-                  "#bfef45", "#fabebe",
-                  "#469990", "#e6beff",
-                  "#9A6324", "#fffac8",
-                  "#800000", "#aaffc3",
-                  "#808000", "#ffd8b1",
-                  "#000075", "#a9a9a9",
-                  "#ffffff", "#000000"];
-        }
-      })();
-      let elem_id = (function *numbers() {
-        var i = 0; while ( true ) yield `SphElem${i++}`;
-      })();
-      let seg_id = (function *numbers() {
-        var i = 0; while ( true ) yield `SphSeg${i++}`;
-      })();
-      let track_id = (function *numbers() {
-        var i = 0; while ( true ) yield `SphTrack${i++}`;
-      })();
-
-      this.puzzle.name = "SphPuzzle";
-      for ( let elem of puzzle.elements ) {
-        elem.name = elem.name || elem_id.next().value;
-        elem.color = elem.color || colors.next().value;
-        for ( let seg of elem.boundaries )
-          seg.name = seg.name || seg_id.next().value;
-      }
-      for ( let track of puzzle.tracks )
-        track.name = track.name || track_id.next().value;
-
-      this.puzzle.on("added", SphElem, event => {
-        event.target.name = event.target.name || elem_id.next().value;
-        event.target.color = event.target.color || colors.next().value;
-        for ( let seg of event.target.boundaries )
-          seg.name = seg.name || seg_id.next().value;
-      });
-      this.puzzle.on("added", SphTrack, event => {
-        event.target.name = event.target.name || track_id.next().value;
-      });
-      this.puzzle.on("modified", SphElem, event => {
-        for ( let seg of event.target.boundaries )
-          seg.name = seg.name || seg_id.next().value;
-      });
-    }
+    this.initProp(puzzle);
 
     this.selectOn = "segment";
     this.hover_handler = event => {
@@ -828,45 +723,123 @@ class SphPuzzleView
       this.display.add(this.ball, this.root);
     }
 
-    // draw puzzle
-    {
-      for ( let element of this.puzzle.elements )
-        this.drawElement(element);
+    this.initView(puzzle);
 
-      this.puzzle.on("added", SphElem, event =>
-        this.drawElement(event.target));
-      this.puzzle.on("removed", SphElem, event =>
-        this.display.remove(event.target.view, this.root));
-      this.puzzle.on("modified", SphElem, event => {
-        this.display.remove(event.target.view, this.root);
-        this.drawElement(event.target);
-        this.refresh = true;
-      });
-      this.puzzle.on("rotated", SphElem, event => {
-        for ( let obj of event.target.view.children )
-          obj.quaternion.set(...obj.userData.origin.orientation);
-      });
-      this.puzzle.on("recolored", SphElem, event => {
-        for ( let obj of event.target.view.children )
-          for ( let sub of obj.children )
-            sub.material.color.set(event.target.color);
-      });
-    }
-
-    this.refresh = false;
     this.display.animate(this.hoverRoutine());
   }
 
-  setName(target, name) {
-    target.name = name;
-    target.host.trigger("renamed", target);
-  }
-  setColor(element, color) {
-    element.color = color;
-    element.host.trigger("recolored", element);
+  // additional properties
+  initProp(puzzle) {
+    var colors = (function *colors() {
+      while ( true ) {
+        // ref: https://sashat.me/2017/01/11/list-of-20-simple-distinct-colors/
+        yield *["#e6194B", "#3cb44b",
+                "#ffe119", "#4363d8",
+                "#f58231", "#911eb4",
+                "#42d4f4", "#f032e6",
+                "#bfef45", "#fabebe",
+                "#469990", "#e6beff",
+                "#9A6324", "#fffac8",
+                "#800000", "#aaffc3",
+                "#808000", "#ffd8b1",
+                "#000075", "#a9a9a9",
+                "#ffffff", "#000000"];
+      }
+    })();
+    var elem_id = (function *numbers() {
+      var i = 0; while ( true ) yield `SphElem${i++}`;
+    })();
+    var seg_id = (function *numbers() {
+      var i = 0; while ( true ) yield `SphSeg${i++}`;
+    })();
+    var track_id = (function *numbers() {
+      var i = 0; while ( true ) yield `SphTrack${i++}`;
+    })();
+
+    function initElemNameProp(elem) {
+      elem._name = elem._name || elem_id.next().value;
+      Object.defineProperty(elem, "name", {
+        enumerable: true,
+        configurable: true,
+        get: function() { return this._name; },
+        set: function(val) { this._name = val; this.host.trigger("renamed", this); }
+      });
+    }
+    function initSegNameProp(seg) {
+      seg._name = seg._name || seg_id.next().value;
+      Object.defineProperty(seg, "name", {
+        enumerable: true,
+        configurable: true,
+        get: function() { return this._name; },
+        set: function(val) { this._name = val; this.host.trigger("renamed", this); }
+      });
+    }
+    function initTrackNameProp(track) {
+      track._name = track._name || track_id.next().value;
+      Object.defineProperty(track, "name", {
+        enumerable: true,
+        configurable: true,
+        get: function() { return this._name; },
+        set: function(val) { this._name = val; this.host.trigger("renamed", this); }
+      });
+    }
+    function initColorProp(elem) {
+      elem._color = elem._color || colors.next().value;
+      Object.defineProperty(elem, "color", {
+        enumerable: true,
+        configurable: true,
+        get: function() { return this._color; },
+        set: function(val) { this._color = val; this.host.trigger("recolored", this); }
+      });
+    }
+
+    puzzle.name = puzzle.name || "SphPuzzle";
+    for ( let elem of puzzle.elements ) {
+      initElemNameProp(elem);
+      initColorProp(elem);
+      for ( let seg of elem.boundaries )
+        initSegNameProp(seg);
+    }
+    for ( let track of puzzle.tracks )
+      initTrackNameProp(track);
+
+    puzzle.on("added", SphElem, event => {
+      this.initElemNameProp(event.target);
+      this.initColorProp(event.target);
+      for ( let seg of event.target.boundaries )
+        this.initSegNameProp(seg);
+    });
+    puzzle.on("added", SphTrack, event => {
+      initTrackNameProp(event.target);
+    });
+    puzzle.on("modified", SphElem, event => {
+      for ( let seg of event.target.boundaries )
+        initSegNameProp(seg);
+    });
   }
 
   // 3D view
+  initView(puzzle) {
+    puzzle.view = this;
+    for ( let element of puzzle.elements )
+      this.drawElement(element);
+
+    puzzle.on("added", SphElem, event => this.drawElement(event.target));
+    puzzle.on("removed", SphElem, event => this.eraseElement(event.target));
+    puzzle.on("modified", SphElem, event => {
+      this.eraseElement(event.target);
+      this.drawElement(event.target);
+    });
+    puzzle.on("rotated", SphElem, event => {
+      for ( let obj of event.target.view.children )
+        obj.quaternion.set(...obj.userData.origin.orientation);
+    });
+    puzzle.on("recolored", SphElem, event => {
+      for ( let obj of event.target.view.children )
+        for ( let sub of obj.children )
+          sub.material.color.set(event.target.color);
+    });
+  }
   buildSegView(seg, color, dq=0.01) {
     // make arc
     {
@@ -936,15 +909,17 @@ class SphPuzzleView
     var obj = new THREE.Object3D();
     obj.add(arc, dash, ang, holder);
     obj.quaternion.set(...seg.orientation);
-    obj.userData.origin = seg;
 
     return obj;
   }
   drawElement(element) {
     element.view = new THREE.Object3D();
+    element.view.userData.origin = element;
+
     for ( let seg of element.boundaries ) {
       let obj = this.buildSegView(seg, element.color);
       seg.view = obj;
+      obj.userData.origin = seg;
 
       let holder = obj.children[3];
       holder.userData.hoverable = true;
@@ -955,98 +930,96 @@ class SphPuzzleView
       element.view.add(obj);
     }
     this.display.add(element.view, this.root);
+    this.trigger("drawn", element.view);
+  }
+  eraseElement(element) {
+    this.display.remove(element.view, this.root);
+    delete element.view;
+    for ( let seg of element.boundaries )
+      delete seg.view;
+    this.trigger("erased", element.view);
   }
 
-  segsOf(target) {
+  // hover/select feedback
+  objsOf(target) {
     if ( target instanceof SphSeg ) {
-      return [target];
+      return target.view ? [target.view] : [];
 
     } else if ( target instanceof SphElem ) {
-      return Array.from(target.boundaries);
+      return Array.from(target.boundaries)
+                  .map(seg => seg.view).filter(view => view);
 
     } else if ( target instanceof SphTrack ) {
-      return [...target.inner, ...target.outer];
+      return [...target.inner, ...target.outer]
+                  .map(seg => seg.view).filter(view => view);
 
-    } else if ( target instanceof SphState ) {
-      return Array.from(target.model.items(target.segments)).map(a => a[1]);
+    } else if ( target instanceof SphKnot ) {
+      return Array.from(target.model.items(target.segments))
+                  .map(a => a[1].view).filter(view => view);
 
     } else if ( target instanceof SphJoint ) {
       return Array.from(target.ports.keys())
-                  .map(state => state.get(state.indexOf(target)))
-                  .flatMap(seg => Array.from(this.puzzle.analyzer.walk(seg)));
+                  .map(knot => knot.get(knot.indexOf(target)))
+                  .flatMap(seg => Array.from(this.puzzle.analyzer.walk(seg)))
+                  .map(seg => seg.view).filter(view => view);
 
     } else {
       return [];
     }
   }
-  emphasize(seg) {
-    if ( seg.view ) {
-      seg.view.children[0].material.linewidth = 2;
-      seg.view.children[1].material.linewidth = 2;
-      return true;
-    }
+  emphasize(obj) {
+    obj.children[0].material.linewidth = 2;
+    obj.children[1].material.linewidth = 2;
   }
-  unemphasize(seg) {
-    if ( seg.view ) {
-      seg.view.children[0].material.linewidth = 1;
-      seg.view.children[1].material.linewidth = 1;
-      return true;
-    }
+  unemphasize(obj) {
+    obj.children[0].material.linewidth = 1;
+    obj.children[1].material.linewidth = 1;
   }
-  highlight(seg) {
-    if ( seg.view ) {
-      seg.view.children[3].material.opacity = 0.3;
-      return true;
-    }
+  highlight(obj) {
+    obj.children[3].material.opacity = 0.3;
   }
-  unhighlight(seg) {
-    if ( seg.view ) {
-      seg.view.children[3].material.opacity = 0;
-      return true;
-    }
+  unhighlight(obj) {
+    obj.children[3].material.opacity = 0;
   }
   *hoverRoutine() {
     var preselection = undefined;
-    var selections = [];
+    var selected_objs = [];
     while ( true ) {
       yield;
 
       // emphasize hovered object
-      if ( this.refresh || this.selector.preselection !== preselection ) {
-        for ( let seg of this.segsOf(preselection) ) if ( seg )
-          this.unemphasize(seg);
-        for ( let seg of this.segsOf(this.selector.preselection) ) if ( seg )
-          this.emphasize(seg);
+      if ( this.selector.preselection !== preselection ) {
+        for ( let obj of this.objsOf(preselection) )
+          this.unemphasize(obj);
+        for ( let obj of this.objsOf(this.selector.preselection) )
+          this.emphasize(obj);
         preselection = this.selector.preselection;
       }
 
       // highlight selected objects
-      let new_selections = this.selector.selections
-        .flatMap(sel => this.segsOf(sel));
+      let new_selected_objs = this.selector.selections
+        .flatMap(sel => this.objsOf(sel));
 
-      for ( let sel of selections )
-        if ( this.refresh || !new_selections.includes(sel) )
-          this.unhighlight(sel);
-      for ( let sel of new_selections )
-        if ( this.refresh || !selections.includes(sel) )
-          this.highlight(sel);
+      for ( let obj of selected_objs )
+        if ( !new_selected_objs.includes(obj) )
+          this.unhighlight(obj);
+      for ( let obj of new_selected_objs )
+        if ( !selected_objs.includes(obj) )
+          this.highlight(obj);
 
-      selections = new_selections;
-      this.refresh = false;
+      selected_objs = new_selected_objs;
     }
   }
 
   // prop view
   link(target, sel_mode, name=target.name) {
-    if ( !(target instanceof SphPuzzle) && !(target instanceof SphElem)
+    if ( !(target instanceof SphElem)
          && !(target instanceof SphSeg) && !(target instanceof SphTrack) )
       return;
 
     var property = {type: "button", name: name};
-    if ( !(target instanceof SphPuzzle) ) {
-      property.mouseenter = () => this.selector.preselection = target;
-      property.mouseleave = () => this.selector.preselection = undefined;
-    }
+    property.mouseenter = () => this.selector.preselection = target;
+    property.mouseleave = () => this.selector.preselection = undefined;
 
     if ( sel_mode == "replace" )
       property.callback = () => this.selector.replace(target);
@@ -1058,9 +1031,7 @@ class SphPuzzleView
     return property;
   }
   prop(target, sel_mode) {
-    if ( target instanceof SphPuzzle )
-      return this.makePuzzleProperties(target, sel_mode);
-    else if ( target instanceof SphElem )
+    if ( target instanceof SphElem )
       return this.makeElemProperties(target, sel_mode);
     else if ( target instanceof SphSeg )
       return this.makeSegProperties(target, sel_mode);
@@ -1073,7 +1044,7 @@ class SphPuzzleView
       type: "color",
       name: "color",
       get: () => elem.color,
-      set: color => this.setColor(elem, color)
+      set: color => elem.color=color
     });
 
     var boundaries = [];
@@ -1090,7 +1061,7 @@ class SphPuzzleView
       type: "color",
       name: "color",
       get: () => seg.affiliation.color,
-      set: color => this.setColor(seg.affiliation, color)
+      set: color => seg.affiliation.color=color
     });
     detail.push({type: "number", min: 0, max: 4, name: "arc", get: () => seg.arc});
     detail.push({type: "number", min: 0, max: 2, name: "radius", get: () => seg.radius});
@@ -1135,89 +1106,45 @@ class SphPuzzleView
   }
 }
 
-class SphNetworkView
+class SphNetworkView extends Listenable
 {
-  constructor(diagram, network, selector) {
-    this.diagram = diagram;
+  constructor(graph, network, selector) {
+    super();
+
+    this.graph = graph;
     this.network = network;
     this.selector = selector;
 
-    {
-      for ( let state of network.states )
-        this.drawState(state);
-      for ( let joint of network.joints ) {
-        this.drawJoint(joint);
-        for ( let state of joint.ports.keys() )
-          this.drawFusion(joint, state);
-      }
-      var bandages = network.joints.map(j => j.bandage).filter(b => b.size > 1);
-      for ( let bandage of new Set(bandages) ) {
-        let joint0 = bandage.values().next().value;
-        let id = this.diagram.nodes.get(joint0);
-        for ( let joint of bandage )
-          this.diagram.updateNodeOptions(joint, {bandage:id});
-      }
-      
-      network.on("added", Object, event => {
-        if ( this.outdated )
-          return;
-        if ( event.target instanceof SphState )
-          this.drawState(event.target);
-        else if ( event.target instanceof SphJoint )
-          this.drawJoint(event.target);
-      });
-      network.on("removed", Object, event => {
-        if ( this.outdated )
-          return;
-        this.eraseNode(event.target);
-      });
-      network.on("fused", SphJoint, event => {
-        if ( this.outdated )
-          return;
-        this.drawFusion(event.target, event.state);
-      });
-      network.on("unfused", SphJoint, event => {
-        if ( this.outdated )
-          return;
-        this.eraseFusion(event.target, event.state);
-      });
-      network.on("binded", SphJoint, event => {
-        if ( this.outdated )
-          return;
-        var id = this.diagram.nodes.get(event.target);
-        for ( let joint of event.bandage )
-          this.diagram.updateNodeOptions(joint, {bandage:id});
-      });
-      network.on("unbinded", SphJoint, event => {
-        if ( this.outdated )
-          return;
-        this.diagram.updateNodeOptions(event.target, {bandage:undefined});
-      });
-    }
+    this.initProp(network);
+    this.initView(network);
 
-    this.diagram.view.on("click", event => {
-      if ( network.outdated )
+    this.graph.view.on("click", event => {
+      if ( network.status == "outdated" )
         return;
+
+      var target = event.target && event.target.origin;
       if ( event.event.srcEvent.ctrlKey ) {
-        if ( event.target instanceof SphState || event.target instanceof SphJoint )
-          this.selector.toggle(event.target);
+        if ( target instanceof SphKnot || target instanceof SphJoint )
+          this.selector.toggle(target);
       } else {
-        if ( event.target instanceof SphState || event.target instanceof SphJoint )
-          this.selector.select(event.target);
+        if ( target instanceof SphKnot || target instanceof SphJoint )
+          this.selector.select(target);
         else
           this.selector.reselect();
       }
     });
-    this.diagram.view.on("hoverNode", event => {
-      if ( network.outdated )
+    this.graph.view.on("hoverNode", event => {
+      if ( network.status == "outdated" )
         return;
-      if ( event.target instanceof SphState || event.target instanceof SphJoint )
-        this.selector.preselection = event.target;
+
+      var target = event.target && event.target.origin;
+      if ( target instanceof SphKnot || target instanceof SphJoint )
+        this.selector.preselection = target;
       else
         this.selector.preselection = undefined;
     });
-    this.diagram.view.on("blurNode", event => {
-      if ( network.outdated )
+    this.graph.view.on("blurNode", event => {
+      if ( network.status == "outdated" )
         return;
       this.selector.preselection = undefined;
     });
@@ -1227,93 +1154,203 @@ class SphNetworkView
     requestAnimationFrame(routine);
   }
 
+  // additional properties
+  initProp(network) {
+    var knot_id = (function *numbers() {
+      var i = 0; while ( true ) yield `SphKnot${i++}`;
+    })();
+    var joint_id = (function *numbers() {
+      var i = 0; while ( true ) yield `SphJoint${i++}`;
+    })();
+
+    function initKnotNameProp(knot) {
+      knot._name = knot._name || knot_id.next().value;
+      Object.defineProperty(knot, "name", {
+        enumerable: true,
+        configurable: true,
+        get: function() { return this._name; },
+        set: function(val) { this._name = val; this.host.trigger("renamed", this); }
+      });
+    }
+    function initJointNameProp(joint) {
+      joint._name = joint._name || joint_id.next().value;
+      Object.defineProperty(joint, "name", {
+        enumerable: true,
+        configurable: true,
+        get: function() { return this._name; },
+        set: function(val) { this._name = val; this.host.trigger("renamed", this); }
+      });
+    }
+
+    network.name = network.name || "SphNetwork";
+    for ( let knot of network.knots )
+      initKnotNameProp(knot);
+    for ( let joint of network.joints )
+      initJointNameProp(joint);
+
+    network.on("added", SphKnot, event => initKnotNameProp(event.target));
+    network.on("added", SphJoint, event => initJointNameProp(event.target));
+  }
+
   // network view
-  drawState(state) {
-    this.diagram.addNode(state, {size:20, shape:"diamond"});
-    state.name = state.name || `state${this.diagram.nodes.get(state)}`;
+  initView(network) {
+    for ( let knot of network.knots )
+      this.drawKnot(knot);
+    for ( let joint of network.joints )
+      this.drawJoint(joint);
+    var bandages = network.joints.map(j => j.bandage).filter(b => b.size > 1);
+    for ( let bandage of new Set(bandages) )
+      this.groupJoints(bandage);
+    
+    network.on("statuschanged", SphNetwork, event => {
+      if ( this.network.status == "outdated" )
+        this.graph.disable();
+      else if ( this.network.status == "up-to-date" )
+        this.graph.enable();
+    });
+    network.on("added", SphKnot, event => {
+      if ( this.network.status == "outdated" )
+        return;
+      this.drawKnot(event.target);
+    });
+    network.on("added", SphJoint, event => {
+      if ( this.network.status == "outdated" )
+        return;
+      this.drawJoint(event.target);
+    });
+    network.on("removed", Object, event => {
+      if ( this.network.status == "outdated" )
+        return;
+      this.eraseNode(event.target);
+    });
+    network.on("modified", SphJoint, event => {
+      if ( this.network.status == "outdated" )
+        return;
+      var option = this.graph.getNode(event.target.node_id);
+      this.eraseNode(event.target);
+      this.drawJoint(event.target);
+      this.graph.updateNode(event.target.node_id, option);
+    });
+    network.on("binded", SphJoint, event => {
+      if ( this.network.status == "outdated" )
+        return;
+      this.groupJoints(event.bandage);
+    });
+    network.on("unbinded", SphJoint, event => {
+      if ( this.network.status == "outdated" )
+        return;
+      this.ungroupJoint(event.target);
+    });
+  }
+  drawKnot(knot) {
+    knot.node_id = this.graph.addNode({size:20, shape:"diamond", origin:knot});
+    this.trigger("nodedrawn", this.graph.getNode(knot.node_id));
   }
   drawJoint(joint) {
-    this.diagram.addNode(joint, {size:5, shape:"dot"});
-    joint.name = joint.name || `joint${this.diagram.nodes.get(joint)}`;
+    joint.node_id = this.graph.addNode({size:5, shape:"dot", origin:joint});
+    this.trigger("nodedrawn", this.graph.getNode(joint.node_id));
+
+    for ( let [knot] of joint.ports ) {
+      let edge_id = this.graph.addEdge(joint.node_id, knot.node_id);
+      this.trigger("edgedrawn", this.graph.getEdge(edge_id));
+    }
+  }
+  groupJoints(bandage) {
+    var joint0 = bandage.values().next().value;
+    for ( let joint of bandage )
+      this.graph.updateNode(joint.node_id, {bandage:joint0.node_id});
+  }
+  ungroupJoint(joint) {
+    this.graph.updateNode(joint.node_id, {bandage:undefined});
   }
   eraseNode(target) {
-    this.diagram.removeNode(target);
-  }
-  drawFusion(target1, target2) {
-    this.diagram.addEdge(target1, target2);
-  }
-  eraseFusion(target1, target2) {
-    var key = this.diagram.edgesBetween(target1, target2).next().value;
-    if ( key === undefined )
-      return;
-    this.diagram.removeEdge(key);
+    var node = this.graph.getNode(target.node_id);
+    this.graph.removeNode(target.node_id);
+    delete target.node_id;
+    this.trigger("nodeerased", node);
   }
 
-  nodeOf(target) {
-    if ( target instanceof SphState ) {
-      return target;
+  // hover/select feedback
+  nodeidOf(target) {
+    if ( target instanceof SphKnot ) {
+      return target.node_id;
 
     } else if ( target instanceof SphJoint ) {
-      return target;
+      return target.node_id;
 
     } else if ( target instanceof SphElem ) {
       for ( let joint of this.network.joints )
-        for ( let state of joint.ports.keys() )
-          if ( state.get(state.indexOf(joint)).affiliation === target )
-            return joint;
-      for ( let state of this.network.states )
-        for ( let seg of state.segments.flat(2) )
+        for ( let knot of joint.ports.keys() )
+          if ( knot.get(knot.indexOf(joint)).affiliation === target )
+            return joint.node_id;
+      for ( let knot of this.network.knots )
+        for ( let seg of knot.segments.flat() )
           if ( seg.affiliation === target )
-            return state;
+            return knot.node_id;
 
     } else if ( target instanceof SphSeg ) {
-      for ( let state of this.network.states )
-        if ( state.indexOf(target) )
-          return state;
+      for ( let knot of this.network.knots )
+        if ( knot.indexOf(target) )
+          return knot.node_id;
 
     } else if ( target instanceof SphTrack ) {
-      for ( let state of this.network.states )
-        if ( state.indexOf(target.inner[0]) )
-          return state;
+      for ( let knot of this.network.knots )
+        if ( knot.indexOf(target.inner[0]) )
+          return knot.node_id;
     }
+  }
+  emphasize(id) {
+    this.graph.updateNode(id, {color:{background:"#D2E5FF"}});
+  }
+  unemphasize(id) {
+    this.graph.updateNode(id, {color:{background:"#97C2FC"}});
+  }
+  highlight(id) {
+    this.graph.updateNode(id, {borderWidth:2});
+  }
+  unhighlight(id) {
+    this.graph.updateNode(id, {borderWidth:1});
   }
   *update() {
     var preselection = undefined;
-    var selections = [];
+    var selected_ids = [];
     while ( true ) {
       yield;
 
-      if ( this.network.outdated )
+      if ( this.network.status == "outdated" ) {
+        preselection = undefined;
+        selected_ids = [];
         continue;
+      }
 
       // emphasize hovered object
       if ( this.selector.preselection !== preselection ) {
-        let node;
-        if ( node = this.nodeOf(preselection) )
-          this.diagram.unemphasizeNode(node);
-        if ( node = this.nodeOf(this.selector.preselection) )
-          this.diagram.emphasizeNode(node);
+        let id;
+        if ( id = this.nodeidOf(preselection) )
+          this.unemphasize(id);
+        if ( id = this.nodeidOf(this.selector.preselection) )
+          this.emphasize(id);
         preselection = this.selector.preselection;
       }
 
       // highlight selected objects
-      var new_selections = this.selector.selections
-        .map(sel => this.nodeOf(sel)).filter(sel => sel);
+      var new_selected_ids = this.selector.selections
+        .map(sel => this.nodeidOf(sel)).filter(id => id !== undefined);
 
-      for ( let sel of selections )
-        if ( !new_selections.includes(sel) )
-          this.diagram.unhighlightNode(sel);
-      for ( let sel of new_selections )
-        if ( !selections.includes(sel) )
-          this.diagram.highlightNode(sel);
+      for ( let id of selected_ids )
+        if ( !new_selected_ids.includes(id) )
+          this.unhighlight(id);
+      for ( let id of new_selected_ids )
+        if ( !selected_ids.includes(id) )
+          this.highlight(id);
 
-      selections = new_selections;
+      selected_ids = new_selected_ids;
     }
   }
 
   // prop view
   link(target, sel_mode, name=target.name) {
-    if ( !(target instanceof SphState) && !(target instanceof SphJoint) )
+    if ( !(target instanceof SphKnot) && !(target instanceof SphJoint) )
       return;
 
     var property = {type: "button", name: name};
@@ -1330,16 +1367,16 @@ class SphNetworkView
     return property;
   }
   prop(target) {
-    if ( target instanceof SphState )
-      return this.makeStateProperties(target);
+    if ( target instanceof SphKnot )
+      return this.makeKnotProperties(target);
     else if ( target instanceof SphJoint )
       return this.makeJointProperties(target);
   }
-  makeStateProperties(state, sel_mode) {
+  makeKnotProperties(knot, sel_mode) {
     var detail = [];
 
     var joints = [];
-    for ( let [index, joint] of state.model.items(state.joints) )
+    for ( let [index, joint] of knot.model.items(knot.joints) )
       joints.push(this.link(joint, sel_mode, `${index} → ${joint.name}`));
     detail.push({type:"folder", name:"joints", open:"true", properties:joints});
 
@@ -1349,8 +1386,8 @@ class SphNetworkView
     var detail = [];
 
     var ports = [];
-    for ( let [state, orientation] of joint.ports )
-      ports.push(this.link(state, sel_mode, `${state.name} → (${orientation})`));
+    for ( let [knot, orientation] of joint.ports )
+      ports.push(this.link(knot, sel_mode, `${knot.name} → (${orientation})`));
     detail.push({type:"folder", name:"ports", open:true, properties:ports});
 
     var bandage = [];
@@ -1362,14 +1399,19 @@ class SphNetworkView
   }
 }
 
-class SphConfigView
+class SphStateView
 {
   constructor(container_id, network, selector) {
-    this.container = document.getElementById(container_id);
     this.network = network;
     this.selector = selector;
 
     document.body.appendChild(css`
+      .outdated * {
+        color: gray;
+      }
+      .modified .state-name::after {
+        content: "*";
+      }
       .emphasized {
         font-weight: bold;
       }
@@ -1398,58 +1440,76 @@ class SphConfigView
         opacity: 0.3;
       }
     `);
-
+    this.container = document.getElementById(container_id);
     this.current_tab = undefined;
-    for ( let state of network.states )
-      this.drawTab(state);
-    network.on("added", SphState, event => this.drawTab(event.target));
-    network.on("removed", SphState, event => this.eraseTab(event.target));
-    selector.on("add", SphState, event => this.showTab(event.target));
+    this.initView(network);
 
     var updater = this.update();
     var routine = () => (requestAnimationFrame(routine), updater.next());
     requestAnimationFrame(routine);
   }
 
-  makeParamTable(state) {
+  // tab view
+  initView(network) {
+    for ( let knot of network.knots )
+      this.drawTab(knot);
+    network.on("added", SphKnot, event => this.drawTab(event.target));
+    network.on("removed", SphKnot, event => this.eraseTab(event.target));
+    this.selector.on("add", SphKnot, event => this.showTab(event.target));
+    network.on("statuschanged", SphNetwork, event => {
+      if ( event.target.status == "outdated" )
+        this.container.classList.add("outdated");
+      else if ( event.target.status == "up-to-date" )
+        this.container.classList.remove("outdated");
+    });
+    network.on("statuschanged", SphKnot, event => {
+      if ( event.target.status == "outdated" )
+        this.container.classList.add("modified");
+      else if ( event.target.status == "up-to-date" )
+        this.container.classList.remove("modified");
+    });
+  }
+  makeParamTable(knot) {
     var res = [];
+    var network = this.network;
 
-    for ( let i=0; i<state.model.shapes.length; i++ ) {
+    for ( let i=0; i<knot.model.shapes.length; i++ ) {
       let list = document.createElement("div");
       list.classList.add("list");
 
-      const L = state.model.shapes[i].patch.length;
-      for ( let j=0; j<state.model.shapes[i].count; j++ ) {
+      const L = knot.model.shapes[i].patch.length;
+      for ( let j=0; j<knot.model.shapes[i].count; j++ ) {
         let item = document.createElement("div");
         item.classList.add("item");
         item.draggable = true;
-        item.host = state.segments[i][j];
-        item.textContent = state.segments[i][j].name;
+        item.origin = knot.segments[i][j];
+        item.textContent = knot.segments[i][j].name;
 
         item.addEventListener("wheel", function(event) {
-          if ( this.parentNode.getAttribute("disabled") )
+          if ( network.status == "outdated" )
             return;
           if ( event.deltaY == 0 )
             return;
           var list = Array.from(this.parentNode.children);
           var j = list.indexOf(this);
-          console.assert(this.host === state.segments[i][j]);
+          console.assert(this.origin === knot.segments[i][j]);
 
           if ( event.deltaY > 0 ) {
             for ( let l=0; l<L; l++ )
-              state.segments[i][j] = state.segments[i][j].next;
+              knot.segments[i][j] = knot.segments[i][j].next;
           } else {
             for ( let l=0; l<L; l++ )
-              state.segments[i][j] = state.segments[i][j].prev;
+              knot.segments[i][j] = knot.segments[i][j].prev;
           }
+          knot.host.setStatus("outdated", knot);
 
-          this.host = state.segments[i][j];
-          this.textContent = this.host.name;
+          this.origin = knot.segments[i][j];
+          this.textContent = this.origin.name;
           event.preventDefault();
         });
 
         item.addEventListener("dragstart", function(event) {
-          if ( this.parentNode.getAttribute("disabled") )
+          if ( network.status == "outdated" )
             return;
           event.dataTransfer.setData("Text", "");
           event.dataTransfer.dropEffect = "move";
@@ -1474,25 +1534,32 @@ class SphConfigView
           var list = Array.from(this.parentNode.children);
           var j = list.indexOf(this);
           var j0 = list.indexOf(target);
-          console.assert(this.host === state.segments[i][j]);
-          console.assert(target.host === state.segments[i][j0]);
+          console.assert(this.origin === knot.segments[i][j]);
+          console.assert(target.origin === knot.segments[i][j0]);
 
           if ( j < j0 ) {
             this.parentNode.insertBefore(target, this);
-            state.segments[i].splice(j, 0, ...state.segments[i].splice(j0, 1));
+            knot.segments[i].splice(j, 0, ...knot.segments[i].splice(j0, 1));
           } else if ( this.nextElementSibling ) {
             this.parentNode.insertBefore(target, this.nextElementSibling);
-            state.segments[i].splice(j, 0, ...state.segments[i].splice(j0, 1));
+            knot.segments[i].splice(j, 0, ...knot.segments[i].splice(j0, 1));
           } else {
             this.parentNode.appendChild(target);
-            state.segments[i].push(...state.segments[i].splice(j0, 1));
+            knot.segments[i].push(...knot.segments[i].splice(j0, 1));
           }
+          knot.host.setStatus("outdated", knot);
         });
 
-        item.addEventListener("mouseenter", event => this.selector.preselection=this.jointsOf(event.target.host)[0]);
+        item.addEventListener("mouseenter", event => {
+          if ( this.network.status == "outdated" )
+            return;
+          this.selector.preselection = this.jointsOf(event.target.origin)[0];
+        });
         item.addEventListener("mouseleave", () => this.selector.preselection=undefined);
         item.addEventListener("click", event => {
-          var target = this.jointsOf(event.target.host)[0];
+          if ( this.network.status == "outdated" )
+            return;
+          var target = this.jointsOf(event.target.origin)[0];
 
           if ( event.ctrlKey ) {
             if ( target )
@@ -1512,44 +1579,49 @@ class SphConfigView
     }
     return res;
   }
-  drawTab(state) {
+  drawTab(knot) {
     var tab = document.createElement("div");
     tab.style.setProperty("display", "none");
-    tab.classList.add("config-tab");
+    tab.classList.add("state-tab");
 
-    for ( let list of this.makeParamTable(state) )
+    var title = document.createElement("h3");
+    title.classList.add("state-name");
+    title.textContent = knot.name;
+    tab.appendChild(title);
+
+    for ( let list of this.makeParamTable(knot) )
       tab.appendChild(list);
-    state.tab = tab;
-    tab.host = state;
+    knot.tab = tab;
+    tab.origin = knot;
     this.container.appendChild(tab);
 
-    this.showTab(state);
+    this.showTab(knot);
   }
-  eraseTab(state) {
-    this.container.removeChild(state.tab);
-    if ( this.current_tab === state.tab )
+  eraseTab(knot) {
+    this.container.removeChild(knot.tab);
+    if ( this.current_tab === knot.tab )
       delete this.current_tab;
   }
-  showTab(state) {
+  showTab(knot) {
     if ( this.current_tab )
       this.current_tab.style.setProperty("display", "none");
-    state.tab.style.setProperty("display", "block");
-    this.current_tab = state.tab;
+    knot.tab.style.setProperty("display", "block");
+    this.current_tab = knot.tab;
   }
 
   jointsOf(target) {
     if ( target instanceof SphSeg ) {
       let index, joint;
-      for ( let state of this.network.states )
-        if ( index = state.indexOf(target) )
-          return (joint = state.jointAt(index)) ? [joint] : [target.affiliation];
+      for ( let knot of this.network.knots )
+        if ( index = knot.indexOf(target) )
+          return (joint = knot.jointAt(index)) ? [joint] : [target.affiliation];
       console.assert(false);
 
     } else if ( target instanceof SphElem ) {
       let index, joint;
-      for ( let state of this.network.states )
-        if ( index = state.indexOf(target) )
-          return (joint = state.jointAt(index)) ? Array.from(joint.bandage) : [target];
+      for ( let knot of this.network.knots )
+        if ( index = knot.indexOf(target) )
+          return (joint = knot.jointAt(index)) ? Array.from(joint.bandage) : [target];
       console.assert(false);
 
     } else if ( target instanceof SphJoint ) {
@@ -1561,9 +1633,9 @@ class SphConfigView
   }
   emphasize(joint) {
     var index;
-    for ( let state of this.network.states )
-      if ( index = state.indexOf(joint) ) {
-        let table = state.tab.querySelectorAll("div.list");
+    for ( let knot of this.network.knots )
+      if ( index = knot.indexOf(joint) ) {
+        let table = knot.tab.querySelectorAll("div.list");
         let elem = table[index[0]].children[index[1]];
 
         elem.classList.add("emphasized");
@@ -1571,9 +1643,9 @@ class SphConfigView
   }
   unemphasize(joint) {
     var index;
-    for ( let state of this.network.states )
-      if ( index = state.indexOf(joint) ) {
-        let table = state.tab.querySelectorAll("div.list");
+    for ( let knot of this.network.knots )
+      if ( index = knot.indexOf(joint) ) {
+        let table = knot.tab.querySelectorAll("div.list");
         let elem = table[index[0]].children[index[1]];
 
         elem.classList.remove("emphasized");
@@ -1581,9 +1653,9 @@ class SphConfigView
   }
   highlight(joint) {
     var index;
-    for ( let state of this.network.states )
-      if ( index = state.indexOf(joint) ) {
-        let table = state.tab.querySelectorAll("div.list");
+    for ( let knot of this.network.knots )
+      if ( index = knot.indexOf(joint) ) {
+        let table = knot.tab.querySelectorAll("div.list");
         let elem = table[index[0]].children[index[1]];
 
         elem.classList.add("highlighted");
@@ -1591,22 +1663,21 @@ class SphConfigView
   }
   unhighlight(joint) {
     var index;
-    for ( let state of this.network.states )
-      if ( index = state.indexOf(joint) ) {
-        let table = state.tab.querySelectorAll("div.list");
+    for ( let knot of this.network.knots )
+      if ( index = knot.indexOf(joint) ) {
+        let table = knot.tab.querySelectorAll("div.list");
         let elem = table[index[0]].children[index[1]];
 
         elem.classList.remove("highlighted");
       }
   }
-
   *update() {
     var preselection = undefined;
     var selections = [];
     while ( true ) {
       yield;
 
-      if ( this.network.outdated )
+      if ( this.network.status == "outdated" )
         continue;
 
       // emphasize hovered object
@@ -1683,33 +1754,33 @@ class SphNetworkTreeViewPanel
     this.network = network;
     this.prop_builder = prop_builder;
 
-    this.states = this.panel.ctrls[this.panel.addFolder("states")];
+    this.knots = this.panel.ctrls[this.panel.addFolder("knots")];
     this.joints = this.panel.ctrls[this.panel.addFolder("joints")];
 
     this.data = new Map();
 
-    for ( let state of this.network.states )
-      this.addState(state);
+    for ( let knot of this.network.knots )
+      this.addKnot(knot);
     for ( let joint of this.network.joints )
       this.addJoint(joint);
 
-    this.network.on("added", SphState, event => this.addState(event.target));
+    this.network.on("added", SphKnot, event => this.addKnot(event.target));
     this.network.on("added", SphJoint, event => this.addJoint(event.target));
-    this.network.on("removed", SphState, event => this.removeState(event.target));
+    this.network.on("removed", SphKnot, event => this.removeKnot(event.target));
     this.network.on("removed", SphJoint, event => this.removeJoint(event.target));
   }
 
-  addState(state) {
-    var id = this.states.add(this.prop_builder.link(state, "select"));
-    this.data.set(state, id);
+  addKnot(knot) {
+    var id = this.knots.add(this.prop_builder.link(knot, "select"));
+    this.data.set(knot, id);
   }
   addJoint(joint) {
     var id = this.joints.add(this.prop_builder.link(joint, "select"));
     this.data.set(joint, id);
   }
-  removeState(state) {
-    var id = this.data.get(state);
-    this.states.remove(id);
+  removeKnot(knot) {
+    var id = this.data.get(knot);
+    this.knots.remove(id);
   }
   removeJoint(joint) {
     var id = this.data.get(joint);
@@ -1829,14 +1900,14 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
 
   mergeCmd(selector) {
     if ( selector.selections.length == 1 ) {
-      let state = selector.selections[0];
-      if ( !(state instanceof SphState) ) {
-        window.alert("Not state!");
+      let knot = selector.selections[0];
+      if ( !(knot instanceof SphKnot) ) {
+        window.alert("Not knot!");
         return;
       }
 
       this.selector.reselect();
-      this.puzzle.trim(state);
+      this.puzzle.trim(knot);
 
     } else if ( selector.selections.length == 2 ) {
       var [seg1, seg2] = selector.selections;
@@ -1871,7 +1942,7 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
       }
 
     } else {
-      window.alert("Please select two segments or one state!");
+      window.alert("Please select two segments or one knot!");
 
     }
 
@@ -2068,7 +2139,7 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
 
 class SphPuzzleWorld
 {
-  constructor(puzzle, id_display, id_network, id_config) {
+  constructor(puzzle, id_display, id_network, id_state) {
     this.puzzle = puzzle;
     this.selector = new Selector();
 
@@ -2079,10 +2150,10 @@ class SphPuzzleWorld
     this.view = new SphPuzzleView(display, this.puzzle, this.selector);
 
     // network view
-    var diagram = new Diagram(id_network);
-    this.diag = new SphNetworkView(diagram, this.puzzle.network, this.selector);
+    var graph = new Graph(id_network);
+    this.diag = new SphNetworkView(graph, this.puzzle.network, this.selector);
 
-    this.conf = new SphConfigView(id_config, this.puzzle.network, this.selector);
+    this.conf = new SphStateView(id_state, this.puzzle.network, this.selector);
 
     // panel
     this.panel = new Panel();

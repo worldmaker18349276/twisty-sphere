@@ -15,7 +15,7 @@
 <div id="display" style="display:inline-block;width:600px;height:600px;"></div>
 <div style="display:inline-block;width:400px;height:600px;border:solid 1px grey;">
   <div id="network" style="width:400px;height:300px;border:solid 1px grey;"></div>
-  <div id="config" style="width:400px;height:300px;border:solid 1px grey;overflow:scroll;position:relative;z-index:0;"></div>
+  <div id="state" style="width:400px;height:300px;border:solid 1px grey;overflow:scroll;position:relative;z-index:0;"></div>
 </div>
 <script>
 
@@ -35,7 +35,7 @@ puzzle.slice([-s2, s2,  0], 1/2);
 puzzle.slice([ s2,-s2,  0], 1/2);
 puzzle.slice([-s2,-s2,  0], 1/2);
 
-var world = new SphPuzzleWorld(puzzle, "display", "network");
+var world = new SphPuzzleWorld(puzzle, "display", "network", "state");
 </script>
 </body>
 </html>
