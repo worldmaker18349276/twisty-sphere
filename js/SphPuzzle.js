@@ -16,6 +16,10 @@ function css(strings, ...vars) {
   style.innerHTML = str(strings, ...vars);
   return style;
 }
+function animate(routine) {
+  var wrapped = () => (requestAnimationFrame(wrapped), routine.next());
+  requestAnimationFrame(wrapped);
+}
 
 
 class Display
@@ -680,10 +684,7 @@ class SphPuzzleView extends Listenable
     super();
 
     this.display = display;
-    this.puzzle = puzzle;
     this.selector = selector;
-
-    this.initProp(puzzle);
 
     this.selectOn = "segment";
     this.hover_handler = event => {
@@ -723,6 +724,7 @@ class SphPuzzleView extends Listenable
       this.display.add(this.ball, this.root);
     }
 
+    this.initProp(puzzle);
     this.initView(puzzle);
 
     this.display.animate(this.hoverRoutine());
@@ -814,13 +816,15 @@ class SphPuzzleView extends Listenable
     });
     puzzle.on("modified", SphElem, event => {
       for ( let seg of event.target.boundaries )
-        initSegNameProp(seg);
+        if ( !seg.name )
+          initSegNameProp(seg);
     });
   }
 
   // 3D view
   initView(puzzle) {
     puzzle.view = this;
+    this.origin = puzzle;
     for ( let element of puzzle.elements )
       this.drawElement(element);
 
@@ -831,12 +835,12 @@ class SphPuzzleView extends Listenable
       this.drawElement(event.target);
     });
     puzzle.on("rotated", SphElem, event => {
-      for ( let obj of event.target.view.children )
-        obj.quaternion.set(...obj.userData.origin.orientation);
+      for ( let seg of event.target.boundaries )
+        seg.view.quaternion.set(...seg.orientation);
     });
     puzzle.on("recolored", SphElem, event => {
-      for ( let obj of event.target.view.children )
-        for ( let sub of obj.children )
+      for ( let seg of event.target.boundaries )
+        for ( let sub of seg.view.children )
           sub.material.color.set(event.target.color);
     });
   }
@@ -904,6 +908,11 @@ class SphPuzzleView extends Listenable
                                              depthWrite:false});
       var holder = new THREE.Mesh(geo, mat);
       holder.name = "holder";
+
+      holder.userData.hoverable = true;
+      holder.addEventListener("mouseenter", this.hover_handler);
+      holder.addEventListener("mouseleave", this.hover_handler);
+      holder.addEventListener("click", this.select_handler);
     }
 
     var obj = new THREE.Object3D();
@@ -913,30 +922,22 @@ class SphPuzzleView extends Listenable
     return obj;
   }
   drawElement(element) {
-    element.view = new THREE.Object3D();
-    element.view.userData.origin = element;
-
+    var obj = new THREE.Object3D();
     for ( let seg of element.boundaries ) {
-      let obj = this.buildSegView(seg, element.color);
-      seg.view = obj;
-      obj.userData.origin = seg;
-
-      let holder = obj.children[3];
-      holder.userData.hoverable = true;
-      holder.addEventListener("mouseenter", this.hover_handler);
-      holder.addEventListener("mouseleave", this.hover_handler);
-      holder.addEventListener("click", this.select_handler);
-
-      element.view.add(obj);
+      let subobj = this.buildSegView(seg, element.color);
+      seg.view = subobj;
+      subobj.userData.origin = seg;
+      obj.add(subobj);
     }
+
+    element.view = obj;
+    obj.userData.origin = element;
     this.display.add(element.view, this.root);
     this.trigger("drawn", element.view);
   }
   eraseElement(element) {
     this.display.remove(element.view, this.root);
     delete element.view;
-    for ( let seg of element.boundaries )
-      delete seg.view;
     this.trigger("erased", element.view);
   }
 
@@ -954,13 +955,13 @@ class SphPuzzleView extends Listenable
                   .map(seg => seg.view).filter(view => view);
 
     } else if ( target instanceof SphKnot ) {
-      return Array.from(target.model.items(target.segments))
-                  .map(a => a[1].view).filter(view => view);
+      return target.segments.flat().flatMap(seg => Array.from(seg.walk()))
+                  .map(seg => seg.view).filter(view => view);
 
     } else if ( target instanceof SphJoint ) {
       return Array.from(target.ports.keys())
-                  .map(knot => knot.get(knot.indexOf(target)))
-                  .flatMap(seg => Array.from(this.puzzle.analyzer.walk(seg)))
+                  .map(knot => knot.segmentAt(knot.indexOf(target)))
+                  .flatMap(seg => Array.from(seg.walk()))
                   .map(seg => seg.view).filter(view => view);
 
     } else {
@@ -1112,14 +1113,10 @@ class SphNetworkView extends Listenable
     super();
 
     this.graph = graph;
-    this.network = network;
     this.selector = selector;
 
-    this.initProp(network);
-    this.initView(network);
-
     this.graph.view.on("click", event => {
-      if ( network.status == "outdated" )
+      if ( network.status == "broken" )
         return;
 
       var target = event.target && event.target.origin;
@@ -1134,7 +1131,7 @@ class SphNetworkView extends Listenable
       }
     });
     this.graph.view.on("hoverNode", event => {
-      if ( network.status == "outdated" )
+      if ( network.status == "broken" )
         return;
 
       var target = event.target && event.target.origin;
@@ -1144,14 +1141,15 @@ class SphNetworkView extends Listenable
         this.selector.preselection = undefined;
     });
     this.graph.view.on("blurNode", event => {
-      if ( network.status == "outdated" )
+      if ( network.status == "broken" )
         return;
       this.selector.preselection = undefined;
     });
 
-    var updater = this.update();
-    var routine = () => (requestAnimationFrame(routine), updater.next());
-    requestAnimationFrame(routine);
+    this.initProp(network);
+    this.initView(network);
+
+    animate(this.hoverRoutine());
   }
 
   // additional properties
@@ -1194,37 +1192,39 @@ class SphNetworkView extends Listenable
 
   // network view
   initView(network) {
+    network.view = this;
+    this.origin = network;
     for ( let knot of network.knots )
       this.drawKnot(knot);
     for ( let joint of network.joints )
       this.drawJoint(joint);
-    var bandages = network.joints.map(j => j.bandage).filter(b => b.size > 1);
+    var bandages = network.joints.map(j => j.bandage).filter(b => b.length > 1);
     for ( let bandage of new Set(bandages) )
       this.groupJoints(bandage);
     
     network.on("statuschanged", SphNetwork, event => {
-      if ( this.network.status == "outdated" )
+      if ( this.origin.status == "broken" )
         this.graph.disable();
-      else if ( this.network.status == "up-to-date" )
+      else
         this.graph.enable();
     });
     network.on("added", SphKnot, event => {
-      if ( this.network.status == "outdated" )
+      if ( this.origin.status == "broken" )
         return;
       this.drawKnot(event.target);
     });
     network.on("added", SphJoint, event => {
-      if ( this.network.status == "outdated" )
+      if ( this.origin.status == "broken" )
         return;
       this.drawJoint(event.target);
     });
     network.on("removed", Object, event => {
-      if ( this.network.status == "outdated" )
+      if ( this.origin.status == "broken" )
         return;
       this.eraseNode(event.target);
     });
     network.on("modified", SphJoint, event => {
-      if ( this.network.status == "outdated" )
+      if ( this.origin.status == "broken" )
         return;
       var option = this.graph.getNode(event.target.node_id);
       this.eraseNode(event.target);
@@ -1232,12 +1232,12 @@ class SphNetworkView extends Listenable
       this.graph.updateNode(event.target.node_id, option);
     });
     network.on("binded", SphJoint, event => {
-      if ( this.network.status == "outdated" )
+      if ( this.origin.status == "broken" )
         return;
       this.groupJoints(event.bandage);
     });
     network.on("unbinded", SphJoint, event => {
-      if ( this.network.status == "outdated" )
+      if ( this.origin.status == "broken" )
         return;
       this.ungroupJoint(event.target);
     });
@@ -1250,7 +1250,7 @@ class SphNetworkView extends Listenable
     joint.node_id = this.graph.addNode({size:5, shape:"dot", origin:joint});
     this.trigger("nodedrawn", this.graph.getNode(joint.node_id));
 
-    for ( let [knot] of joint.ports ) {
+    for ( let knot of joint.ports.keys() ) {
       let edge_id = this.graph.addEdge(joint.node_id, knot.node_id);
       this.trigger("edgedrawn", this.graph.getEdge(edge_id));
     }
@@ -1279,22 +1279,22 @@ class SphNetworkView extends Listenable
       return target.node_id;
 
     } else if ( target instanceof SphElem ) {
-      for ( let joint of this.network.joints )
+      for ( let joint of this.origin.joints )
         for ( let knot of joint.ports.keys() )
-          if ( knot.get(knot.indexOf(joint)).affiliation === target )
+          if ( knot.segmentAt(knot.indexOf(joint)).affiliation === target )
             return joint.node_id;
-      for ( let knot of this.network.knots )
+      for ( let knot of this.origin.knots )
         for ( let seg of knot.segments.flat() )
           if ( seg.affiliation === target )
             return knot.node_id;
 
     } else if ( target instanceof SphSeg ) {
-      for ( let knot of this.network.knots )
+      for ( let knot of this.origin.knots )
         if ( knot.indexOf(target) )
           return knot.node_id;
 
     } else if ( target instanceof SphTrack ) {
-      for ( let knot of this.network.knots )
+      for ( let knot of this.origin.knots )
         if ( knot.indexOf(target.inner[0]) )
           return knot.node_id;
     }
@@ -1311,13 +1311,13 @@ class SphNetworkView extends Listenable
   unhighlight(id) {
     this.graph.updateNode(id, {borderWidth:1});
   }
-  *update() {
+  *hoverRoutine() {
     var preselection = undefined;
     var selected_ids = [];
     while ( true ) {
       yield;
 
-      if ( this.network.status == "outdated" ) {
+      if ( this.origin.status == "broken" ) {
         preselection = undefined;
         selected_ids = [];
         continue;
@@ -1406,10 +1406,16 @@ class SphStateView
     this.selector = selector;
 
     document.body.appendChild(css`
-      .outdated * {
+      .state-tab {
+        display: none;
+      }
+      .state-tab.show {
+        display: block;
+      }
+      .broken * {
         color: gray;
       }
-      .modified .state-name::after {
+      .outdated .state-name::after {
         content: "*";
       }
       .emphasized {
@@ -1441,12 +1447,10 @@ class SphStateView
       }
     `);
     this.container = document.getElementById(container_id);
-    this.current_tab = undefined;
+
     this.initView(network);
 
-    var updater = this.update();
-    var routine = () => (requestAnimationFrame(routine), updater.next());
-    requestAnimationFrame(routine);
+    animate(this.hoverRoutine());
   }
 
   // tab view
@@ -1457,16 +1461,15 @@ class SphStateView
     network.on("removed", SphKnot, event => this.eraseTab(event.target));
     this.selector.on("add", SphKnot, event => this.showTab(event.target));
     network.on("statuschanged", SphNetwork, event => {
+      if ( event.target.status == "broken" )
+        this.container.classList.add("broken");
+      else
+        this.container.classList.remove("broken");
+
       if ( event.target.status == "outdated" )
         this.container.classList.add("outdated");
-      else if ( event.target.status == "up-to-date" )
+      else
         this.container.classList.remove("outdated");
-    });
-    network.on("statuschanged", SphKnot, event => {
-      if ( event.target.status == "outdated" )
-        this.container.classList.add("modified");
-      else if ( event.target.status == "up-to-date" )
-        this.container.classList.remove("modified");
     });
   }
   makeParamTable(knot) {
@@ -1482,17 +1485,14 @@ class SphStateView
         let item = document.createElement("div");
         item.classList.add("item");
         item.draggable = true;
-        item.origin = knot.segments[i][j];
         item.textContent = knot.segments[i][j].name;
 
         item.addEventListener("wheel", function(event) {
-          if ( network.status == "outdated" )
+          if ( network.status == "broken" )
             return;
           if ( event.deltaY == 0 )
             return;
-          var list = Array.from(this.parentNode.children);
-          var j = list.indexOf(this);
-          console.assert(this.origin === knot.segments[i][j]);
+          var j = Array.from(this.parentNode.children).indexOf(this);
 
           if ( event.deltaY > 0 ) {
             for ( let l=0; l<L; l++ )
@@ -1501,15 +1501,14 @@ class SphStateView
             for ( let l=0; l<L; l++ )
               knot.segments[i][j] = knot.segments[i][j].prev;
           }
-          knot.host.setStatus("outdated", knot);
+          knot.host.setStatus("outdated");
 
-          this.origin = knot.segments[i][j];
-          this.textContent = this.origin.name;
+          this.textContent = knot.segments[i][j].name;
           event.preventDefault();
         });
 
         item.addEventListener("dragstart", function(event) {
-          if ( network.status == "outdated" )
+          if ( network.status == "broken" )
             return;
           event.dataTransfer.setData("Text", "");
           event.dataTransfer.dropEffect = "move";
@@ -1534,8 +1533,6 @@ class SphStateView
           var list = Array.from(this.parentNode.children);
           var j = list.indexOf(this);
           var j0 = list.indexOf(target);
-          console.assert(this.origin === knot.segments[i][j]);
-          console.assert(target.origin === knot.segments[i][j0]);
 
           if ( j < j0 ) {
             this.parentNode.insertBefore(target, this);
@@ -1551,15 +1548,17 @@ class SphStateView
         });
 
         item.addEventListener("mouseenter", event => {
-          if ( this.network.status == "outdated" )
+          if ( this.network.status == "broken" )
             return;
-          this.selector.preselection = this.jointsOf(event.target.origin)[0];
+          var j = Array.from(event.target.parentNode.children).indexOf(event.target);
+          this.selector.preselection = knot.jointAt([i,j]) || knot.segmentAt([i,j]).affiliation;
         });
         item.addEventListener("mouseleave", () => this.selector.preselection=undefined);
         item.addEventListener("click", event => {
-          if ( this.network.status == "outdated" )
+          if ( this.network.status == "broken" )
             return;
-          var target = this.jointsOf(event.target.origin)[0];
+          var j = Array.from(event.target.parentNode.children).indexOf(event.target);
+          var target = knot.jointAt([i,j]) || knot.segmentAt([i,j]).affiliation;
 
           if ( event.ctrlKey ) {
             if ( target )
@@ -1581,7 +1580,6 @@ class SphStateView
   }
   drawTab(knot) {
     var tab = document.createElement("div");
-    tab.style.setProperty("display", "none");
     tab.classList.add("state-tab");
 
     var title = document.createElement("h3");
@@ -1599,106 +1597,80 @@ class SphStateView
   }
   eraseTab(knot) {
     this.container.removeChild(knot.tab);
-    if ( this.current_tab === knot.tab )
-      delete this.current_tab;
   }
   showTab(knot) {
-    if ( this.current_tab )
-      this.current_tab.style.setProperty("display", "none");
-    knot.tab.style.setProperty("display", "block");
-    this.current_tab = knot.tab;
+    for ( let tab of this.container.querySelectorAll(".state-tab.show") )
+      tab.classList.remove("show");
+    knot.tab.classList.add("show");
   }
 
-  jointsOf(target) {
+  getItem(knot, [i,j]) {
+    return knot.tab.querySelector(`div.list:nth-of-type(${i+1})>div.item:nth-of-type(${j+1})`);
+  }
+  itemsOf(target) {
     if ( target instanceof SphSeg ) {
-      let index, joint;
-      for ( let knot of this.network.knots )
-        if ( index = knot.indexOf(target) )
-          return (joint = knot.jointAt(index)) ? [joint] : [target.affiliation];
+      for ( let [knot, index] of this.network.indicesOf(target) )
+        return [this.getItem(knot, index)];
       console.assert(false);
 
     } else if ( target instanceof SphElem ) {
-      let index, joint;
-      for ( let knot of this.network.knots )
-        if ( index = knot.indexOf(target) )
-          return (joint = knot.jointAt(index)) ? Array.from(joint.bandage) : [target];
-      console.assert(false);
+      let res = [];
+      for ( let [knot, index] of this.network.indicesOf(target) )
+        res.push(this.getItem(knot, index));
+      console.assert(res.length);
+      return res;
 
     } else if ( target instanceof SphJoint ) {
-      return [target];
+      let res = [];
+      for ( let [knot, index] of this.network.indicesOf(target) )
+        res.push(this.getItem(knot, index));
+      console.assert(res.length);
+      return res;
 
     } else {
       return [];
     }
   }
-  emphasize(joint) {
-    var index;
-    for ( let knot of this.network.knots )
-      if ( index = knot.indexOf(joint) ) {
-        let table = knot.tab.querySelectorAll("div.list");
-        let elem = table[index[0]].children[index[1]];
-
-        elem.classList.add("emphasized");
-      }
+  emphasize(item) {
+    item.classList.add("emphasized");
   }
-  unemphasize(joint) {
-    var index;
-    for ( let knot of this.network.knots )
-      if ( index = knot.indexOf(joint) ) {
-        let table = knot.tab.querySelectorAll("div.list");
-        let elem = table[index[0]].children[index[1]];
-
-        elem.classList.remove("emphasized");
-      }
+  unemphasize(item) {
+    item.classList.remove("emphasized");
   }
-  highlight(joint) {
-    var index;
-    for ( let knot of this.network.knots )
-      if ( index = knot.indexOf(joint) ) {
-        let table = knot.tab.querySelectorAll("div.list");
-        let elem = table[index[0]].children[index[1]];
-
-        elem.classList.add("highlighted");
-      }
+  highlight(item) {
+    item.classList.add("highlighted");
   }
-  unhighlight(joint) {
-    var index;
-    for ( let knot of this.network.knots )
-      if ( index = knot.indexOf(joint) ) {
-        let table = knot.tab.querySelectorAll("div.list");
-        let elem = table[index[0]].children[index[1]];
-
-        elem.classList.remove("highlighted");
-      }
+  unhighlight(item) {
+    item.classList.remove("highlighted");
   }
-  *update() {
+  *hoverRoutine() {
     var preselection = undefined;
     var selections = [];
     while ( true ) {
       yield;
 
-      if ( this.network.status == "outdated" )
+      if ( this.network.status == "broken" )
         continue;
 
       // emphasize hovered object
       if ( this.selector.preselection !== preselection ) {
-        for ( let sel of this.jointsOf(preselection) )
-          this.unemphasize(sel);
-        for ( let sel of this.jointsOf(this.selector.preselection) )
-          this.emphasize(sel);
+        for ( let item of this.itemsOf(preselection) )
+          this.unemphasize(item);
+        for ( let item of this.itemsOf(this.selector.preselection) )
+          this.emphasize(item);
         preselection = this.selector.preselection;
       }
 
       // highlight selected objects
       let new_selections = this.selector.selections
-        .flatMap(sel => this.jointsOf(sel));
+        .flatMap(sel => this.itemsOf(sel));
 
-      for ( let sel of selections )
-        if ( !new_selections.includes(sel) )
-          this.unhighlight(sel);
-      for ( let sel of new_selections )
-        if ( !selections.includes(sel) )
-          this.highlight(sel);
+      for ( let item of selections )
+        if ( !new_selections.includes(item) )
+          this.unhighlight(item);
+      for ( let item of new_selections )
+        if ( !selections.includes(item) )
+          this.highlight(item);
 
       selections = new_selections;
     }
