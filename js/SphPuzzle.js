@@ -322,7 +322,33 @@ class Display
 
 class Panel
 {
-  constructor(gui=new dat.GUI()) {
+  constructor(gui) {
+    if ( !gui ) {
+      gui = new dat.GUI();
+      document.body.appendChild(css`
+        div.dg.ac input[type="text"], div.dg.ac select {
+          font-size: small;
+        }
+        div.dg.ac select {
+          -moz-appearance: button;
+          -webkit-appearance: button;
+          width: 100%;
+          color: rgb(238, 238, 238);
+          background-color: #393838;
+          border-radius: 0px;
+          border-width: 1px;
+          border-color: #575656;
+          border-style: solid;
+        }
+        .property-name {
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .function .property-name {
+          width: 100%;
+        }`);
+    }
     this.gui = gui;
     this.proxy = {};
     this.ctrls = {};
@@ -330,6 +356,7 @@ class Panel
     this.numbers = (function *numbers() {
       var i = 0; while ( true ) if ( yield i++ ) i=-1;
     })();
+
   }
   open() {
     this.gui.open();
@@ -497,48 +524,48 @@ class Graph
     return this.nodes.add(options)[0];
   }
   addEdge(from, to, options={}) {
-    if ( from === undefined || to === undefined )
+    if ( !this.getNode(from) || !this.getNode(to) )
       throw new Error();
     return this.edges.add(Object.assign(options, {from, to}))[0];
   }
   getNode(id) {
-    if ( id === undefined )
+    if ( !id )
       return;
     return this.nodes.get(id);
   }
   getEdge(id) {
-    if ( id === undefined )
+    if ( !id )
       return;
     return this.edges.get(id);
   }
   updateNode(id, patch={}) {
-    if ( id === undefined )
+    var options = this.getNode(id);
+    if ( !options )
       return;
-    var options = this.nodes.get(id);
     this.nodes.update(Object.assign(options, patch, {id}));
   }
   updateEdge(id, patch={}) {
-    if ( id === undefined )
+    var options = this.getEdge(id);
+    if ( !options )
       return;
-    var options = this.edges.get(id);
     this.edges.update(Object.assign(options, patch, {id}));
   }
   removeNode(id) {
-    if ( id === undefined )
+    if ( !id )
       return;
     this.nodes.remove(id);
   }
   removeEdge(id) {
-    if ( id === undefined )
+    if ( !id )
       return;
     this.edges.remove(id);
   }
 
   *edgesBetween(from, to) {
     for ( let options of this.edges.get() )
-      if ( from === undefined || options.from == from )
-        if ( to === undefined || options.to == to )
-          yield options.id;
+      if ( !from || options.from == from )
+        if ( !to || options.to == to )
+          yield options;
   }
 }
 
@@ -611,18 +638,22 @@ class SelectPanel
 {
   constructor(panel, selector) {
     this.panel = panel;
-    this.selector = selector;
     this.prop_builders = [this];
 
     this.sel_panel = this.panel.ctrls[this.panel.addFolder("selections", true)];
     this.detail_panel = this.panel.ctrls[this.panel.addFolder("detail", true)];
-
     this._sels_id = [];
-    this.selector.on("add", Object, event => {
+
+    this.initView(selector);
+  }
+  initView(selector) {
+    selector.view = this;
+    this.selector = selector;
+    selector.on("add", Object, event => {
       this.addSel(event.index, event.target);
       this.setDetail(event.target);
     });
-    this.selector.on("remove", Object, event => {
+    selector.on("remove", Object, event => {
       this.removeSel(event.index);
       this.clearDetail();
     });
@@ -1226,10 +1257,7 @@ class SphNetworkView extends Listenable
     network.on("modified", SphJoint, event => {
       if ( this.origin.status == "broken" )
         return;
-      var option = this.graph.getNode(event.target.node_id);
-      this.eraseNode(event.target);
-      this.drawJoint(event.target);
-      this.graph.updateNode(event.target.node_id, option);
+      this.updateJoint(event.target);
     });
     network.on("binded", SphJoint, event => {
       if ( this.origin.status == "broken" )
@@ -1255,16 +1283,52 @@ class SphNetworkView extends Listenable
       this.trigger("edgedrawn", this.graph.getEdge(edge_id));
     }
   }
+  updateJoint(joint) {
+    for ( let edge of this.graph.edgesBetween(joint.node_id, undefined) ) {
+      this.graph.removeEdge(edge.id);
+      this.trigger("edgeerased", edge);
+    }
+    for ( let knot of joint.ports.keys() ) {
+      let edge_id = this.graph.addEdge(joint.node_id, knot.node_id);
+      this.trigger("edgedrawn", this.graph.getEdge(edge_id));
+    }
+  }
   groupJoints(bandage) {
-    var joint0 = bandage.values().next().value;
-    for ( let joint of bandage )
-      this.graph.updateNode(joint.node_id, {bandage:joint0.node_id});
+    var nodes = bandage.map(joint => this.graph.getNode(joint.node_id));
+
+    var bandage_id;
+    for ( let node of nodes ) if ( node.bandage ) {
+      bandage_id = node.bandage;
+      break;
+    }
+    if ( !bandage_id )
+      bandage_id = this.graph.addNode({size:0, shape:"dot"});
+
+    for ( let node of nodes ) if ( !node.bandage ) {
+      this.graph.addEdge(bandage_id, node.id, {dashes:true});
+      this.graph.updateNode(node.id, {bandage:bandage_id});
+    }
   }
   ungroupJoint(joint) {
-    this.graph.updateNode(joint.node_id, {bandage:undefined});
+    for ( let edge of this.graph.edgesBetween(undefined, joint.node_id) ) {
+      this.graph.removeEdge(edge.id);
+      this.graph.updateNode(joint.node_id, {bandage:undefined});
+    }
   }
   eraseNode(target) {
     var node = this.graph.getNode(target.node_id);
+
+    for ( let edge_id of this.graph.edgesBetween(target.node_id, undefined) ) {
+      let edge = this.graph.getEdge(edge_id);
+      this.graph.removeEdge(edge_id);
+      this.trigger("edgeerased", edge);
+    }
+    for ( let edge_id of this.graph.edgesBetween(undefined, target.node_id) ) {
+      let edge = this.graph.getEdge(edge_id);
+      this.graph.removeEdge(edge_id);
+      this.trigger("edgeerased", edge);
+    }
+
     this.graph.removeNode(target.node_id);
     delete target.node_id;
     this.trigger("nodeerased", node);
@@ -2119,55 +2183,29 @@ class SphPuzzleWorld
     // 3D view
     var dom = document.getElementById(id_display);
     var display = new Display(id_display, dom.clientWidth, dom.clientHeight);
-    this.view = new SphPuzzleView(display, this.puzzle, this.selector);
+    new SphPuzzleView(display, this.puzzle, this.selector);
 
     // network view
     var graph = new Graph(id_network);
-    this.diag = new SphNetworkView(graph, this.puzzle.network, this.selector);
+    new SphNetworkView(graph, this.puzzle.network, this.selector);
 
-    this.conf = new SphStateView(id_state, this.puzzle.network, this.selector);
+    this.state = new SphStateView(id_state, this.puzzle.network, this.selector);
 
     // panel
     this.panel = new Panel();
-
-    var panel_style = css`
-      div.dg.ac input[type="text"], div.dg.ac select {
-        font-size: small;
-      }
-      div.dg.ac select {
-        -moz-appearance: button;
-        -webkit-appearance: button;
-        width: 100%;
-        color: rgb(238, 238, 238);
-        background-color: #393838;
-        border-radius: 0px;
-        border-width: 1px;
-        border-color: #575656;
-        border-style: solid;
-      }
-      .property-name {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .function .property-name {
-        width: 100%;
-      }`;
-    document.body.appendChild(panel_style);
-
 
     var cmd_panel = this.panel.ctrls[this.panel.addFolder("commands")];
     this.cmd = new SphPuzzleWorldCmdMenu(cmd_panel, this.selector, this.puzzle);
     
     // var pzl_panel = this.panel.ctrls[this.panel.addFolder("puzzle")];
-    // this.pzl_tree = new SphPuzzleTreeViewPanel(pzl_panel, this.puzzle, this.view);
+    // this.pzl_tree = new SphPuzzleTreeViewPanel(pzl_panel, this.puzzle, this.puzzle.view);
     // var net_panel = this.panel.ctrls[this.panel.addFolder("network")];
-    // this.net_tree = new SphNetworkTreeViewPanel(net_panel, this.puzzle.network, this.diag);
+    // this.net_tree = new SphNetworkTreeViewPanel(net_panel, this.puzzle.network, this.puzzle.network.view);
 
     var sel_panel = this.panel.ctrls[this.panel.addFolder("select", true)];
-    sel_panel.gui.add(this.view, "selectOn", ["segment", "element", "track"]).name("select on");
+    sel_panel.gui.add(this.puzzle.view, "selectOn", ["segment", "element", "track"]).name("select on");
     this.sel = new SelectPanel(sel_panel, this.selector);
-    this.sel.addPropBuilder(this.view);
-    this.sel.addPropBuilder(this.diag);
+    this.sel.addPropBuilder(this.puzzle.view);
+    this.sel.addPropBuilder(this.puzzle.network.view);
   }
 }

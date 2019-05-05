@@ -3193,7 +3193,7 @@ class SphNetwork extends Listenable
 
       let bandage = Array.from(target.bandage).filter(joint => this.joints.includes(joint));
       if ( bandage.length > 1 )
-        this.trigger("binded", joint, {bandage});
+        this.trigger("binded", target, {bandage});
 
     } else {
       throw new Error();
@@ -3267,7 +3267,7 @@ class SphNetwork extends Listenable
       this.remove(joint);
     this.trigger("modified", joints[0]);
 
-    return joint;
+    return joints[0];
   }
   unfuse(joint, knot) {
     if ( !joint.ports.has(knot) )
@@ -3341,14 +3341,25 @@ class SphNetwork extends Listenable
   *jointsOf(target, make_if_absent=false) {
     if ( target instanceof SphSeg ) {
       let [knot, index] = this.indicesOf(target).next().value;
-      let joint = knot.jointAt(index, make_if_absent);
+
+      let joint = knot.jointAt(index, false);
+      if ( !joint && make_if_absent ) {
+        joint = knot.jointAt(index, true);
+        this.add(joint);
+      }
+
       if ( joint )
         yield joint;
 
     } else if ( target instanceof SphElem ) {
       let joints = new Set();
       for ( let [knot, index] of this.indicesOf(target) ) {
-        let joint = knot.jointAt(index, make_if_absent);
+        let joint = knot.jointAt(index, false);
+        if ( !joint && make_if_absent ) {
+          joint = knot.jointAt(index, true);
+          this.add(joint);
+        }
+
         if ( !joint || joints.has(joint) )
           continue;
         joints.add(joint);
