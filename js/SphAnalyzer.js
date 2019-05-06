@@ -145,7 +145,7 @@ const Q = Math.PI/2;
 /**
  * Spherical circle with orientation.
  * The orientation define coordinate of points on the circle.
- * 
+ *
  * @class
  * @property {number[]} center - Center of spherical circle.
  *   It must be normalized vector.
@@ -180,7 +180,7 @@ class SphCircle
 
   /**
    * Get position of vector projected onto this circle.
-   * 
+   *
    * @param {number[]} vector - The vector to project.
    * @returns {number} The coordinate of projected vector.
    *   Notice that it may not modulus of 4.
@@ -191,7 +191,7 @@ class SphCircle
   }
   /**
    * Get vector of on this circle with given coordinate.
-   * 
+   *
    * @param {number} theta - The coordinate of point on this circle.
    * @returns {number[]} The vector on this circle with coordinate `theta`.
    */
@@ -209,7 +209,7 @@ class SphCircle
  * Boundary segment (and its starting vertex) of element of spherical twisty puzzle.
  * It is fundamental piece of structure of BREP, and has information about
  * spherical arc, vertex, connection of segments, adjacency, etc.
- * 
+ *
  * @class
  * @property {number} arc - Spherical arc angle of segment, in the range of (0, 4].
  * @property {number} angle - Angle between this segment and previous segment.
@@ -304,7 +304,7 @@ class SphSeg
  * Element of spherical twisty puzzle.
  * It represent the region defined by boundaries (BREP).  The element without
  * boundary indicate full space of spherical surface.
- * 
+ *
  * @class
  * @property {Set<SphSeg>} boundaries - Segments of boundaries.
  */
@@ -369,7 +369,7 @@ class SphElem
  * and of course, in this condition such prediction becomes useless.
  * Only such twist angles, which may form new track, may be meaningful, and which
  * can be determined by the shield of this track...
- * 
+ *
  * @class
  * @property {SphSeg[]} inner - Segments of inner of track.
  * @property {SphSeg[]} outer - Segments of outer of track.
@@ -472,18 +472,18 @@ class SphTrack
  * Collection of shapes of loops in a knot.
  * It contains the minimal information about how to make simply-connected elements.
  * It also provide a method to parameterize the states and operations of puzzle.
- * 
+ *
  * index:
  * Segment of puzzle can be indicated by four indices: index of type, index of
  * elements with this type, index of rotation, and index of segment in the patch.
  * We always write "i,j;k,l" represent such index system.
- * 
+ *
  * permutation:
  * Using index system, we can express permutation of segments (permutation and
  * rotation of elements) as 2D array `perm` with entries `[j_, dk] = perm[i][j]`,
  * where `j_` is the new position of element, and `dk` means rotation of element:
  * the segment at "i,j;k,l" will be moved to "i,j_;k+dk,l".
- * 
+ *
  * parameters:
  * We use 2D array to denote additional information about elements.  For example,
  * `colors[i][j]` is color of element at "i,j".  We use 3D array to denote
@@ -492,7 +492,7 @@ class SphTrack
  * constructed by cyclic linked list.  For example, `segs[i][j]` is the concrete
  * object at "i,j;0,0", and `segs[i][j].next` is the concrete object at "i,j;0,1",
  * and so on.
- * 
+ *
  * @class
  * @property {Array} shapes - List of shapes of loops in this knot, which
  *   has entries `{count, fold, patch, center}`;
@@ -601,7 +601,7 @@ class SphModel
         } else {
           console.assert(false);
         }
-        
+
       }
     }
   }
@@ -689,27 +689,27 @@ class SphModel
  * unconnected pieces (bandages); they form a network structure.  This network
  * structure fully determine how to rebuild whole puzzle up to global rotation
  * and permutation of elements.
- * 
+ *
  * knot:
  * Knot is set of segments connected by properties `next`, `prev` and `adj`.
  * Without any bandages, each knot is independent; the twist of one knot will not
  * effect another knot.
- * 
+ *
  * joint:
  * Joint represents connected piece, may be multiply-connected, of element, which
  * fuse different loops of bondaries together, and relative orientations of them
  * are fixed.  The loops of joint should belong to different knots.
- * 
+ *
  * bandage:
  * Bandage represents unconnected element, which bind different connected pieces
  * together, and relative orientations of them are fixed.
- * 
+ *
  * network:
  * The structure composed by knots, joints and bandages.
  * Knots are linked by multiply-connected joints, which form a tree structure.
  * Joints can be linked by unconnected bandages, which make it a network
  * structure.
- * 
+ *
  * @class
  * @property {SphJoint[][][]} joints - The joints connected to this knot, which
  *   is on the position of the first segment (`l = 0`) of loop of joint.
@@ -794,7 +794,7 @@ class SphKnot
  * A node of network structure of puzzle, which represents a connected piece of
  * element.
  * It is composed by different loops in different knots with relative orientations.
- * 
+ *
  * @class
  * @property {Map<SphKnot,number[]>} ports - The map from connected knot to relative
  *   orientation of connected loop.
@@ -858,7 +858,7 @@ class SphJoint
  * Configuration contains the minimal information about puzzle, which is
  * rebuildable without fixed global orientation.  Such data is useful to analyze
  * jumbling rule of this state.
- * 
+ *
  * @class
  * @property {SphModel} model - The model of segments in this network.
  * @property {Array} adjacencies - Table of adjacencies, which has entries
@@ -880,7 +880,7 @@ class SphConfig
 
 /**
  * Analyzer for spherical twisty puzzle.
- * 
+ *
  * @class
  */
 class SphAnalyzer
@@ -892,7 +892,7 @@ class SphAnalyzer
   /**
    * Fuzzy compare two values with tolerance `this.tol`.
    * It will compare array of numbers by lexical order.
-   * 
+   *
    * @param {*} v1 - The first value to compare.
    * @param {*} v2 - The second value to compare.
    * @returns {number} `0` if `v1` is almost equal to `v2`; `+1` if `v1` is
@@ -903,7 +903,7 @@ class SphAnalyzer
   }
   /**
    * Snap to some values by fuzzy comparing.
-   * 
+   *
    * @param {number} val - The value to snap.
    * @param {number[]} snaps - The values to snap.
    * @returns {number} The closest value in `snaps`, or original value if not
@@ -914,7 +914,7 @@ class SphAnalyzer
   }
   /**
    * Modulo 4 with snapping.
-   * 
+   *
    * @param {number} val - The value to mod.
    * @param {number[]} snaps - The values to snap.
    *   Snapping occur when they are roughly congruent modulo 4.
@@ -933,13 +933,13 @@ class SphAnalyzer
    * (kissing) exclude, (kissing) anti-include, (kissing) anti-exclude, and
    * intersect.  Where kissing means two circles touch at one point; anti- means
    * relation to complement of `circle2`.
-   * Except for intersect cases, they have certain return values:  
-   *                    equal: `[0, undefined, undefined, undefined]`  
-   *               complement: `[2, undefined, undefined, undefined]`  
-   *        (kissing) include: `[0, 0, 4, 0|1]`                        
-   *        (kissing) exclude: `[2, 0, 0, 0|1]`                        
-   *   (kissing) anti-include: `[2, 4, 4, 0|1]`                        
-   *   (kissing) anti-exclude: `[0, 4, 0, 0|1]`                        
+   * Except for intersect cases, they have certain return values:
+   *                    equal: `[0, undefined, undefined, undefined]`
+   *               complement: `[2, undefined, undefined, undefined]`
+   *        (kissing) include: `[0, 0, 4, 0|1]`
+   *        (kissing) exclude: `[2, 0, 0, 0|1]`
+   *   (kissing) anti-include: `[2, 4, 4, 0|1]`
+   *   (kissing) anti-exclude: `[0, 4, 0, 0|1]`
    *
    * @param {SphCircle} circle1 - The first circle to compare.
    * @param {SphCircle} circle2 - The second circle to compare.
@@ -986,7 +986,7 @@ class SphAnalyzer
   }
   /**
    * Compute intersection between two circles.
-   * 
+   *
    * @param {number} radius1 - Radius of the first circle to intersect.
    * @param {number} radius2 - Radius of the second circle to intersect.
    * @param {number} distance - Distance between centers of two circles.
@@ -1017,7 +1017,7 @@ class SphAnalyzer
   /**
    * Compute arc of leaf shape.
    * Given tip angle and radius of edges, compute spherical arc angle of edges.
-   * 
+   *
    * @param {number} angle - Tip angle of leaf shape.
    * @param {number} radius1 - Radius of left edge of leaf shape.
    *   Center of curvature is at the right of edge.
@@ -1030,19 +1030,19 @@ class SphAnalyzer
     var a = radius1*Q;
     var b = radius2*Q;
     var C = (2-angle)*Q;
-  
+
     // cotangent rule for spherical triangle: cos b cos C = cot a sin b - cot A sin C
     var [ca, sa] = [Math.cos(a), Math.sin(a)];
     var [cb, sb] = [Math.cos(b), Math.sin(b)];
     var [cC, sC] = [Math.cos(C), Math.sin(C)];
     var [cA_, sA_] = [ca*sb-sa*cb*cC, sa*sC];
     var [cB_, sB_] = [cb*sa-sb*ca*cC, sb*sC];
-  
+
     var arc2 = Math.atan2(sA_, cA_)*2/Q;
     var arc1 = Math.atan2(sB_, cB_)*2/Q;
     console.assert(!Number.isNaN(arc1) && arc1 > 0);
     console.assert(!Number.isNaN(arc2) && arc2 > 0);
-  
+
     return [arc1, arc2];
   }
   /**
@@ -1051,9 +1051,9 @@ class SphAnalyzer
    * 0 with respect to orientation of circle.  If two are same, the smallest
    * circle passing through those points are returned.  Further, if they are
    * (nearly) opposite points or same points, the result may be broken.
-   * 
+   *
    * @param {number[]} v1 - The first point.
-   * @param {number[]} v2 - The second point. 
+   * @param {number[]} v2 - The second point.
    * @param {number[]} v3 - The third point.
    * @returns {SphCircle} The circle passing through those points.
    */
@@ -1087,7 +1087,7 @@ class SphAnalyzer
 
   /**
    * All loops passing through segments.
-   * 
+   *
    * @param {SphSeg[]} segs - The segments to loop.
    * @yields {SphSeg[]} The loop of segment includes at least one of `segs`.
    */
@@ -1105,7 +1105,7 @@ class SphAnalyzer
   }
   /**
    * Jump from a point on the segment to same point on adjacent segment.
-   * 
+   *
    * @param {SphSeg} seg0 - The starting segment.
    * @param {number} theta - Offset of point respect to vertex of `seg0`,
    *   in the range of [0, `seg0.arc`].
@@ -1135,7 +1135,7 @@ class SphAnalyzer
    * This generator will yield information when spinning to another segment
    * passing through center.
    * It will stop before returning to the starting segment or has no next segment.
-   * 
+   *
    * @param {SphSeg} seg0 - The segment passing through center.
    * @param {number=} offset - Offset of center respect to vertex of `seg0`,
    *   in the range of [0, `seg0.arc`).
@@ -1170,7 +1170,7 @@ class SphAnalyzer
   }
   /**
    * Ski on segments along extended circle.
-   * 
+   *
    * @param {SphSeg} seg0 - The starting segment.
    * @yields {SphSeg} Next segment along extended circle of the first segment.
    * @returns {boolean} True if it return to the starting segment finally.
@@ -1179,7 +1179,7 @@ class SphAnalyzer
     var seg = seg0;
     do {
       yield seg;
-      
+
       let [ang1, seg1] = [seg.next.angle, seg.next];
       let ang;
       for ( [ang, seg] of this.spin(seg1) ) {
@@ -1192,7 +1192,7 @@ class SphAnalyzer
   }
   /**
    * Collect all values of generator only when it returns true finally.
-   * 
+   *
    * @param {object} gen - The generator to collect.
    * @returns {Array=} Generated values if `gen` return true finally, or `undefined`.
    */
@@ -1208,7 +1208,7 @@ class SphAnalyzer
    * Split segment into two segments.
    * splited segment will be in-place modified as the first part, and create new
    * object as the second part.
-   * 
+   *
    * @param {number} seg - The segment to split.
    * @param {number} theta - The position to split.
    * @returns {SphSeg} The second part segment after splitting.
@@ -1252,7 +1252,7 @@ class SphAnalyzer
   /**
    * Check if vertex is trivial.
    * All trivial vertex can be merged except for full circle case.
-   * 
+   *
    * @param {number} seg - The segment to check.
    * @returns {boolean} True if vertex is trivial.
    */
@@ -1265,7 +1265,7 @@ class SphAnalyzer
    * Merge segment with the previous segment, and remove this segment.
    * The radius and center of them must be same, and this segment cannot be
    * self connected.
-   * 
+   *
    * @param {number} seg - The segment to merge.
    * @returns {SphSeg} The removed segment.
    */
@@ -1310,7 +1310,7 @@ class SphAnalyzer
    * The vertices of segments must at the same position.
    * It have two cases: exclusive segments become inclusive segments in merge case;
    * inclusive segments become exclusive segments in split case.
-   * 
+   *
    * @param {SphSeg} seg1 - The first segment to swap.
    * @param {SphSeg} seg2 - The second segment to swap.
    * @param {number} ang1 - angle from `seg1` to `seg2`.
@@ -1332,7 +1332,7 @@ class SphAnalyzer
   }
   /**
    * Find cover between two adjacent segments.
-   * 
+   *
    * @param {SphSeg} seg1 - The first segment.
    * @param {SphSeg} seg2 - The second segment.
    * @returns {object[]} array with entries `[seg1, theta1, theta1_, seg2, theta2, theta2_]`:
@@ -1390,7 +1390,7 @@ class SphAnalyzer
   /**
    * Find the segments with same affiliation that are connected by adjacent
    * relation.
-   * 
+   *
    * @param {SphSeg} seg0 - The segment to zip.
    * @returns {object[]} array with entries `[seg1, theta1, theta1_, seg2, theta2, theta2_]`:
    *   the part from `theta1` to `theta1_` in `seg1` is adjacent to the part from
@@ -1415,7 +1415,7 @@ class SphAnalyzer
   }
   /**
    * Glue adjacent segments with same affiliation.
-   * 
+   *
    * @param {object[]} zippers - The data returned by {@link SphAnalyzer#findZippers}.
    */
   glueAdj(zippers) {
@@ -1467,7 +1467,7 @@ class SphAnalyzer
   /**
    * Find meet point between this segment and circle.
    * They can meet at the start point of segment, but not at the end point of segment.
-   * 
+   *
    * @param {SphSeg} segment - The segment to meet.
    * @param {SphCircle} circle - The circle to meet with.
    * @yields {object} Information about meet point, which has values
@@ -1536,7 +1536,7 @@ class SphAnalyzer
    * Cross-meets have type "[+-]0", and touch-meets have type "[+-][+-]".
    * If two touch-meets has inclusion relation, properties `submeet`/`supermeet`
    * will be added to meet object.
-   * 
+   *
    * @param {object[]} meets - The meets to sort.
    * @returns {object[]} Sorted meets.
    */
@@ -1670,7 +1670,7 @@ class SphAnalyzer
   }
   /**
    * Check if point is inside given region.
-   * 
+   *
    * @param {SphSeg[]} boundaries - The boundaries of the region.
    * @param {number[]} point - The point to check.
    * @returns {boolean} True if point is inside this element, or undefined if it
@@ -1700,7 +1700,7 @@ class SphAnalyzer
   }
   /**
    * Slice element by circle.
-   * 
+   *
    * @param {SphCircle} elem - The element to slice.
    * @param {SphCircle} circle - The knife for slicing.
    * @returns {SphSeg[][]} Sliced segments of both sides of `circle` and sliced
@@ -1839,7 +1839,7 @@ class SphAnalyzer
   /**
    * Check if segment is twistable; element should has no meet with extended
    * circles.
-   * 
+   *
    * @param {SphSeg} seg0 - The segment to test.
    * @param {SphSeg[]} fixed - The fixed segments.
    * @returns {boolean} True if `seg0` is twistable.
@@ -1855,7 +1855,7 @@ class SphAnalyzer
       return false;
     if ( Array.from(seg0.adj.keys()).some(seg => seg.affiliation === seg0.affiliation) )
       return false;
-  
+
     var circle = seg0.circle;
     var side = undefined;
     for ( let loop of this.loops(fixed) ) {
@@ -1863,7 +1863,7 @@ class SphAnalyzer
       meets = this.sortMeets(meets);
       if ( meets.length == 0 )
         continue;
-    
+
       if ( meets.find(({type}) => type[1] == "0" || type[1] == "-") )
         return false;
 
@@ -1877,7 +1877,7 @@ class SphAnalyzer
   }
   /**
    * Find twistable part of given elements.
-   * 
+   *
    * @param {SphElem[]} elements
    * @returns {SphElem[][]} Set of twistable Elements.
    */
@@ -1932,7 +1932,7 @@ class SphAnalyzer
 
   /**
    * Build track along extended circle of given segment.
-   * 
+   *
    * @param {SphSeg} seg
    * @returns {SphTrack} The track, or `undefined` if it is illegal.
    */
@@ -1968,7 +1968,7 @@ class SphAnalyzer
   }
   /**
    * Partition by disjoint boundaries.
-   * 
+   *
    * @param {...SphSeg[]} fences - The boundaries which separate whole space.
    *   Both of boundaries and its dual should be included simultaneously.
    * @returns {Array} All part divided by boundaries, which have entries
@@ -2007,7 +2007,7 @@ class SphAnalyzer
   }
   /**
    * Twist along tracks by given angles.
-   * 
+   *
    * @param {Map<SphTrack,number>} op - The map that tell you which track should
    *   twist by what angle.
    * @param {SphElem=} hold - The element whose orientation should be fixed.
@@ -2087,7 +2087,7 @@ class SphAnalyzer
    * Make tick at end point of segment.
    * Tick is diverged segments at end point of segment, which may form another
    * intersected track.
-   * 
+   *
    * @param {SphSeg} prev_seg
    * @returns {object} Tick at `prev_seg.next.vertex`, which has value
    *   `{segment, subticks, is_free}`, and `subticks = [{angle, segment}, ...]`:
@@ -2105,7 +2105,7 @@ class SphAnalyzer
       let sgn = this.cmp([angle, segment.radius-1], [2, prev_seg.radius-1]);
       if ( sgn == 0 ) break;
       if ( sgn >  0 ) return {};
-  
+
       if ( angle == 0 )
         pre.push(segment);
       else if ( angle == 2 )
@@ -2113,20 +2113,20 @@ class SphAnalyzer
       else
         subticks.push({angle, segment});
     }
-  
+
     var is_free = false;
     for ( let seg1 of pre )
       if ( post.find(seg2 => this.cmp(2-seg1.radius, seg2.radius) == 0) ) {
         is_free = true;
         break;
       }
-  
+
     return {segment, subticks, is_free};
   }
   /**
    * Detect latches by given ticks.
    * Latch is potential to form intersected track at one side of this track.
-   * 
+   *
    * @param {object[]} ticks
    * @returns {object[]} Array of latches, which has entries
    *   `{arc, center, angle}` or `{arc, center}` (free latch):
@@ -2136,7 +2136,7 @@ class SphAnalyzer
    */
   detectLatches(ticks) {
     var latches = [];
-  
+
     var radius0 = ticks[0].segment.radius;
     var full_arc = ticks.reduce((acc, tick) => (tick.theta=acc)+tick.segment.arc, 0);
     console.assert(this.cmp(full_arc, 4) == 0);
@@ -2178,12 +2178,12 @@ class SphAnalyzer
 
       }
     }
-  
+
     return latches;
   }
   /**
    * Detect non-trivial twist angle of track.
-   * 
+   *
    * @param {SphTrack} track
    * @returns {Map<number,object[]>} Map from shift to matched latches.
    */
@@ -2197,10 +2197,10 @@ class SphAnalyzer
         ticks.push(tick);
       }
     }
-  
+
     var latches1 = this.detectLatches(ticks1);
     var latches2 = this.detectLatches(ticks2);
-  
+
     var passwords = new Map();
     for ( let latch2 of latches2 ) for ( let latch1 of latches1 ) {
       if ( this.cmp(latch1.arc, latch2.arc) != 0 )
@@ -2217,14 +2217,14 @@ class SphAnalyzer
         latch1 = Object.assign({angle:2-latch2.angle}, latch1);
       passwords.get(key).push(latch1);
     }
-  
+
     return passwords;
   }
 
   /**
    * Make profile of given segments.
    * Profile are loops of segments that are adjacent to exposed part of given segments.
-   * 
+   *
    * @param {SphSeg[]} segments
    * @returns {SphSeg[]} Profile of segments.
    */
@@ -2255,19 +2255,19 @@ class SphAnalyzer
       brackets.add([0, -1]);
       brackets.add([seg.arc, +1]);
       brackets = Array.from(brackets).sort(this.cmp.bind(this));
-  
+
       // find uncovered interval
       console.assert(brackets.length % 2 == 0);
       for ( let i=0; i<brackets.length; i+=2 ) {
         let [th1, s1] = brackets[i];
         let [th2, s2] = brackets[i+1];
         console.assert(s1<0 && s2>0);
-  
+
         if ( this.cmp(th1, th2) != 0 )
           uncovered.push([seg, th1, th2]);
       }
     }
-  
+
     // build segments of profile
     for ( let interval of uncovered ) {
       let [seg, th1, th2] = interval;
@@ -2277,7 +2277,7 @@ class SphAnalyzer
       bd.adj.set(seg, th2);
       interval.push(bd);
     }
-  
+
     // connect segments of profile
     for ( let [,,,bd] of uncovered ) {
       let ang_, seg_, th1_;
@@ -2290,13 +2290,13 @@ class SphAnalyzer
       let [,,,bd_] = uncovered.find(([seg, th1]) => seg===seg_ && this.cmp(th1,th1_) == 0);
       bd_.connect(bd);
     }
-  
+
     return uncovered.map(([,,,bd]) => bd);
   }
   /**
    * Parse reachable segments (by `next`, `prev` and `adj`) and profile of given
    * segments.
-   * 
+   *
    * @param {SphSeg[]} segments
    * @returns {Array} Walkable parts, with entries `{loops, profile}`, where
    *   `loops` and `profile` are arrays of loop.
@@ -2306,13 +2306,13 @@ class SphAnalyzer
     var lost = new Set(segments);
     while ( lost.size ) {
       let park = {loops:[], profile:[]};
-  
+
       let queue = new Set([lost.values().next().value]);
       for ( let seg0 of queue ) {
         let loop = this.full(seg0.walk());
         console.assert(loop);
         park.loops.push(loop);
-  
+
         for ( let seg of loop ) {
           console.assert(lost.has(seg));
           lost.delete(seg);
@@ -2322,18 +2322,18 @@ class SphAnalyzer
               queue.add(adj_seg);
         }
       }
-  
+
       let profile = this.sketchProfile(park.loops.flat());
       park.profile = Array.from(this.loops(profile));
-  
+
       parks.push(park);
     }
-  
+
     return parks;
   }
   /**
    * Find joints between park parts by drawing circle between two given points.
-   * 
+   *
    * @param {Array} parks - All parks of puzzle
    *   (see {@link SphAnalyzer#parseWalkable}).
    * @param {number[]} from - The first point the circle passing through.
@@ -2380,7 +2380,7 @@ class SphAnalyzer
 
   /**
    * Determine shape of loop of element.
-   * 
+   *
    * @param {SphSeg[]} loop - the loop to determine.
    * @returns {Array} Shape and first referenced segment of given loop.
    *   The shape has value `{fold, patch}` (see {@link SphModel}).
@@ -2428,7 +2428,7 @@ class SphAnalyzer
   }
   /**
    * Make loop with given shape.
-   * 
+   *
    * @param {object} shape - The shape of the loop to make.
    * @returns {SphSeg[]} The loop with `shape`.
    */
@@ -2451,7 +2451,7 @@ class SphAnalyzer
   /**
    * Analyze network structure and classify shapes of elements (see {@link SphKnot}
    * and {@link SphModel}).
-   * 
+   *
    * @param {SphElem[]} elements
    * @returns {SphKnot[]} The knots in network structure.
    */
@@ -2531,7 +2531,7 @@ class SphAnalyzer
    * Assemble segments according to the given structure.
    * It will rebuild absent elements, and reconstruct (or check) adjacent
    * relationships and tracks.
-   * 
+   *
    * @param {SphKnot[]} knots - The knots in network structure.
    * @param {boolean=} forced - Re-assemble all given segments if true, otherwise
    *   check consistency.
@@ -2573,7 +2573,7 @@ class SphAnalyzer
   /**
    * Orient segments according to the given structure.
    * It will compute (or check) orientations of segments.
-   * 
+   *
    * @param {SphKnot} knot0 - The fixed knot.
    * @param {Array<number>=} index0 - The index of fixed segment.
    * @param {Array<number>=} orientation0 - The orientation of fixed segment.
@@ -2659,7 +2659,7 @@ class SphAnalyzer
    * This function give same result for equivalent configuration.
    * It will sort elements by order of encountering, and yields adjacent relation
    * when passing through.
-   * 
+   *
    * @param {SphModel} model - The model of puzzle to explore.
    * @param {SphSeg} seg0 - The first segment to explore.
    * @param {Symbol} INDEX - The symbol to access index of segment.
@@ -2706,7 +2706,7 @@ class SphAnalyzer
    * It will build adjacency table and symmetries of configuration and return
    * possible permutations.
    * The multiple permutations means geometric symmetry of this configuration.
-   * 
+   *
    * @param {SphModel} model - The model of puzzle to build.
    * @param {SphSeg[][]} param - The segments of puzzle to analyze.
    * @param {SphConfig[]} known - Sorted list of known sorted configurations.
@@ -2797,10 +2797,10 @@ class SphAnalyzer
 
     return [config, permutations];
   }
-  
+
   /**
    * Find the joint hold at given point.
-   * 
+   *
    * @param {SphKnot} knot
    * @param {number[]} point
    * @returns {Array} `[[knot, index], ...]`.
@@ -2841,7 +2841,7 @@ class SphAnalyzer
 
 /**
  * Proxy of event system for javascript object.
- * 
+ *
  * @class
  */
 class Listenable
@@ -2895,7 +2895,7 @@ class Listenable
  * `{ type:"modified", target:SphElem }`, triggered after modifying element, such
  * as adding/removing segments, modifying segment.  Notice that modifying
  * properties `adj` and `track` will not trigger this event.
- * 
+ *
  * @class
  * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
  * @property {SphElem[]} elements - All elements of this puzzle.
@@ -3158,7 +3158,7 @@ class SphPuzzle extends Listenable
  * `{ type:"binded", target:SphJoint, bandage:SphJoint[] }`, triggered after
  * binding joints.
  * `{ type:"unbinded", target:SphJoint }`, triggered after unbinding joint.
- * 
+ *
  * @class
  * @property {string} status
  * @property {SphKnot[]} knots - All knots of this network.
@@ -3315,18 +3315,18 @@ class SphNetwork extends Listenable
           yield [knot, index];
           break;
         }
-  
+
     } else if ( target instanceof SphJoint ) {
       for ( let knot of this.knots )
         if ( index = knot.indexOf(target) )
           yield [knot, index];
-  
+
     } else if ( target instanceof SphElem ) {
       for ( let knot of this.knots )
         for ( let [[i,j,k,l], seg] of knot.model.items(knot.segments) )
           if ( k == 0 && l == 0 && seg.affiliation === target )
             yield [knot, [i, j]];
-  
+
     } else if ( target instanceof SphTrack ) {
       for ( let knot of this.knots )
         for ( let seg0 of knot.segments.flat() )
@@ -3335,7 +3335,7 @@ class SphNetwork extends Listenable
               yield [knot];
               return;
             }
-  
+
     }
   }
   *jointsOf(target, make_if_absent=false) {

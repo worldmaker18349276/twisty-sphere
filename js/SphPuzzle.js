@@ -146,20 +146,20 @@ class Display
     }
     // {
     //   this.hoverable = [];
-    // 
+    //
     //   let offsetX = 0;
     //   let offsetY = 0;
     //   this.dom.addEventListener("mousemove", event => {
     //     offsetX = event.offsetX;
     //     offsetY = event.offsetY;
     //   }, false);
-    // 
+    //
     //   let hover_routine = (function *hoverRoutine() {
     //     var prev_obj;
     //     while ( true ) {
     //       var spot = this.spotOn(offsetX, offsetY);
     //       this.scene.dispatchEvent(event3D("hover", undefined, spot));
-    // 
+    //
     //       var object = spot.object;
     //       if ( prev_obj !== object ) {
     //         if ( prev_obj )
@@ -170,12 +170,12 @@ class Display
     //       if ( object )
     //         prev_obj.dispatchEvent(event3D("mouseover", undefined, spot));
     //       prev_obj = object;
-    // 
+    //
     //       yield;
     //     }
     //   }).call(this);
     //   this.animate(hover_routine);
-    // 
+    //
     // }
 
     // click event
@@ -732,7 +732,7 @@ class SphPuzzleView extends Listenable
             this.selector.preselection = seg.track;
             break;
         }
-    
+
       } else { // mouseleave
         this.selector.preselection = undefined;
       }
@@ -934,7 +934,7 @@ class SphPuzzleView extends Listenable
       let geo = new THREE.SphereGeometry(1, N, 2, 2*Q, seg.arc*Q,
                                          (seg.radius-2*dq)*Q, dq*2*Q);
       geo.rotateX(Q);
-      
+
       let mat = new THREE.MeshBasicMaterial({color, transparent:true, opacity:0,
                                              depthWrite:false});
       var holder = new THREE.Mesh(geo, mat);
@@ -1232,7 +1232,7 @@ class SphNetworkView extends Listenable
     var bandages = network.joints.map(j => j.bandage).filter(b => b.length > 1);
     for ( let bandage of new Set(bandages) )
       this.groupJoints(bandage);
-    
+
     network.on("statuschanged", SphNetwork, event => {
       if ( this.origin.status == "broken" )
         this.graph.disable();
@@ -1780,7 +1780,7 @@ class SphPuzzleTreeViewPanel
     var id = this.data.get(track);
     this.tracks.remove(id);
   }
-  
+
 }
 
 class SphNetworkTreeViewPanel
@@ -2088,7 +2088,7 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
       }
       if ( seg1.track.outer.includes(seg1) )
         [seg1, seg2] = [seg2, seg1];
-      
+
       var offset0 = seg1.track.shift;
       var [,, offset1] = seg1.track.indexOf(seg1);
       var [,, offset2] = seg1.track.indexOf(seg2);
@@ -2196,7 +2196,7 @@ class SphPuzzleWorld
 
     var cmd_panel = this.panel.ctrls[this.panel.addFolder("commands")];
     this.cmd = new SphPuzzleWorldCmdMenu(cmd_panel, this.selector, this.puzzle);
-    
+
     // var pzl_panel = this.panel.ctrls[this.panel.addFolder("puzzle")];
     // this.pzl_tree = new SphPuzzleTreeViewPanel(pzl_panel, this.puzzle, this.puzzle.view);
     // var net_panel = this.panel.ctrls[this.panel.addFolder("network")];
