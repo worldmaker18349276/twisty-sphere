@@ -709,11 +709,9 @@ class SelectPanel
 }
 
 
-class SphPuzzleView extends Listenable
+class SphPuzzleView
 {
   constructor(display, puzzle, selector) {
-    super();
-
     this.display = display;
     this.selector = selector;
 
@@ -964,12 +962,10 @@ class SphPuzzleView extends Listenable
     element.view = obj;
     obj.userData.origin = element;
     this.display.add(element.view, this.root);
-    this.trigger("drawn", element.view);
   }
   eraseElement(element) {
     this.display.remove(element.view, this.root);
     delete element.view;
-    this.trigger("erased", element.view);
   }
 
   // hover/select feedback
@@ -1138,11 +1134,9 @@ class SphPuzzleView extends Listenable
   }
 }
 
-class SphNetworkView extends Listenable
+class SphNetworkView
 {
   constructor(graph, network, selector) {
-    super();
-
     this.graph = graph;
     this.selector = selector;
 
@@ -1239,20 +1233,27 @@ class SphNetworkView extends Listenable
       else
         this.graph.enable();
     });
-    network.on("added", SphKnot, event => {
+    network.on("added", Object, event => {
       if ( this.origin.status == "broken" )
         return;
-      this.drawKnot(event.target);
-    });
-    network.on("added", SphJoint, event => {
-      if ( this.origin.status == "broken" )
-        return;
-      this.drawJoint(event.target);
+      if ( event.target instanceof SphKnot ) {
+        this.drawKnot(event.target);
+
+      } else if ( event.target instanceof SphJoint ) {
+        this.drawJoint(event.target);
+        this.groupJoint(event.target);
+      }
     });
     network.on("removed", Object, event => {
       if ( this.origin.status == "broken" )
         return;
-      this.eraseNode(event.target);
+      if ( event.target instanceof SphKnot ) {
+        this.eraseKnot(event.target);
+
+      } else if ( event.target instanceof SphJoint ) {
+        this.ungroupJoint(event.target);
+        this.eraseJoint(event.target);
+      }
     });
     network.on("modified", SphJoint, event => {
       if ( this.origin.status == "broken" )
@@ -1262,7 +1263,7 @@ class SphNetworkView extends Listenable
     network.on("binded", SphJoint, event => {
       if ( this.origin.status == "broken" )
         return;
-      this.groupJoints(event.bandage);
+      this.groupJoint(event.target);
     });
     network.on("unbinded", SphJoint, event => {
       if ( this.origin.status == "broken" )
@@ -1272,66 +1273,65 @@ class SphNetworkView extends Listenable
   }
   drawKnot(knot) {
     knot.node_id = this.graph.addNode({size:20, shape:"diamond", origin:knot});
-    this.trigger("nodedrawn", this.graph.getNode(knot.node_id));
   }
   drawJoint(joint) {
     joint.node_id = this.graph.addNode({size:5, shape:"dot", origin:joint});
-    this.trigger("nodedrawn", this.graph.getNode(joint.node_id));
 
-    for ( let knot of joint.ports.keys() ) {
-      let edge_id = this.graph.addEdge(joint.node_id, knot.node_id);
-      this.trigger("edgedrawn", this.graph.getEdge(edge_id));
-    }
+    for ( let knot of joint.ports.keys() )
+      this.graph.addEdge(joint.node_id, knot.node_id);
   }
   updateJoint(joint) {
-    for ( let edge of this.graph.edgesBetween(joint.node_id, undefined) ) {
+    for ( let edge of this.graph.edgesBetween(joint.node_id, undefined) )
       this.graph.removeEdge(edge.id);
-      this.trigger("edgeerased", edge);
-    }
-    for ( let knot of joint.ports.keys() ) {
-      let edge_id = this.graph.addEdge(joint.node_id, knot.node_id);
-      this.trigger("edgedrawn", this.graph.getEdge(edge_id));
-    }
+    for ( let knot of joint.ports.keys() )
+      this.graph.addEdge(joint.node_id, knot.node_id);
   }
-  groupJoints(bandage) {
+  groupJoint(joint) {
+    var bandage = Array.from(joint.bandage).filter(joint => this.origin.joints.includes(joint));
+    if ( bandage.length <= 1 )
+      return;
+
     var nodes = bandage.map(joint => this.graph.getNode(joint.node_id));
-
-    var bandage_id;
-    for ( let node of nodes ) if ( node.bandage ) {
-      bandage_id = node.bandage;
-      break;
-    }
+    var bandage_id = nodes.map(node => node.bandage_id).find(id => id);
     if ( !bandage_id )
-      bandage_id = this.graph.addNode({size:0, shape:"dot"});
+      bandage_id = this.graph.addNode({size:0, shape:"dot", type:"bandage"});
 
-    for ( let node of nodes ) if ( !node.bandage ) {
-      this.graph.addEdge(bandage_id, node.id, {dashes:true});
-      this.graph.updateNode(node.id, {bandage:bandage_id});
+    for ( let node of nodes ) {
+      if ( !node.bandage_id ) {
+        this.graph.addEdge(bandage_id, node.id, {dashes:true});
+        this.graph.updateNode(node.id, {bandage_id});
+
+      } else if ( node.bandage_id != bandage_id ) {
+        this.graph.removeNode(node.bandage_id);
+        this.graph.updateNode(node.id, {bandage_id});
+      }
     }
   }
   ungroupJoint(joint) {
-    for ( let edge of this.graph.edgesBetween(undefined, joint.node_id) ) {
-      this.graph.removeEdge(edge.id);
-      this.graph.updateNode(joint.node_id, {bandage:undefined});
+    var edge = this.graph.edgesBetween(undefined, joint.node_id).next().value;
+    if ( !edge )
+      return;
+
+    this.graph.removeEdge(edge.id);
+    this.graph.updateNode(joint.node_id, {bandage_id:undefined});
+
+    var edges = Array.from(this.graph.edgesBetween(edge.from, undefined));
+    if ( edges.length == 1 ) {
+      this.graph.removeEdge(edges[0].id);
+      this.graph.updateNode(edges[0].to, {bandage_id:undefined});
     }
+    if ( edges.length <= 1 )
+      this.graph.removeNode(edge.from);
   }
-  eraseNode(target) {
-    var node = this.graph.getNode(target.node_id);
-
-    for ( let edge_id of this.graph.edgesBetween(target.node_id, undefined) ) {
-      let edge = this.graph.getEdge(edge_id);
-      this.graph.removeEdge(edge_id);
-      this.trigger("edgeerased", edge);
-    }
-    for ( let edge_id of this.graph.edgesBetween(undefined, target.node_id) ) {
-      let edge = this.graph.getEdge(edge_id);
-      this.graph.removeEdge(edge_id);
-      this.trigger("edgeerased", edge);
-    }
-
-    this.graph.removeNode(target.node_id);
-    delete target.node_id;
-    this.trigger("nodeerased", node);
+  eraseKnot(knot) {
+    var node = this.graph.getNode(knot.node_id);
+    this.graph.removeNode(knot.node_id);
+    delete knot.node_id;
+  }
+  eraseJoint(joint) {
+    var node = this.graph.getNode(joint.node_id);
+    this.graph.removeNode(joint.node_id);
+    delete joint.node_id;
   }
 
   // hover/select feedback

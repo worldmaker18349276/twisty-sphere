@@ -2073,12 +2073,14 @@ class SphAnalyzer
     }
 
     // relock
-    var new_tracks = [];
+    var new_tracks = [], new_track;
     for ( let track of op.keys() )
       for ( let seg0 of track.inner )
         for ( let [angle, inter_seg, offset] of this.spin(seg0) )
           if ( angle < 2 && angle > 0 && offset == 0 )
-            if ( !inter_seg.track ) new_tracks.push(this.buildTrack(inter_seg));
+            if ( !inter_seg.track )
+              if ( new_track = this.buildTrack(inter_seg) )
+                new_tracks.push(new_track);
 
     return new_tracks;
   }
@@ -2603,7 +2605,7 @@ class SphAnalyzer
     var compass = [0,0,0,1];
     var route = [[knot0, seg0]];
     for ( let [knot, seg0] of route ) {
-      var path = new Set(seg0.walk());
+      var path = Array.from(seg0.walk());
       for ( let seg of path ) {
         // next
         {
@@ -2623,33 +2625,34 @@ class SphAnalyzer
           q_mul(compass, [1,0,0,0], compass);
           align(adj_seg, compass);
 
-          for ( let seg_ of adj_seg.walk() ) path.add(seg_);
+          if ( !path.includes(adj_seg) ) path.push(...adj_seg.walk());
         }
+      }
 
-        // fly
-        let joint = knot.jointAt(knot.indexOf(seg));
-        if ( joint && joint.ports.size > 1 ) {
-          let alignment = q_mul(seg.orientation, q_inv(joint.ports.get(knot)));
+      // fly
+      for ( let [index, joint] of knot.model.items(knot.joints) ) {
+        let seg = knot.segmentAt(index);
+        let alignment = q_mul(seg.orientation, q_inv(joint.ports.get(knot)));
 
-          for ( let knot_ of joint.ports.keys() ) if ( knot_ !== knot ) {
-            let seg_ = knot_.segmentAt(knot_.indexOf(joint));
+        for ( let [knot_, orientation_] of joint.ports ) if ( knot_ !== knot ) {
+          let seg_ = knot_.segmentAt(knot_.indexOf(joint));
 
-            q_mul(alignment, joint.ports.segmentAt(knot_), compass);
-            align(seg_, compass);
+          q_mul(alignment, orientation_, compass);
+          align(seg_, compass);
 
+          if ( route.every(([knot]) => knot!==knot_) )
             route.push([knot_, seg_]);
-          }
-
-          for ( let joint_ of joint.bandage ) if ( joint_ !== joint )
-            for ( let knot_ of joint_.ports.keys() ) {
-              let seg_ = knot_.segmentAt(knot_.indexOf(joint_));
-
-              if ( seg_.orientation ) {
-                q_mul(alignment, joint_.ports.get(knot_), compass);
-                align(seg_, compass);
-              }
-            }
         }
+
+        for ( let joint_ of joint.bandage ) if ( joint_ !== joint )
+          for ( let [knot_, orientation_] of joint_.ports ) {
+            let seg_ = knot_.segmentAt(knot_.indexOf(joint_));
+            if ( seg_.orientation )
+              continue;
+
+            q_mul(alignment, orientation_, compass);
+            align(seg_, compass);
+          }
       }
     }
   }
@@ -3139,11 +3142,38 @@ class SphPuzzle extends Listenable
     elems[0].merge(...elems.slice(1));
     elems[0].withdraw(...segs);
 
-    for ( let track of tracks )
+    for ( let track of new Set(tracks) )
       this.remove(track);
-    for ( let elem of elems.slice(1) )
+    for ( let elem of new Set(elems) ) if ( elem !== elems[0] )
       this.remove(elem);
     this.trigger("modified", elems[0]);
+  }
+
+  recognize() {
+    for ( let knot of this.network.knots ) if ( knot.status == "outdated" ) {
+      let [config, perms] = this.analyzer.recognize(knot.model, knot.segments, []);
+  
+      this.network.transit(knot, perms[0], config);
+    }
+  }
+  assemble(seg0, orientation0) {
+    seg0 = seg0 || this.network.knots[0].segments[0][0];
+    var [knot0, index0] = this.network.indicesOf(seg0).next().value;
+    orientation0 = orientation0 || seg0.orientation.slice();
+
+    this.analyzer.assemble(this.network.knots);
+    this.analyzer.orient(knot0, index0, orientation0);
+
+    for ( let elem of this.elements )
+      this.trigger("rotated", elem);
+  }
+  check() {
+    var seg0 = this.network.knots[0].segments[0][0];
+    var [knot0, index0] = this.network.indicesOf(seg0).next().value;
+    var orientation0 = seg0.orientation.slice();
+
+    this.analyzer.assemble(this.network.knots, false);
+    this.analyzer.orient(knot0, index0, orientation0, false);
   }
 }
 
@@ -3155,8 +3185,7 @@ class SphPuzzle extends Listenable
  * is broken, up-to-date or outdated.
  * `{ type:"added"|"removed"|"modified", target:SphKnot|SphJoint }`, triggered
  * after adding/removing/modifying knot/joint.
- * `{ type:"binded", target:SphJoint, bandage:SphJoint[] }`, triggered after
- * binding joints.
+ * `{ type:"binded", target:SphJoint }`, triggered after binding joints.
  * `{ type:"unbinded", target:SphJoint }`, triggered after unbinding joint.
  *
  * @class
@@ -3191,10 +3220,6 @@ class SphNetwork extends Listenable
       this.joints.push(target);
       this.trigger("added", target);
 
-      let bandage = Array.from(target.bandage).filter(joint => this.joints.includes(joint));
-      if ( bandage.length > 1 )
-        this.trigger("binded", target, {bandage});
-
     } else {
       throw new Error();
     }
@@ -3212,10 +3237,6 @@ class SphNetwork extends Listenable
       if ( i == -1 )
         return;
       this.joints.splice(i, 1);
-
-      let bandage = Array.from(target.bandage).filter(joint => this.joints.includes(joint));
-      if ( bandage.length >= 1 )
-        this.trigger("unbinded", target);
 
       this.trigger("removed", target);
 
@@ -3294,11 +3315,9 @@ class SphNetwork extends Listenable
     for ( let joint of joints.slice(1) )
       joints[0].bind(joint);
 
-    var bandage = Array.from(joints[0].bandage).filter(joint => this.joints.includes(joint));
-    if ( bandage.length > 1 )
-      this.trigger("binded", joints[0], {bandage});
+    this.trigger("binded", joints[0]);
 
-    return bandage;
+    return joints[0].bandage;
   }
   unbind(joint) {
     if ( joint.bandage.size == 1 )
