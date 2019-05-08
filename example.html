@@ -35,6 +35,9 @@ puzzle.slice([-s2, s2,  0], 1/2);
 puzzle.slice([ s2,-s2,  0], 1/2);
 puzzle.slice([-s2,-s2,  0], 1/2);
 
+puzzle.clean();
+puzzle.structurize();
+
 var world = new SphPuzzleWorld(puzzle, "display", "network", "state");
 </script>
 </body>

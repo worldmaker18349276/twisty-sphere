@@ -221,12 +221,15 @@ class Display
           var target3D = drag_spot.object;
 
           if ( !dragging && target3D ) {
-            target3D.dispatchEvent(event3D("dragstart", event, drag_spot));
-            dragging = true;
+            let drag_event = event3D("dragstart", event, drag_spot, {drag:false});
+            target3D.dispatchEvent(drag_event);
+            dragging = drag_event.drag;
           }
 
           if ( dragging )
             target3D.dispatchEvent(event3D("drag", event, {}));
+          else
+            this.unlockTrackball(DRAG_KEY);
         }
       }, false);
       this.dom.addEventListener("mouseup", event => {
@@ -279,6 +282,16 @@ class Display
       spot.object = spot.object.parent;
 
     return spot;
+  }
+  pointTo(offsetX, offsetY, plane) {
+    var mouse = new THREE.Vector2(
+        offsetX/this.width*2 - 1,
+        - offsetY/this.height*2 + 1);
+    this.raycaster.setFromCamera(mouse, this.camera);
+
+    var point = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+    var distance = this.raycaster.ray.distanceToPlane(plane);
+    return {distance, point};
   }
 
   setCamera(x, y, z, dis) {
@@ -717,15 +730,6 @@ class SphPuzzleView
     this.display = display;
     this.selector = selector;
 
-    this.hover_handler = event => {
-      if ( event.type == "mouseenter" )
-        this.selector.preselection = event.target.parent.userData.origin;
-      else // mouseleave
-        this.selector.preselection = undefined;
-    };
-    this.select_handler = event =>
-      event.originalEvent.ctrlKey ? this.selector.toggle() : this.selector.select();
-
     this.root = new THREE.Object3D();
     this.display.add(this.root);
 
@@ -859,6 +863,8 @@ class SphPuzzleView
     this.origin = puzzle;
     for ( let element of puzzle.elements )
       this.drawElement(element);
+    for ( let track of puzzle.tracks )
+      this.addTwister(track);
 
     puzzle.on("added", SphElem, event => this.drawElement(event.target));
     puzzle.on("removed", SphElem, event => this.eraseElement(event.target));
@@ -874,6 +880,13 @@ class SphPuzzleView
       for ( let seg of event.target.boundaries )
         for ( let sub of seg.view.children )
           sub.material.color.set(event.target.color);
+    });
+
+    puzzle.on("added", SphTrack, event => this.addTwister(event.target));
+    puzzle.on("removed", SphTrack, event => this.removeTwister(event.target));
+    puzzle.on("modified", SphTrack, event => {
+      this.removeTwister(event.target);
+      this.addTwister(event.target);
     });
   }
   buildSegView(seg, color, dq=0.01) {
@@ -942,9 +955,12 @@ class SphPuzzleView
       holder.name = "holder";
 
       holder.userData.hoverable = true;
-      holder.addEventListener("mouseenter", this.hover_handler);
-      holder.addEventListener("mouseleave", this.hover_handler);
-      holder.addEventListener("click", this.select_handler);
+      holder.addEventListener("mouseenter", event =>
+        this.selector.preselection = event.target.parent.userData.origin);
+      holder.addEventListener("mouseleave", event =>
+        this.selector.preselection = undefined);
+      holder.addEventListener("click", event =>
+        event.originalEvent.ctrlKey ? this.selector.toggle() : this.selector.select());
     }
 
     var obj = new THREE.Object3D();
@@ -969,6 +985,95 @@ class SphPuzzleView
   eraseElement(element) {
     this.display.remove(element.view, this.root);
     delete element.view;
+  }
+  addTwister(track) {
+    // snap
+    {
+      let len1 = 0;
+      let offsets1 = track.inner.map(seg => len1+=seg.arc);
+      offsets1.pop();
+      offsets1.unshift(0);
+      let len2 = 0;
+      let offsets2 = track.outer.map(seg => len2+=seg.arc);
+      offsets2.pop();
+      offsets2.unshift(0);
+      
+      var snaps = new Set();
+      for ( let offset1 of offsets1 )
+        for ( let offset2 of offsets2 )
+          snaps.add(this.origin.analyzer.mod4(track.shift-offset1-offset2, snaps));
+      snaps = Array.from(snaps).sort();
+
+      // let passwords = this.origin.analyzer.decipher(track);
+      // var snaps = Array.from(passwords.keys())
+      //     .map(key => this.origin.analyzer.mod4(track.shift-key)).sort();
+    }
+
+    // drag
+    {
+      var circle, plane, moved;
+
+      var dragstart = event => {
+        var partition = this.origin.analyzer.partitionBy(track.inner, track.outer);
+        if ( partition.length == 1 )
+          return;
+
+        event.drag = true;
+
+        var p = event.point.toArray();
+        circle = track.circle;
+        circle.shift(circle.thetaOf(p));
+        plane = new THREE.Plane(new THREE.Vector3(...circle.center), -dot(circle.center, p));
+
+        var fence = track.inner.includes(event.target.parent.userData.origin)
+                  ? track.inner
+                  : track.outer;
+        moved = partition.find(region => region.fences.has(fence));
+        console.assert(moved);
+        moved = Array.from(moved.elements);
+
+        for ( let elem of moved ) for ( let seg of elem.boundaries )
+          seg.view.userData.quaternion0 = seg.view.quaternion.clone();
+      };
+      var drag = event => {
+        var {offsetX, offsetY} = event.originalEvent;
+        var {point} = this.display.pointTo(offsetX, offsetY, plane);
+        if ( !point ) return;
+        var angle = fzy_mod(circle.thetaOf(point.toArray()), 4, snaps, 0.03);
+        var rot = new THREE.Quaternion().setFromAxisAngle(plane.normal, angle*Q);
+
+        for ( let elem of moved ) for ( let seg of elem.boundaries )
+          seg.view.quaternion.multiplyQuaternions(rot, seg.view.userData.quaternion0);
+
+        return angle;
+      };
+      var dragend = event => {
+        var angle = drag(event);
+        var hold = event.target.parent.userData.origin.adj.keys().next().value.affiliation;
+        this.origin.twist(track, angle, hold);
+      };
+    }
+
+    var targets = [...track.inner, ...track.outer].map(seg => seg.view.children[3]);
+    track.twister = {dragstart, drag, dragend, targets, origin:track};
+    for ( let holder of targets ) {
+      holder.userData.draggable = true;
+      holder.addEventListener("dragstart", dragstart);
+      holder.addEventListener("drag", drag);
+      holder.addEventListener("dragend", dragend);
+    }
+  }
+  removeTwister(track) {
+    var {dragstart, drag, dragend, targets} = track.twister;
+    this.display.scene.traverse(holder => {
+      if ( targets.includes(holder) ) {
+        holder.userData.draggable = false;
+        holder.removeEventListener("dragstart", dragstart);
+        holder.removeEventListener("drag", drag);
+        holder.removeEventListener("dragend", dragend);
+      }
+    });
+    delete track.twister;
   }
 
   // hover/select feedback
@@ -1889,11 +1994,9 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
     this.puzzle = puzzle;
 
     this.addCmd(this.mergeCmd.bind(this), "merge (shift+M)", "shift+M");
-    this.addCmd(this.interCmd.bind(this), "inter (shift+I)", "shift+I");
+    this.addCmd(this.interCmd.bind(this), "interpolate");
     this.addCmd(this.sliceCmd.bind(this), "slice (shift+S)", "shift+S");
     this.addCmd(this.cleanCmd.bind(this), "clean (shift+C)", "shift+C");
-    this.addCmd(this.alignCmd.bind(this), "align (shift+A)", "shift+A");
-    this.addCmd(this.twistCmd.bind(this), "twist (shift+T)", "shift+T");
     this.addCmd(this.checkCmd.bind(this), "check");
 
     this.addCmd(this.structCmd.bind(this), "structurize (shift+X)", "shift+X");
@@ -2027,84 +2130,6 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
   checkCmd(selector) {
     this.puzzle.check();
     console.log("check!");
-  }
-  alignCmd(selector) {
-    if ( selector.selections.length != 1 && selector.selections.length != 2 ) {
-      window.alert("Please select one or two segments!");
-      return;
-    }
-    var [seg1, seg2] = selector.selections;
-    if ( !(seg1 instanceof SphSeg) || seg2 && !(seg2 instanceof SphSeg) ) {
-      window.alert("Not segments!");
-      return;
-    }
-
-    if ( seg2 ) {
-      if ( !seg1.track || seg1.track !== seg2.track ) {
-        window.alert("Cannot align segmets!");
-        return;
-      }
-      if ( seg1.track.outer.includes(seg1) )
-        [seg1, seg2] = [seg2, seg1];
-
-      var offset0 = seg1.track.shift;
-      var [,, offset1] = seg1.track.indexOf(seg1);
-      var [,, offset2] = seg1.track.indexOf(seg2);
-      var theta = offset0-offset1-offset2;
-
-    } else {
-      if ( !seg1.track ) {
-        window.alert("Cannot align segmets!");
-        return;
-      }
-
-      var theta = eval(window.prompt("angle to twist"));
-      if ( typeof theta != "number" && theta instanceof Number ) {
-        window.alert("Not a number!");
-        return;
-      }
-      if ( Number.isNaN(theta) ) {
-        window.alert("Not a number!");
-        return;
-      }
-    }
-
-    var hold = seg1.adj.keys().next().value.affiliation;
-    this.puzzle.twist(seg1.track, theta, hold);
-  }
-  twistCmd(selector) {
-    if ( selector.selections.length != 1 ) {
-      window.alert("Please select one track!");
-      return;
-    }
-    var track = selector.selections[0];
-    if ( !(track instanceof SphTrack) ) {
-      window.alert("Not track!");
-      return;
-    }
-
-    var passwords = this.puzzle.analyzer.decipher(track);
-    var keys = Array.from(passwords.keys()).sort();
-    var q = "select shift:\n"
-            + keys.map((key, i) => `${i}: ${key}`).join(",\n")
-            + `.\n (current: ${track.shift})`;
-    var i = parseInt(window.prompt(q));
-    if ( typeof i != "number" && i instanceof Number ) {
-      window.alert("Not a number!");
-      return;
-    }
-    if ( Number.isNaN(i) ) {
-      window.alert("Not a number!");
-      return;
-    }
-    if ( i >= keys.length || i < 0 ) {
-      window.alert("Improper index!");
-      return;
-    }
-
-    var theta = this.puzzle.analyzer.mod4(keys[i]-track.shift);
-    var hold = track.outer[0].affiliation;
-    this.puzzle.twist(track, theta, hold);
   }
 
   structCmd(selector) {

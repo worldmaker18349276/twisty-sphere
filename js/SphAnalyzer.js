@@ -2913,9 +2913,9 @@ class Listenable
  * `{ type:"added"|"removed", target:SphElem|SphTrack }`, triggered after
  * adding/removing element/track.
  * `{ type:"rotated", target:SphElem }`, triggered after moving element.
- * `{ type:"modified", target:SphElem }`, triggered after modifying element, such
- * as adding/removing segments, modifying segment.  Notice that modifying
- * properties `adj` and `track` will not trigger this event.
+ * `{ type:"modified", target:SphElem|SphTrack }`, triggered after modifying
+ * element/track, such as adding/removing segments, modifying segment.  Notice
+ * that modifying properties `adj` and `track` will not trigger this event.
  *
  * @class
  * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
@@ -2990,12 +2990,16 @@ class SphPuzzle extends Listenable
     var element = seg.affiliation;
     this.analyzer.mergePrev(seg);
     this.trigger("modified", element);
+    if ( seg.track )
+      this.trigger("modified", seg.track);
     this.network.setStatus("broken");
   }
   interpolate(seg, theta) {
     var element = seg.affiliation;
     this.analyzer.interpolate(seg, theta);
     this.trigger("modified", element);
+    if ( seg.track )
+      this.trigger("modified", seg.track);
     this.network.setStatus("broken");
   }
   mergeEdge(seg1, seg2) {
@@ -3060,10 +3064,16 @@ class SphPuzzle extends Listenable
       new_bd.push(...in_bd, ...out_bd);
     }
     var track;
+    var locked = new Set();
     if ( new_bd.length )
       if ( !new_bd[0].track )
-        if ( track = this.analyzer.buildTrack(new_bd[0]) )
+        if ( track = this.analyzer.buildTrack(new_bd[0]) ) {
           this.add(track);
+          for ( let [track_] of track.latches )
+            locked.add(track_);
+        }
+    for ( let track of locked )
+      this.trigger("modified", track);
 
     this.network.setStatus("broken");
 
@@ -3087,6 +3097,7 @@ class SphPuzzle extends Listenable
 
     for ( let track_ of new_tracks )
       this.add(track_);
+    this.trigger("modified", track);
 
     return track;
   }
@@ -3127,6 +3138,8 @@ class SphPuzzle extends Listenable
         if ( seg !== seg.prev ) {
           this.analyzer.mergePrev(seg);
           modified.add(element);
+          if ( seg.track )
+            modified.add(seg.track);
         }
     }
 
