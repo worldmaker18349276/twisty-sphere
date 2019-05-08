@@ -180,22 +180,24 @@ class Display
 
     // click event
     {
-      let click_spot = {};
+      let click_spot = undefined;
 
       this.dom.addEventListener("mousedown", event => {
-        if ( !click_spot.object )
-          click_spot = this.spotOn(event.offsetX, event.offsetY);
+        click_spot = this.spotOn(event.offsetX, event.offsetY);
       }, false);
       this.dom.addEventListener("mousemove", event => {
-        if ( click_spot.object ) {
+        if ( click_spot && click_spot.object ) {
           if ( Math.abs(event.movementX) > 1 || Math.abs(event.movementY) > 1 )
-            click_spot = {};
+            click_spot = undefined;
         }
       }, false);
       this.dom.addEventListener("mouseup", event => {
-        if ( click_spot.object ) {
-          click_spot.object.dispatchEvent(event3D("click", event, click_spot));
-          click_spot = {};
+        if ( click_spot ) {
+          if ( click_spot.object )
+            click_spot.object.dispatchEvent(event3D("click", event, click_spot));
+          else
+            this.scene.dispatchEvent({type:"click", originalEvent:event});
+          click_spot = undefined;
         }
       }, false);
     }
@@ -715,25 +717,11 @@ class SphPuzzleView
     this.display = display;
     this.selector = selector;
 
-    this.selectOn = "segment";
     this.hover_handler = event => {
-      if ( event.type == "mouseenter" ) {
-        var seg = event.target.parent.userData.origin;
-        switch ( this.selectOn ) {
-          case "segment":
-            this.selector.preselection = seg;
-            break;
-          case "element":
-            this.selector.preselection = seg.affiliation;
-            break;
-          case "track":
-            this.selector.preselection = seg.track;
-            break;
-        }
-
-      } else { // mouseleave
+      if ( event.type == "mouseenter" )
+        this.selector.preselection = event.target.parent.userData.origin;
+      else // mouseleave
         this.selector.preselection = undefined;
-      }
     };
     this.select_handler = event =>
       event.originalEvent.ctrlKey ? this.selector.toggle() : this.selector.select();
@@ -748,7 +736,22 @@ class SphPuzzleView
       this.ball = new THREE.Mesh(geo, mat);
 
       this.ball.userData.hoverable = true;
-      this.ball.addEventListener("click", this.select_handler);
+      this.ball.addEventListener("click", event => {
+        if ( this.origin.network.status == "up-to-date" ) {
+          var point = event.point.toArray();
+          var sel = this.origin.grab(point);
+          if ( sel instanceof SphJoint )
+            sel = this.origin.network.segsOf(sel).next().value.affiliation;
+          if ( event.originalEvent.ctrlKey )
+            this.selector.toggle(sel);
+          else
+            this.selector.select(sel);
+        }
+      });
+      this.display.scene.addEventListener("click", event => {
+        if ( !event.originalEvent.ctrlKey )
+          this.selector.reselect();
+      });
 
       this.display.add(this.ball, this.root);
     }
@@ -1885,12 +1888,6 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
     super(panel, selector);
     this.puzzle = puzzle;
 
-    // this.addCmd(this.NextOfCmd.bind(this), "", "right");
-    // this.addCmd(this.PrevOfCmd.bind(this), "", "left");
-    // this.addCmd(this.AdjOfCmd.bind(this), "", "down");
-    // this.addCmd(this.AffOfCmd.bind(this), "", "up");
-    // this.addCmd(this.TrackOfCmd.bind(this), "", "tab");
-
     this.addCmd(this.mergeCmd.bind(this), "merge (shift+M)", "shift+M");
     this.addCmd(this.interCmd.bind(this), "inter (shift+I)", "shift+I");
     this.addCmd(this.sliceCmd.bind(this), "slice (shift+S)", "shift+S");
@@ -1903,85 +1900,46 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
     this.addCmd(this.unbandageCmd.bind(this), "unbandage");
   }
 
-  NextOfCmd(selector) {
-    var sel = selector.selections[selector.selections.length-1];
-    if ( !sel || !(sel instanceof SphSeg) )
-      return;
-    selector.replace(sel.next);
-  }
-  PrevOfCmd(selector) {
-    var sel = selector.selections[selector.selections.length-1];
-    if ( !sel || !(sel instanceof SphSeg) )
-      return;
-    selector.replace(sel.prev);
-  }
-  AdjOfCmd(selector) {
-    var sel = selector.selections[selector.selections.length-1];
-    if ( !sel || !(sel instanceof SphSeg) )
-      return;
-    selector.replace(sel.adj.keys().next().value);
-  }
-  AffOfCmd(selector) {
-    var sel = selector.selections[selector.selections.length-1];
-    if ( !sel || !(sel instanceof SphSeg) )
-      return;
-    selector.replace(sel.affiliation);
-  }
-  TrackOfCmd(selector) {
-    var sel = selector.selections[selector.selections.length-1];
-    if ( !sel || !(sel instanceof SphSeg) )
-      return;
-    selector.replace(sel.track);
-  }
-
   mergeCmd(selector) {
-    if ( selector.selections.length == 1 ) {
-      let knot = selector.selections[0];
-      if ( !(knot instanceof SphKnot) ) {
-        window.alert("Not knot!");
-        return;
-      }
-
+    var len = selector.selections.length;
+    var [sel1, sel2] = selector.selections;
+    
+    if ( len == 1 && sel1 instanceof SphKnot ) {
       this.selector.reselect();
-      this.puzzle.trim(knot);
+      this.puzzle.trim(sel1);
 
-    } else if ( selector.selections.length == 2 ) {
-      var [seg1, seg2] = selector.selections;
-      if ( !(seg1 instanceof SphSeg) || !(seg2 instanceof SphSeg) ) {
-        window.alert("Not segment!");
+    } else if ( len == 2 && sel1 instanceof SphElem && sel2 instanceof SphElem ) {
+      selector.reselect();
+      this.puzzle.mergeElements(sel1, sel2);
+      selector.reselect(sel1);
+
+    } else if ( len == 2 && sel1 instanceof SphSeg && sel2 instanceof SphSeg && sel1.adj.has(sel2) ) {
+      selector.reselect();
+      this.puzzle.mergeEdge(sel1, sel2);
+
+    } else if ( len == 2 && sel1 instanceof SphSeg && sel2 instanceof SphSeg && sel1.prev === sel2 ) {
+      if ( !this.puzzle.analyzer.isTrivialVertex(sel1) ) {
+        window.alert("Cannot merge segments!");
         return;
       }
 
-      if ( seg1.affiliation !== seg2.affiliation ) {
-        selector.reselect();
-        this.puzzle.mergeElements(seg1.affiliation, seg2.affiliation);
-        selector.reselect(seg1, seg2);
+      selector.reselect();
+      this.puzzle.mergeVertex(sel1);
+      selector.select(sel2);
 
-      } else if ( seg1.adj.has(seg2) ) {
-        selector.reselect();
-        this.puzzle.mergeEdge(seg1, seg2);
-
-      } else if ( seg1.next === seg2 || seg2.next === seg1 ) {
-        if ( seg1.next === seg2 ) seg1 = seg2;
-        if ( seg1 === seg1.prev || !this.puzzle.analyzer.isTrivialVertex(seg1) ) {
-          window.alert("Cannot merge!");
-          return;
-        }
-
-        selector.reselect();
-        let prev = seg1.prev;
-        this.puzzle.mergeVertex(seg1);
-        selector.select(prev);
-
-      } else {
-        window.alert("merge what?");
+    } else if ( len == 2 && sel1 instanceof SphSeg && sel2 instanceof SphSeg && sel2.prev === sel1 ) {
+      if ( !this.puzzle.analyzer.isTrivialVertex(sel2) ) {
+        window.alert("Cannot merge segments!");
+        return;
       }
+
+      selector.reselect();
+      this.puzzle.mergeVertex(sel2);
+      selector.select(sel1);
 
     } else {
-      window.alert("Please select two segments or one knot!");
-
+      window.alert("merge what?");
     }
-
   }
   interCmd(selector) {
     if ( selector.selections.length != 1 ) {
@@ -2172,6 +2130,99 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
   }
 }
 
+class SphPuzzleViewExplorer
+{
+  constructor(selector, puzzle) {
+    this.selector = selector;
+    this.puzzle = puzzle;
+
+    function *subselector(it) {
+      var arr = Array.from(it);
+      const N = arr.length;
+      if ( N == 0 ) return;
+
+      var step;
+      for ( let i=0; true; i=(i+step+N)%N ) {
+        let sel = arr[i];
+        selector.preselection = sel;
+        step = yield;
+        if ( step == 0 )
+          return selector.replace(sel);
+      }
+    }
+
+    var sel;
+    selector.on("add", Object, event => sel = event.target);
+    selector.on("remove", Object, event => sel = undefined);
+
+    var options;
+    window.addEventListener("keydown", event => {
+      if ( !sel || event.repeat )
+        return;
+
+      if ( sel instanceof SphSeg ) {
+        if ( event.key == "ArrowLeft" && !options ) {
+          selector.preselection = sel.prev;
+          options = undefined;
+          event.preventDefault();
+
+        } else if ( event.key == "ArrowRight" && !options ) {
+          selector.preselection = sel.next;
+          options = undefined;
+          event.preventDefault();
+
+        } else if ( event.key == "ArrowDown" ) {
+          options = subselector(sel.adj.keys());
+          options.next();
+          event.preventDefault();
+
+        } else if ( event.key == "ArrowUp" ) {
+          options = subselector(sel.affiliation.fly());
+          options.next();
+          event.preventDefault();
+
+        } else if ( event.key == "ArrowLeft" && options ) {
+          options.next(-1);
+          event.preventDefault();
+
+        } else if ( event.key == "ArrowRight" && options ) {
+          options.next(1);
+          event.preventDefault();
+
+        } else {
+          options = undefined;
+        }
+      }
+
+    });
+    window.addEventListener("keyup", event => {
+      if ( !sel )
+        return;
+
+      if ( sel instanceof SphSeg ) {
+        if ( event.key == "ArrowLeft" && !options ) {
+          selector.replace(sel.prev);
+          event.preventDefault();
+
+        } else if ( event.key == "ArrowRight" && !options ) {
+          selector.replace(sel.next);
+          event.preventDefault();
+
+        } else if ( event.key == "ArrowDown" && options ) {
+          options.next(0);
+          options = undefined;
+          event.preventDefault();
+
+        } else if ( event.key == "ArrowUp" && options ) {
+          options.next(0);
+          options = undefined;
+          event.preventDefault();
+        }
+      }
+    });
+  }
+}
+
 
 class SphPuzzleWorld
 {
@@ -2197,13 +2248,14 @@ class SphPuzzleWorld
     var cmd_panel = this.panel.ctrls[this.panel.addFolder("commands")];
     this.cmd = new SphPuzzleWorldCmdMenu(cmd_panel, this.selector, this.puzzle);
 
+    new SphPuzzleViewExplorer(this.selector, this.puzzle);
+
     // var pzl_panel = this.panel.ctrls[this.panel.addFolder("puzzle")];
     // this.pzl_tree = new SphPuzzleTreeViewPanel(pzl_panel, this.puzzle, this.puzzle.view);
     // var net_panel = this.panel.ctrls[this.panel.addFolder("network")];
     // this.net_tree = new SphNetworkTreeViewPanel(net_panel, this.puzzle.network, this.puzzle.network.view);
 
     var sel_panel = this.panel.ctrls[this.panel.addFolder("select", true)];
-    sel_panel.gui.add(this.puzzle.view, "selectOn", ["segment", "element", "track"]).name("select on");
     this.sel = new SelectPanel(sel_panel, this.selector);
     this.sel.addPropBuilder(this.puzzle.view);
     this.sel.addPropBuilder(this.puzzle.network.view);

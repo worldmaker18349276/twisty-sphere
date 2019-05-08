@@ -611,7 +611,11 @@ class SphModel
         return index;
   }
   reorder(param, ...perms) {
-    if ( param[0][0].next ) { // list-like
+    var item = this.items(param).next().value;
+    if ( item === undefined )
+      return param;
+
+    if ( item[1].next ) { // list-like
       for ( let perm of perms ) {
         let param_ = [];
         for ( let [[i,j,k,l], val] of this.items(param) )
@@ -622,7 +626,7 @@ class SphModel
         param = param_;
       }
 
-    } else if ( Array.isArray(param[0][0]) ) { // array-like
+    } else { // array-like
       for ( let perm of perms ) {
         let param_ = [];
         for ( let [[i,j,k,l], val] of this.items(param) ) {
@@ -632,8 +636,6 @@ class SphModel
         param = param_;
       }
 
-    } else {
-      console.assert(false);
     }
 
     return param;
@@ -2717,8 +2719,26 @@ class SphAnalyzer
    */
   recognize(model, param, known=[]) {
     const shape = model.shapes[0];
-    if ( shape.fold == 0 )
-      throw new Error("too trivial!");
+
+    if ( shape.fold == 0 ) {
+      console.assert(model.shapes.length <= 2 && model.shapes[model.shapes.length-1].fold == 0);
+
+      let seg1 = param[0][0];
+      let buffer = [];
+      for ( let [seg2, offset] of seg1.adj ) {
+        let index1 = model.indexOf(param, seg1);
+        let index2 = model.indexOf(param, seg2);
+        buffer.push([index1, index2, offset]);
+      }
+
+      let config = known.find(config => this.cmp(buffer, config.adjacencies) == 0);
+      if ( config === undefined ) {
+        config = new SphConfig({model});
+        config.adjacencies = buffer;
+      }
+
+      return [config, [model.I()]];
+    }
 
     // determine indices of segments and compute length of adjacency table
     const INDEX = Symbol("index");
@@ -2788,7 +2808,7 @@ class SphAnalyzer
     permutations.unshift(res.value);
 
     // structure of config
-    config = new SphConfig({model});
+    var config = new SphConfig({model});
     config.adjacencies = buffer;
     var perm0 = model.inverse(res.value);
     config.symmetries = permutations.map(perm => model.followedBy(perm0, perm))
@@ -2802,13 +2822,13 @@ class SphAnalyzer
   }
 
   /**
-   * Find the joint hold at given point.
+   * Find the joint contains given point.
    *
    * @param {SphKnot} knot
    * @param {number[]} point
-   * @returns {Array} `[[knot, index], ...]`.
+   * @returns {object} Joint, or element if it is simply connected.
    */
-  hold(knot, point) {
+  grab(knot, point) {
     var joint;
     var not_here = new Set();
 
@@ -2828,13 +2848,11 @@ class SphAnalyzer
       let joint_ = knot.jointAt(index);
       if ( joint_ === undefined )
         return knot.segmentAt(index).affiliation;
-      if ( joint_ !== joint )
-        not_here.clear();
       joint = joint_;
       not_here.add(knot);
 
       // next knot to check
-      knot = Array.from(joint.ports.keys()).find(knot => not_here.has(knot));
+      knot = Array.from(joint.ports.keys()).find(knot => !not_here.has(knot));
       if ( !knot )
         return joint;
     }
@@ -3150,9 +3168,8 @@ class SphPuzzle extends Listenable
   }
 
   recognize() {
-    for ( let knot of this.network.knots ) if ( knot.status == "outdated" ) {
+    for ( let knot of this.network.knots ) {
       let [config, perms] = this.analyzer.recognize(knot.model, knot.segments, []);
-  
       this.network.transit(knot, perms[0], config);
     }
   }
@@ -3175,6 +3192,12 @@ class SphPuzzle extends Listenable
     this.analyzer.assemble(this.network.knots, false);
     this.analyzer.orient(knot0, index0, orientation0, false);
   }
+
+  grab(point) {
+    if ( this.network.status != "up-to-date" )
+      throw new Error();
+    return this.analyzer.grab(this.network.knots[0], point);
+  }
 }
 
 /**
@@ -3185,8 +3208,8 @@ class SphPuzzle extends Listenable
  * is broken, up-to-date or outdated.
  * `{ type:"added"|"removed"|"modified", target:SphKnot|SphJoint }`, triggered
  * after adding/removing/modifying knot/joint.
- * `{ type:"binded", target:SphJoint }`, triggered after binding joints.
- * `{ type:"unbinded", target:SphJoint }`, triggered after unbinding joint.
+ * `{ type:"binded"|"unbinded", target:SphJoint }`, triggered after
+ * binding/unbinding joints.
  *
  * @class
  * @property {string} status
@@ -3396,7 +3419,7 @@ class SphNetwork extends Listenable
     knot.joints = knot.model.reorder(knot.joints, perm);
     knot.segments = knot.model.reorder(knot.segments, perm);
     if ( config ) knot.configuration = config;
-    this.network.trigger("modified", knot);
+    this.trigger("modified", knot);
   }
 }
 
