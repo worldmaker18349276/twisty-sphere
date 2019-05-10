@@ -741,15 +741,19 @@ class SphPuzzleView
 
       this.ball.userData.hoverable = true;
       this.ball.addEventListener("click", event => {
-        if ( this.origin.network.status == "up-to-date" ) {
+        if ( this.origin.network.status != "broken" ) {
           var point = event.point.toArray();
           var sel = this.origin.grab(point);
           if ( sel instanceof SphJoint )
-            sel = this.origin.network.segsOf(sel).next().value.affiliation;
+            sel = this.origin.network.fly(sel).next().value.affiliation;
           if ( event.originalEvent.ctrlKey )
             this.selector.toggle(sel);
           else
             this.selector.select(sel);
+
+        } else {
+          if ( !event.originalEvent.ctrlKey )
+            this.selector.reselect();
         }
       });
       this.display.scene.addEventListener("click", event => {
@@ -872,7 +876,7 @@ class SphPuzzleView
       this.eraseElement(event.target);
       this.drawElement(event.target);
     });
-    puzzle.on("rotated", SphElem, event => {
+    puzzle.on("twisted", SphElem, event => {
       for ( let seg of event.target.boundaries )
         seg.view.quaternion.set(...seg.orientation);
     });
@@ -885,6 +889,10 @@ class SphPuzzleView
     puzzle.on("added", SphTrack, event => this.addTwister(event.target));
     puzzle.on("removed", SphTrack, event => this.removeTwister(event.target));
     puzzle.on("modified", SphTrack, event => {
+      this.removeTwister(event.target);
+      this.addTwister(event.target);
+    });
+    puzzle.on("twisted", SphTrack, event => {
       this.removeTwister(event.target);
       this.addTwister(event.target);
     });
@@ -1432,12 +1440,10 @@ class SphNetworkView
       this.graph.removeNode(edge.from);
   }
   eraseKnot(knot) {
-    var node = this.graph.getNode(knot.node_id);
     this.graph.removeNode(knot.node_id);
     delete knot.node_id;
   }
   eraseJoint(joint) {
-    var node = this.graph.getNode(joint.node_id);
     this.graph.removeNode(joint.node_id);
     delete joint.node_id;
   }
@@ -1631,6 +1637,7 @@ class SphStateView
       this.drawTab(knot);
     network.on("added", SphKnot, event => this.drawTab(event.target));
     network.on("removed", SphKnot, event => this.eraseTab(event.target));
+    network.on("twisted", SphKnot, event => this.updateTab(event.target));
     this.selector.on("add", SphKnot, event => this.showTab(event.target));
     network.on("statuschanged", SphNetwork, event => {
       if ( event.target.status == "broken" )
@@ -1716,7 +1723,7 @@ class SphStateView
             this.parentNode.appendChild(target);
             knot.segments[i].push(...knot.segments[i].splice(j0, 1));
           }
-          knot.host.setStatus("outdated", knot);
+          knot.host.setStatus("outdated");
         });
 
         item.addEventListener("mouseenter", event => {
@@ -1761,6 +1768,8 @@ class SphStateView
 
     for ( let list of this.makeParamTable(knot) )
       tab.appendChild(list);
+    tab.addEventListener("click", () => this.selector.reselect());
+
     knot.tab = tab;
     tab.origin = knot;
     this.container.appendChild(tab);
@@ -1775,11 +1784,21 @@ class SphStateView
       tab.classList.remove("show");
     knot.tab.classList.add("show");
   }
+  updateTab(knot) {
+    for ( let [[i,j,k,l], seg] of knot.model.items(knot.segments) )
+      if ( k == 0 && l == 0 ) {
+        let item = this.getItem(knot, [i,j]);
+        item.textContent = knot.segments[i][j].name;
+      }
+  }
 
   getItem(knot, [i,j]) {
     return knot.tab.querySelector(`div.list:nth-of-type(${i+1})>div.item:nth-of-type(${j+1})`);
   }
   itemsOf(target) {
+    if ( this.network.status == "broken" )
+      return [];
+
     if ( target instanceof SphSeg ) {
       for ( let [knot, index] of this.network.indicesOf(target) )
         return [this.getItem(knot, index)];

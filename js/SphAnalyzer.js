@@ -2484,14 +2484,6 @@ class SphAnalyzer
                              .map(a => a[1]);
       model.shapes = keys.map(i => model.shapes[i]);
       park.knot.segments = keys.map(i => park.knot.segments[i]);
-
-      // make adjacency table
-      for ( let [index1, seg] of model.items(park.knot.segments) )
-        for ( let [adj_seg, offset] of seg.adj ) {
-          let index2 = park.knot.indexOf(adj_seg);
-          if ( this.cmp(index1, index2) < 0 )
-            park.knot.configuration.adjacencies.push([index1, index2, offset]);
-        }
     }
 
     // make joints
@@ -2529,6 +2521,20 @@ class SphAnalyzer
     }
 
     return parks.map(park => park.knot);
+  }
+  /**
+   * Make configuration of knot.
+   * 
+   * @param {SphKnot} knot
+   */
+  configure(knot) {
+    knot.configuration.adjacencies = [];
+    for ( let [index1, seg] of knot.model.items(knot.segments) )
+      for ( let [adj_seg, offset] of seg.adj ) {
+        let index2 = knot.indexOf(adj_seg);
+        if ( this.cmp(index1, index2) < 0 )
+          knot.configuration.adjacencies.push([index1, index2, offset]);
+      }
   }
 
   /**
@@ -2912,10 +2918,11 @@ class Listenable
  * events are:
  * `{ type:"added"|"removed", target:SphElem|SphTrack }`, triggered after
  * adding/removing element/track.
- * `{ type:"rotated", target:SphElem }`, triggered after moving element.
  * `{ type:"modified", target:SphElem|SphTrack }`, triggered after modifying
  * element/track, such as adding/removing segments, modifying segment.  Notice
  * that modifying properties `adj` and `track` will not trigger this event.
+ * `{ type:"twisted", target:SphElem|SphTrack }`, triggered after twisting
+ * element/track.
  *
  * @class
  * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
@@ -3017,7 +3024,7 @@ class SphPuzzle extends Listenable
   }
 
   mergeElements(element0, ...elements) {
-    if ( this.network.status == "up-to-date" ) {
+    if ( this.network.status != "broken" ) {
       let joint0 = this.network.jointsOf(element0, true).next().value;
       let joints = elements.map(elem => this.network.jointsOf(elem, true).next().value);
       this.network.bind(joint0, ...joints);
@@ -3030,25 +3037,52 @@ class SphPuzzle extends Listenable
 
     return element0;
   }
-  unbandage(seg) {
-    var joint = this.network.jointsOf(seg).next().value;
-    if ( !joint || joint.bandage.size == 1 )
+  unbandage(joint) {
+    if ( this.network.status == "broken" )
+      throw new Error("unable to unbandage without network structure!");
+
+    if ( joint.bandage.size == 1 )
       return;
     this.network.unbind(joint);
 
-    var elem = seg.affiliation;
-    var segs = Array.from(this.network.segsOf(joint))
+    var segs = Array.from(this.network.fly(joint))
                     .flatMap(seg => Array.from(seg.walk()));
+    var elem = segs[0].affiliation;
     var elem0 = elem.split(segs)[0];
     this.add(elem0);
     this.trigger("modified", elem);
     return elem0;
   }
+  trim(knot) {
+    if ( this.network.status == "broken" )
+      throw new Error("unable to trim knot without network structure!");
+
+    var joints = knot.joints.flat(2);
+    if ( joints.length > 1 ) {
+      this.network.bind(...joints);
+      joints = joints.map(joint => this.network.unfuse(joint, knot)).filter(joint => joint);
+      this.network.fuse(...joints);
+    }
+    this.network.remove(knot);
+
+    var elems = knot.segments.flat().map(seg => seg.affiliation);
+    var segs = knot.segments.flat().flatMap(seg => Array.from(seg.walk()));
+    var tracks = segs.map(seg => seg.track).filter(track => track);
+
+    elems[0].merge(...elems.slice(1));
+    elems[0].withdraw(...segs);
+
+    for ( let track of new Set(tracks) )
+      this.remove(track);
+    for ( let elem of new Set(elems) ) if ( elem !== elems[0] )
+      this.remove(elem);
+    this.trigger("modified", elems[0]);
+  }
 
   rotate(q) {
     for ( let element of this.elements ) {
       element.rotate(q);
-      this.trigger("rotated", element);
+      this.trigger("twisted", element);
     }
   }
   slice(center, radius, elements=this.elements.slice()) {
@@ -3063,16 +3097,21 @@ class SphPuzzle extends Listenable
       }
       new_bd.push(...in_bd, ...out_bd);
     }
+
     var track;
-    var locked = new Set();
     if ( new_bd.length )
       if ( !new_bd[0].track )
-        if ( track = this.analyzer.buildTrack(new_bd[0]) ) {
+        if ( track = this.analyzer.buildTrack(new_bd[0]) )
           this.add(track);
-          for ( let [track_] of track.latches )
-            locked.add(track_);
-        }
-    for ( let track of locked )
+
+    var sliced_tracks = new Set();
+    for ( let bd of new_bd ) {
+      if ( bd.next.track && !new_bd.includes(bd.next) )
+        sliced_tracks.add(bd.next.track);
+      if ( bd.prev.track && !new_bd.includes(bd.prev) )
+        sliced_tracks.add(bd.prev.track);
+    }
+    for ( let track of sliced_tracks )
       this.trigger("modified", track);
 
     this.network.setStatus("broken");
@@ -3093,11 +3132,13 @@ class SphPuzzle extends Listenable
     var new_tracks = this.analyzer.twist([[track, theta]], hold);
 
     for ( let elem of moved )
-      this.trigger("rotated", elem);
+      this.trigger("twisted", elem);
 
     for ( let track_ of new_tracks )
       this.add(track_);
-    this.trigger("modified", track);
+    this.trigger("twisted", track);
+
+    this.network.setStatus("outdated");
 
     return track;
   }
@@ -3108,8 +3149,6 @@ class SphPuzzle extends Listenable
     for ( let group of this.analyzer.twistablePartOf(elements) )
       if ( group.length > 1 )
         this.mergeElements(...group);
-
-    var modified = new Set();
 
     // merge trivial edges
     for ( let element of this.elements ) {
@@ -3126,25 +3165,15 @@ class SphPuzzle extends Listenable
 
       if ( zippers.length ) {
         this.analyzer.glueAdj(zippers);
-        modified.add(element);
+        this.trigger("modified", element);
       }
     }
 
     // merge trivial vertices
-    for ( let element of this.elements ) {
-      let trivial = Array.from(element.boundaries)
-                         .filter(seg => this.analyzer.isTrivialVertex(seg));
-      for ( let seg of trivial )
-        if ( seg !== seg.prev ) {
-          this.analyzer.mergePrev(seg);
-          modified.add(element);
-          if ( seg.track )
-            modified.add(seg.track);
-        }
-    }
-
-    for ( let element of modified )
-      this.trigger("modified", element);
+    for ( let element of this.elements )
+      for ( let seg of element.boundaries )
+        if ( seg !== seg.prev && this.analyzer.isTrivialVertex(seg) )
+          this.mergeVertex(seg);
 
     this.network.setStatus("broken");
   }
@@ -3153,51 +3182,38 @@ class SphPuzzle extends Listenable
   structurize() {
     var knots = this.analyzer.structurize(this.elements);
 
-    this.network.setStatus("up-to-date");
-    this.network.clear();
+    this.network.setStatus("outdated");
     this.network.init(knots);
-  }
-  trim(knot) {
-    var joints = knot.joints.flat(2);
-    if ( joints.length > 1 ) {
-      this.network.bind(...joints);
-      joints = joints.map(joint => this.network.unfuse(joint, knot)).filter(joint => joint);
-      this.network.fuse(...joints);
-    }
-    this.network.remove(knot);
-
-    var segs = knot.segments.flat().flatMap(seg => Array.from(seg.walk()));
-    var tracks = knot.segments.flat().map(seg => seg.track).filter(track => track);
-    var elems = knot.segments.flat().map(seg => seg.affiliation);
-
-    elems[0].merge(...elems.slice(1));
-    elems[0].withdraw(...segs);
-
-    for ( let track of new Set(tracks) )
-      this.remove(track);
-    for ( let elem of new Set(elems) ) if ( elem !== elems[0] )
-      this.remove(elem);
-    this.trigger("modified", elems[0]);
   }
 
   recognize() {
+    if ( this.network.status == "broken" )
+      throw new Error("unable to recognize configuration without network structure!");
+
+    this.network.setStatus("up-to-date");
     for ( let knot of this.network.knots ) {
       let [config, perms] = this.analyzer.recognize(knot.model, knot.segments, []);
       this.network.transit(knot, perms[0], config);
     }
   }
   assemble(seg0, orientation0) {
+    if ( this.network.status == "broken" )
+      throw new Error("unable to assemble puzzle without network structure!");
+
     seg0 = seg0 || this.network.knots[0].segments[0][0];
     var [knot0, index0] = this.network.indicesOf(seg0).next().value;
     orientation0 = orientation0 || seg0.orientation.slice();
 
+    this.network.setStatus("up-to-date");
     this.analyzer.assemble(this.network.knots);
     this.analyzer.orient(knot0, index0, orientation0);
 
     for ( let elem of this.elements )
-      this.trigger("rotated", elem);
+      this.trigger("twisted", elem);
   }
   check() {
+    console.assert(this.network.status == "up-to-date");
+
     var seg0 = this.network.knots[0].segments[0][0];
     var [knot0, index0] = this.network.indicesOf(seg0).next().value;
     var orientation0 = seg0.orientation.slice();
@@ -3207,14 +3223,22 @@ class SphPuzzle extends Listenable
   }
 
   grab(point) {
-    if ( this.network.status != "up-to-date" )
-      throw new Error();
+    if ( this.network.status == "broken" )
+      throw new Error("unable to grab element of puzzle without network structure!");
+
     return this.analyzer.grab(this.network.knots[0], point);
   }
 }
 
 /**
  * Network structure of puzzle.
+ * It contains information about network structure, configuration and parameters
+ * of segments; they are strongly correlated and hard to separate.  Network
+ * structure describe the division of puzzle, which wont changed after twisting;
+ * configuration give a draft to construct sub-puzzle, but one still need to know
+ * network to build whole puzzle; parameters of segments make bridge between
+ * concrete objects and network structure, but it only makes sense under a given
+ * configuration.
  * It equips with event system, which is useful for making GUI.  The possible
  * events are:
  * `{ type:"statuschanged", target:SphNetwork }`, triggered when network structure
@@ -3223,9 +3247,14 @@ class SphPuzzle extends Listenable
  * after adding/removing/modifying knot/joint.
  * `{ type:"binded"|"unbinded", target:SphJoint }`, triggered after
  * binding/unbinding joints.
+ * `{ type:"twisted", target:SphKnot }`, triggered after configuration/segments
+ * changed.
  *
  * @class
- * @property {string} status
+ * @property {string} status - Status of network structure and configuration:
+ *   "up-to-date" means network structure and configuration are up-to-date;
+ *   "outdated" means configuration is outdated, but network structure is still
+ *   valid; "broken" means network structure is outdated.
  * @property {SphKnot[]} knots - All knots of this network.
  * @property {SphJoint[]} joints - All joints of this network.
  */
@@ -3234,7 +3263,7 @@ class SphNetwork extends Listenable
   constructor() {
     super();
 
-    this.status = "outdated";
+    this.status = "broken";
     this.knots = [];
     this.joints = [];
   }
@@ -3423,7 +3452,7 @@ class SphNetwork extends Listenable
 
     }
   }
-  *segsOf(joint) {
+  *fly(joint) {
     for ( let knot of joint.ports.keys() )
       yield knot.segmentAt(knot.indexOf(joint));
   }
@@ -3432,7 +3461,7 @@ class SphNetwork extends Listenable
     knot.joints = knot.model.reorder(knot.joints, perm);
     knot.segments = knot.model.reorder(knot.segments, perm);
     if ( config ) knot.configuration = config;
-    this.trigger("modified", knot);
+    this.trigger("twisted", knot);
   }
 }
 
