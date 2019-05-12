@@ -581,12 +581,13 @@ class SphModel
     for ( let i=0; i<this.shapes.length; i++ ) if ( Array.isArray(param[i]) ) {
       const shape = this.shapes[i];
       const N = shape.fold == 0 ? 1 : shape.fold;
+      const L = shape.patch.length;
       for ( let j=0; j<shape.count; j++ ) if ( j in param[i] ) {
         let loop = param[i][j];
 
         if ( loop.next ) { // list-like
           for ( let k=0; k<N; k++ )
-            for ( let l=0; l<shape.patch.length; l++ ) {
+            for ( let l=0; l<L; l++ ) {
               yield [[i,j,k,l], loop];
               loop = loop.next;
             }
@@ -594,9 +595,9 @@ class SphModel
 
         } else if ( Array.isArray(loop) ) { // array-like
           for ( let k=0; k<N; k++ )
-            for ( let l=0; l<shape.patch.length; l++ )
-              if ( (k*N+l) in loop )
-                yield [[i,j,k,l], loop[k*N+l]];
+            for ( let l=0; l<L; l++ )
+              if ( (k*L+l) in loop )
+                yield [[i,j,k,l], loop[k*L+l]];
 
         } else {
           console.assert(false);
@@ -907,7 +908,7 @@ class SphAnalyzer
    * Snap to some values by fuzzy comparing.
    *
    * @param {number} val - The value to snap.
-   * @param {number[]} snaps - The values to snap.
+   * @param {number[]} [snaps=[]] - The values to snap.
    * @returns {number} The closest value in `snaps`, or original value if not
    *   close enough.
    */
@@ -918,7 +919,7 @@ class SphAnalyzer
    * Modulo 4 with snapping.
    *
    * @param {number} val - The value to mod.
-   * @param {number[]} snaps - The values to snap.
+   * @param {number[]} [snaps=[]] - The values to snap.
    *   Snapping occur when they are roughly congruent modulo 4.
    * @returns {number} Modulus.
    */
@@ -1086,6 +1087,27 @@ class SphAnalyzer
     console.assert(this.cmp(angleTo(center, v3)/Q, radius) == 0);
     return new SphCircle({radius, orientation});
   }
+  /**
+   * Make circle that intersect given circle.
+   *
+   * @param {SphCircle} circle - The circle to intersect.
+   * @param {number} theta - The center of intersection.
+   * @param {number} arc - The arc of intersection.
+   * @param {number} angle - The angle of intersection.
+   * @returns {SphCircle} The circle that intersect `circle`.
+   */
+  intercircle(circle, theta, arc, angle) {
+    var [dis2, radius2] = this.leaf(circle.radius, arc/2, 2-angle);
+    var vec = [
+      Math.sin(dis2/2*Q)*Math.cos(theta*Q),
+      Math.sin(dis2/2*Q)*Math.sin(theta*Q),
+      Math.cos(dis2/2*Q)
+    ];
+    var center = rotate(vec, circle.orientation);
+    var orientation = q_align(center, circle.center);
+    var radius = radius2/2;
+    return new SphCircle({radius, orientation});
+  }
 
   /**
    * All loops passing through segments.
@@ -1111,7 +1133,7 @@ class SphAnalyzer
    * @param {SphSeg} seg0 - The starting segment.
    * @param {number} theta - Offset of point respect to vertex of `seg0`,
    *   in the range of [0, `seg0.arc`].
-   * @param {number=} prefer - The prefer side when jumping to end point of segment.
+   * @param {number} [prefer=1] - The prefer side when jumping to end point of segment.
    *   `+1` (default) means upper limit of offset; `-1` means lower limit of offset.
    * @returns {object[]} Segment and corresponding offset after jump: `[seg, theta]`,
    *   or empty array if no adjacent segment to jump.
@@ -1139,7 +1161,7 @@ class SphAnalyzer
    * It will stop before returning to the starting segment or has no next segment.
    *
    * @param {SphSeg} seg0 - The segment passing through center.
-   * @param {number=} offset - Offset of center respect to vertex of `seg0`,
+   * @param {number} [offset=0] - Offset of center respect to vertex of `seg0`,
    *   in the range of [0, `seg0.arc`).
    * @yields {object[]} Information when spinning to segment, which has value
    *   `[angle, seg, offset]`:
@@ -1196,7 +1218,7 @@ class SphAnalyzer
    * Collect all values of generator only when it returns true finally.
    *
    * @param {object} gen - The generator to collect.
-   * @returns {Array=} Generated values if `gen` return true finally, or `undefined`.
+   * @returns {Array} Generated values if `gen` return true finally, or `undefined`.
    */
   full(gen) {
     var list = [];
@@ -1475,7 +1497,7 @@ class SphAnalyzer
    * @yields {object} Information about meet point, which has values
    *   `{angle, segment, offset, circle, theta}`.
    *   `angle` is angle from `circle` to `segment` at meet point (angle between
-   *   two directed tangent vector), in the range of [-2, 2].
+   *   two directed tangent vectors), in the range of [-2, 2].
    *   `segment` is the segment that meets with circle;
    *   `offset` is offset of meet point along `segment`, in the range of
    *   [0, `segment.arc`);
@@ -1843,10 +1865,10 @@ class SphAnalyzer
    * circles.
    *
    * @param {SphSeg} seg0 - The segment to test.
-   * @param {SphSeg[]} fixed - The fixed segments.
+   * @param {SphSeg[]} [boundaries] - The boundaries of this element.
    * @returns {boolean} True if `seg0` is twistable.
    */
-  isTwistable(seg0, fixed=seg0.affiliation.boundaries) {
+  isTwistable(seg0, boundaries=seg0.affiliation.boundaries) {
     if ( this.cmp(seg0.angle, 2) > 0 )
       return false;
     if ( this.cmp(seg0.next.angle, 2) > 0 )
@@ -1860,20 +1882,14 @@ class SphAnalyzer
 
     var circle = seg0.circle;
     var side = undefined;
-    for ( let loop of this.loops(fixed) ) {
-      let meets = Array.from(loop).flatMap(seg => Array.from(this.meetWith(seg, circle)));
-      meets = this.sortMeets(meets);
-      if ( meets.length == 0 )
-        continue;
+    let meets = Array.from(this.loops(boundaries)).flat()
+                     .flatMap(seg => Array.from(this.meetWith(seg, circle)));
+    meets = this.sortMeets(meets);
 
-      if ( meets.find(({type}) => type[1] == "0" || type[1] == "-") )
-        return false;
-
-      let side_ = meets[0].type[0];
-      console.assert(meets.every(({type}) => type[0] == side_));
-      if ( side_ != (side || (side = side_)) )
-        return false;
-    }
+    if ( meets.length == 0 )
+      return true;
+    if ( meets.some(({type}) => type[1] != "+" || type[0] != "+") )
+      return false;
 
     return true;
   }
@@ -1930,6 +1946,86 @@ class SphAnalyzer
     }
 
     return res;
+  }
+  /**
+   * Find sandglass-shape tips.
+   * Sandglass tips are the only case to deal with after fusing untwistable part;
+   * others types of tip will be detected by `isTwistable`.
+   * Merge them by `this.swap(seg1, seg2, 2, 2)`.
+   *
+   * @param {SphSeg[]} boundaries
+   * @returns {SphSeg[][]} Array of Sandglass-shape tips.
+   */
+  findSandglassTips(boundaries) {
+    var res = [];
+    var tips = Array.from(boundaries).filter(seg => this.cmp(seg.angle, 0) == 0);
+    for ( let i=0; i<tips.length; i++ ) for ( let j=i+1; j<tips.length; j++ ) {
+      let seg1 = tips[i];
+      let seg2 = tips[j];
+
+      if ( this.cmp(seg1.radius, seg2.prev.radius) != 0 )
+        continue;
+      if ( this.cmp(seg2.radius, seg1.prev.radius) != 0 )
+        continue;
+      if ( this.cmp(seg1.vertex, seg2.vertex) != 0 )
+        continue;
+      if ( this.cmp(seg1.circle.center, seg2.prev.circle.center) != 0 )
+        continue;
+      if ( this.cmp(seg2.circle.center, seg1.prev.circle.center) != 0 )
+        continue;
+
+      res.push([seg1, seg2]);
+    }
+
+    return res;
+  }
+  /**
+   * Merge inner and outer side of given track.  It will also swap segments of
+   * the segments of the track for preventing to form sandglass tips.
+   *
+   * @param {SphTrack} track
+   * @param {object} [shields]
+   * @return {SphElem[]} The two elements after sealing.
+   */
+  sealTrack(track, shields) {
+    var res = [];
+    for ( let side of ["inner", "outer"] ) {
+      let fence = track[side];
+      let elems = shields
+                ? shields[side].map(seg => seg.affiliation)
+                : track[side].map(seg => seg.affiliation);
+      elems = Array.from(new Set(elems));
+
+      elems[0].merge(...elems.slice(1));
+      res.push(elems[0]);
+
+      for ( let i=0; i<fence.length; i++ ) {
+        let seg1 = (fence[i-1] || fence[fence.length-1]).next;
+        let seg2 = fence[i];
+        let ang1 = seg1.angle+2;
+        let ang2 = 4-ang1;
+
+        this.swap(seg1, seg2, ang1, ang2);
+      }
+    }
+    return res;
+  }
+  /**
+   * Check if loops is separable by circle.
+   *
+   * @param {SphSeg[]} boundaries - The segments of loops to separate.
+   * @param {SphCircle} circle - The circle as separator.
+   * @returns {boolean}
+   */
+  isSeparableBy(boundaries, circle) {
+    for ( let loop of this.loops(boundaries) ) {
+      let meets = loop.flatMap(seg => Array.from(this.meetWith(seg, circle)));
+      meets = this.sortMeets(meets);
+      if ( meets.some(meet => meet.type[1]=="0") )
+        return false;
+    }
+    return true;
+
   }
 
   /**
@@ -2012,7 +2108,7 @@ class SphAnalyzer
    *
    * @param {Map<SphTrack,number>} op - The map that tell you which track should
    *   twist by what angle.
-   * @param {SphElem=} hold - The element whose orientation should be fixed.
+   * @param {SphElem} [hold] - The element whose orientation should be fixed.
    * @returns {SphTrack[]} New tracks after twist.
    */
   twist(op, hold) {
@@ -2088,96 +2184,128 @@ class SphAnalyzer
   }
 
   /**
-   * Make tick at end point of segment.
-   * Tick is diverged segments at end point of segment, which may form another
-   * intersected track.
+   * Find untwistable part along given track if this track is untwistable.
    *
-   * @param {SphSeg} prev_seg
-   * @returns {object} Tick at `prev_seg.next.vertex`, which has value
-   *   `{segment, subticks, is_free}`, and `subticks = [{angle, segment}, ...]`:
-   *   `segment` is next segment along extending circle of this segment;
-   *   `subtick.angle` is rolling angle;
-   *   `subtick.segment` is segment of subtick, which has vertex at tick center;
-   *   `is_free` indicate subticks are free or not.
+   * @param {SphSeg[]} fence - the segments at one side of track.
+   * @returns {SphSeg[]} The segments of untwistable part.
    */
-  makeTick(prev_seg) {
-    var [ang1, seg1] = [prev_seg.next.angle, prev_seg.next];
-    var subticks = [], pre = [], post = [];
-    var angle, segment, offset;
-    for ( [angle, segment, offset] of this.spin(seg1) ) {
-      angle = this.snap(angle+ang1, [0, 2, 4]);
-      let sgn = this.cmp([angle, segment.radius-1], [2, prev_seg.radius-1]);
-      if ( sgn == 0 ) break;
-      if ( sgn >  0 ) return {};
+  raiseShield(fence) {
+    var circle0 = fence[0].circle;
 
-      if ( angle == 0 )
-        pre.push(segment);
-      else if ( angle == 2 )
-        post.push(segment);
-      else
-        subticks.push({angle, segment});
+    var segments = new Set(fence);
+    for ( let seg of segments ) {
+      segments.add(seg.next);
+      segments.add(seg.prev);
+      if ( !fence.includes(seg) )
+        for ( let adj_seg of seg.adj.keys() )
+          segments.add(adj_seg);
     }
+    segments = Array.from(segments);
 
-    var is_free = false;
-    for ( let seg1 of pre )
-      if ( post.find(seg2 => this.cmp(2-seg1.radius, seg2.radius) == 0) ) {
-        is_free = true;
-        break;
+    var untwistable = new Set(fence);
+    var shield = [];
+    for ( let seg of untwistable )
+      shield.push(...seg.walk());
+
+    var i = 0;
+    do {
+      for ( i=0; i<shield.length; i++ ) if ( !untwistable.has(shield[i]) ) {
+        let [,,,meeted] = this.relationTo(shield[i].circle, circle0);
+
+        if ( meeted > 0 || !this.isTwistable(shield[i], shield) ) {
+          let new_untwistable = new Set([shield[i]]);
+          for ( let unseg of new_untwistable )
+            for ( let adj_seg of unseg.adj.keys() )
+              if ( segments.includes(adj_seg) )
+                new_untwistable.add(adj_seg);
+
+          for ( let unseg of new_untwistable ) {
+            untwistable.add(unseg);
+            if ( !shield.includes(unseg) )
+              shield.push(...unseg.walk());
+          }
+          break;
+        }
       }
+    } while ( i != shield.length );
 
-    return {segment, subticks, is_free};
+    return shield;
   }
   /**
-   * Detect latches by given ticks.
+   * Detect latches by given fence, cracks and shield.
    * Latch is potential to form intersected track at one side of this track.
    *
-   * @param {object[]} ticks
+   * @param {SphSeg[]} fence
+   * @param {object[]} [cracks]
+   * @param {SphSeg[]} [shield]
    * @returns {object[]} Array of latches, which has entries
    *   `{arc, center, angle}` or `{arc, center}` (free latch):
    *   `arc` is arc of shadow under circle of latch;
    *   `center` is center of latch;
    *   `angle` is angle between latch and this track.
    */
-  detectLatches(ticks) {
+  detectLatches(fence, cracks, shield) {
+    const isFree = (cracks, shield) => {
+      var pre = cracks.filter(crack => crack.angle==0);
+      var post = cracks.filter(crack => crack.angle==2);
+      for ( let crack1 of pre ) for ( let crack2 of post )
+        if ( this.cmp(2-crack1.segment.radius, crack2.segment.radius) == 0 )
+          if ( !shield || !shield.includes(crack2.segment) )
+            return true;
+      return false;
+    };
+
+    var ticks = [];
+    var theta0 = 0;
+    for ( let i=0; i<fence.length; i++ ) {
+      if ( !cracks || isFree(cracks[i], shield) ) {
+        let tick = [theta0];
+        tick.segment0 = fence[i];
+        ticks.push(tick);
+
+      } else {
+        for ( let crack of cracks[i] ) if ( crack.angle > 0 && crack.angle < 2 ) {
+          let tick = [theta0, crack.angle, crack.segment.radius];
+          tick.segment = crack.segment;
+          ticks.push(tick);
+        }
+      }
+      theta0 += fence[i].arc;
+    }
+    console.assert(this.cmp(theta0, 4) == 0);
+
     var latches = [];
-
-    var radius0 = ticks[0].segment.radius;
-    var full_arc = ticks.reduce((acc, tick) => (tick.theta=acc)+tick.segment.arc, 0);
-    console.assert(this.cmp(full_arc, 4) == 0);
-
     var centers = new Set();
-
     for ( let tick of ticks ) {
-      if ( tick.is_free ) { // find free latches
-        for ( let tick_ of ticks ) if ( tick_.is_free ) {
-          let arc = this.mod4(tick.theta - tick_.theta, [2]);
+      if ( tick.length == 1 ) { // find free latches
+        for ( let tick_ of ticks ) if ( tick_.length == 1 ) {
+          let [theta] = tick;
+          let [theta_] = tick_;
+          let arc = this.mod4(theta - theta_, [2]);
 
           if ( arc <= 2 ) {
-            let center = this.mod4(tick_.theta+arc/2, centers);
+            let center = this.mod4(theta-arc/2, centers);
             centers.add(center);
             latches.push({arc, center});
           }
         }
 
       } else { // find fixed latches
-        for ( let sub of tick.subticks ) {
-          let [arc] = this.leaf(sub.angle, radius0, sub.segment.radius);
+        let [theta, angle, radius] = tick;
+        let [arc] = this.leaf(angle, fence[0].radius, radius);
+        if ( this.cmp([arc, radius], [2, 1]) <= 0 ) {
+          let tick0_ = [this.mod4(theta-arc, [0])];
+          let tick_ = [tick0_[0], 2-angle, 2-radius];
+          if ( !ticks.some(tick => this.cmp(tick, tick0_)==0 || this.cmp(tick, tick_)==0) )
+            continue;
 
-          if ( this.cmp([arc, sub.segment.radius], [2, 1]) <= 0 ) {
-            let tick_ = ticks.find(({theta}) => this.mod4(tick.theta-theta, [arc])==arc);
-            if ( !tick_ )
-              continue;
-            let is_dual = sub_ => this.cmp([sub_.angle, sub_.segment.radius],
-                                           [2-sub.angle, 2-sub.segment.radius]) == 0;
-            if ( !tick_.is_free && !tick_.subticks.find(is_dual) )
-              continue;
+          if ( shield && !this.isSeparableBy(shield, tick.segment.circle) )
+            continue;
 
-            let center = this.mod4(tick_.theta+arc/2, centers);
-            centers.add(center);
-            arc = this.snap(arc, [2]);
-            let angle = sub.angle;
-            latches.push({arc, center, angle});
-          }
+          let center = this.mod4(theta-arc/2, centers);
+          centers.add(center);
+          arc = this.snap(arc, [2]);
+          latches.push({arc, center, angle});
         }
 
       }
@@ -2191,34 +2319,63 @@ class SphAnalyzer
    * @param {SphTrack} track
    * @returns {Map<number,object[]>} Map from shift to matched latches.
    */
-  decipher(track) {
-    var ticks1 = [], ticks2 = [];
-    for ( let [segs, ticks] of [[track.inner, ticks1], [track.outer, ticks2]] ) {
-      for ( let i=0; i<segs.length; i++ ) {
-        let seg = segs[i-1] || segs[segs.length-1];
-        let tick = this.makeTick(seg);
-        console.assert(tick && tick.segment === segs[i]);
-        ticks.push(tick);
+  decipher(track, shields={}) {
+    var latches = {};
+    for ( let side of ["inner", "outer"] ) {
+      let fence = track[side];
+      let shield = shields[side];
+
+      let cracks = [];
+      for ( let i=0; i<fence.length; i++ ) {
+        let seg = fence[i-1] || fence[fence.length-1];
+
+        let [ang1, seg1] = [seg.next.angle, seg.next];
+        let cracks_ = [];
+        for ( let [angle, segment, offset] of this.spin(seg1) ) {
+          angle = this.snap(angle+ang1, [0, 2, 4]);
+          let sgn = this.cmp([angle, segment.radius-1], [2, seg.radius-1]);
+          console.assert(sgn <= 0);
+          if ( sgn >= 0 ) break;
+          cracks_.push({angle, segment});
+        }
+        cracks.push(cracks_);
       }
+
+      let latches_ = this.detectLatches(fence, cracks, shield);
+      latches[side] = latches_;
     }
 
-    var latches1 = this.detectLatches(ticks1);
-    var latches2 = this.detectLatches(ticks2);
-
     var passwords = new Map();
-    for ( let latch2 of latches2 ) for ( let latch1 of latches1 ) {
+    for ( let latch2 of latches.outer ) for ( let latch1 of latches.inner ) {
       if ( this.cmp(latch1.arc, latch2.arc) != 0 )
         continue;
-      if ( latch1.angle && latch2.angle )
+
+      if ( latch1.angle && latch2.angle ) {
         if ( this.cmp(latch1.angle, 2-latch2.angle) != 0 )
           continue;
+
+      } else if ( latch1.angle && !latch2.angle ) {
+        latch2 = Object.assign({angle:2-latch1.angle}, latch2);
+        if ( shields.outer ) {
+          let {center, arc, angle} = latch2;
+          let circle = this.intercircle(track.outer[0].circle, center, arc, angle);
+          if ( !this.isSeparableBy(shields.outer, circle) )
+            continue;
+        }
+
+      } else if ( !latch1.angle && latch2.angle ) {
+        latch1 = Object.assign({angle:2-latch2.angle}, latch1);
+        if ( shields.inner ) {
+          let {center, arc, angle} = latch1;
+          let circle = this.intercircle(track.inner[0].circle, center, arc, angle);
+          if ( this.isSeparableBy(shields.inner, circle) )
+            continue;
+        }
+      }
 
       let key = this.mod4(latch1.center+latch2.center, passwords.keys());
       if ( !passwords.has(key) )
         passwords.set(key, []);
-
-      if ( !latch1.angle && latch2.angle )
-        latch1 = Object.assign({angle:2-latch2.angle}, latch1);
       passwords.get(key).push(latch1);
     }
 
@@ -2543,8 +2700,8 @@ class SphAnalyzer
    * relationships and tracks.
    *
    * @param {SphKnot[]} knots - The knots in network structure.
-   * @param {boolean=} forced - Re-assemble all given segments if true, otherwise
-   *   check consistency.
+   * @param {boolean} [forced=true] - Re-assemble all given segments if true,
+   *   otherwise check consistency.
    */
   assemble(knots, forced=true) {
     for ( let knot of knots ) {
@@ -2585,10 +2742,10 @@ class SphAnalyzer
    * It will compute (or check) orientations of segments.
    *
    * @param {SphKnot} knot0 - The fixed knot.
-   * @param {Array<number>=} index0 - The index of fixed segment.
-   * @param {Array<number>=} orientation0 - The orientation of fixed segment.
-   * @param {boolean=} forced - Re-compute all given segments if true, otherwise
-   *   check consistency.
+   * @param {number[]} [index0=[0,0,0,0]] - The index of fixed segment.
+   * @param {number[]} [orientation0=[0,0,0,1]] - The orientation of fixed segment.
+   * @param {boolean} [forced=true] - Re-compute all given segments if true,
+   *   otherwise check consistency.
    */
   orient(knot0, index0=[0,0,0,0], orientation0=[0,0,0,1], forced=true) {
     if ( forced ) {
@@ -2720,7 +2877,7 @@ class SphAnalyzer
    *
    * @param {SphModel} model - The model of puzzle to build.
    * @param {SphSeg[][]} param - The segments of puzzle to analyze.
-   * @param {SphConfig[]} known - Sorted list of known sorted configurations.
+   * @param {SphConfig[]} [known=[]] - Sorted list of known sorted configurations.
    * @returns {Array} Sorted configuration and possible permutations.
    */
   recognize(model, param, known=[]) {
@@ -2826,7 +2983,6 @@ class SphAnalyzer
 
     return [config, permutations];
   }
-
   /**
    * Find the joint contains given point.
    *
@@ -3138,17 +3294,64 @@ class SphPuzzle extends Listenable
       this.add(track_);
     this.trigger("twisted", track);
 
-    this.network.setStatus("outdated");
+    if ( this.network.status == "up-to-date" )
+      this.network.setStatus("outdated");
 
     return track;
   }
+  decipher(tracks=this.tracks) {
+    for ( let track of tracks ) if ( !track.passwords ) {
+      track.shields = {};
+      track.shields.inner = this.analyzer.raiseShield(track.inner);
+      track.shields.outer = this.analyzer.raiseShield(track.outer);
+      track.passwords = this.analyzer.decipher(track, track.shields);
+    }
+  }
 
   clean() {
+    this.network.setStatus("broken");
+
+    // merge unlockable track
+    for ( let track of this.tracks ) if ( track.passwords && track.passwords.size == 0 ) {
+      let [elem1, elem2] = this.analyzer.sealTrack(track, track.shields);
+
+      if ( track.shields ) {
+        for ( let element of new Set(track.shields.inner.map(seg => seg.affiliation)) )
+          if ( element !== elem1 )
+            this.remove(element);
+        for ( let element of new Set(track.shields.outer.map(seg => seg.affiliation)) )
+          if ( element !== elem2 )
+            this.remove(element);
+
+      } else {
+        for ( let element of new Set(track.inner.map(seg => seg.affiliation)) )
+          if ( element !== elem1 )
+            this.remove(element);
+        for ( let element of new Set(track.outer.map(seg => seg.affiliation)) )
+          if ( element !== elem2 )
+            this.remove(element);
+
+      }
+      this.trigger("modified", elem1);
+      this.trigger("modified", elem2);
+
+      delete track.passwords;
+      delete track.shields;
+    }
+
     // merge untwistable edges
-    var elements = this.elements.slice();
-    for ( let group of this.analyzer.twistablePartOf(elements) )
+    for ( let group of this.analyzer.twistablePartOf(this.elements) )
       if ( group.length > 1 )
         this.mergeElements(...group);
+
+    // merge sandglass tips
+    for ( let elem of this.elements ) {
+      let tips = this.analyzer.findSandglassTips(elem.boundaries);
+      for ( let [seg1, seg2] of tips )
+        this.analyzer.swap(seg1, seg2, 2, 2);
+      if ( tips.length )
+        this.trigger("modified", elem);
+    }
 
     // merge trivial edges
     for ( let element of this.elements ) {
@@ -3174,8 +3377,6 @@ class SphPuzzle extends Listenable
       for ( let seg of element.boundaries )
         if ( seg !== seg.prev && this.analyzer.isTrivialVertex(seg) )
           this.mergeVertex(seg);
-
-    this.network.setStatus("broken");
   }
 
   // network

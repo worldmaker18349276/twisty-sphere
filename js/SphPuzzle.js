@@ -997,24 +997,24 @@ class SphPuzzleView
   addTwister(track) {
     // snap
     {
-      let len1 = 0;
-      let offsets1 = track.inner.map(seg => len1+=seg.arc);
-      offsets1.pop();
-      offsets1.unshift(0);
-      let len2 = 0;
-      let offsets2 = track.outer.map(seg => len2+=seg.arc);
-      offsets2.pop();
-      offsets2.unshift(0);
-      
-      var snaps = new Set();
-      for ( let offset1 of offsets1 )
-        for ( let offset2 of offsets2 )
-          snaps.add(this.origin.analyzer.mod4(track.shift-offset1-offset2, snaps));
-      snaps = Array.from(snaps).sort();
+      // let len1 = 0;
+      // let offsets1 = track.inner.map(seg => len1+=seg.arc);
+      // offsets1.pop();
+      // offsets1.unshift(0);
+      // let len2 = 0;
+      // let offsets2 = track.outer.map(seg => len2+=seg.arc);
+      // offsets2.pop();
+      // offsets2.unshift(0);
+      // 
+      // var snaps = new Set();
+      // for ( let offset1 of offsets1 )
+      //   for ( let offset2 of offsets2 )
+      //     snaps.add(this.origin.analyzer.mod4(track.shift-offset1-offset2, snaps));
+      // snaps = Array.from(snaps).sort();
 
-      // let passwords = this.origin.analyzer.decipher(track);
-      // var snaps = Array.from(passwords.keys())
-      //     .map(key => this.origin.analyzer.mod4(track.shift-key)).sort();
+      if ( !track.passwords ) this.origin.decipher([track]);
+      var snaps = Array.from(track.passwords.keys())
+          .map(key => this.origin.analyzer.mod4(track.shift-key)).sort();
     }
 
     // drag
@@ -1025,14 +1025,6 @@ class SphPuzzleView
         var partition = this.origin.analyzer.partitionBy(track.inner, track.outer);
         if ( partition.length == 1 )
           return;
-
-        event.drag = true;
-
-        var p = event.point.toArray();
-        circle = track.circle;
-        circle.shift(circle.thetaOf(p));
-        plane = new THREE.Plane(new THREE.Vector3(...circle.center), -dot(circle.center, p));
-
         var fence = track.inner.includes(event.target.parent.userData.origin)
                   ? track.inner
                   : track.outer;
@@ -1040,8 +1032,15 @@ class SphPuzzleView
         console.assert(moved);
         moved = Array.from(moved.elements);
 
+        var p = event.point.toArray();
+        circle = fence[0].circle;
+        circle.shift(circle.thetaOf(p));
+        plane = new THREE.Plane(new THREE.Vector3(...circle.center), -dot(circle.center, p));
+
         for ( let elem of moved ) for ( let seg of elem.boundaries )
           seg.view.userData.quaternion0 = seg.view.quaternion.clone();
+
+        event.drag = true;
       };
       var drag = event => {
         var {offsetX, offsetY} = event.originalEvent;
@@ -2153,6 +2152,7 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
 
   structCmd(selector) {
     this.puzzle.structurize();
+    this.puzzle.recognize();
   }
   unbandageCmd(selector) {
     if ( selector.selections.length != 1 ) {
