@@ -244,13 +244,11 @@ class Display
   }
   add(target, parent=this.scene) {
     parent.add(target);
-    target.dispatchEvent({name:"objectadded", target, parent});
     this.hoverable = [];
     this.scene.traverse(e => { if ( e.userData.hoverable ) this.hoverable.push(e); });
   }
   remove(target, parent=this.scene) {
     parent.remove(target);
-    target.dispatchEvent({name:"objectremoved", target, parent});
     this.hoverable = [];
     this.scene.traverse(e => { if ( e.userData.hoverable ) this.hoverable.push(e); });
   }
@@ -764,6 +762,7 @@ class SphPuzzleView
       this.display.add(this.ball, this.root);
     }
 
+    puzzle.takeRecords();
     this.initProp(puzzle);
     this.initView(puzzle);
 
@@ -836,28 +835,27 @@ class SphPuzzleView
     }
 
     puzzle.name = puzzle.name || "SphPuzzle";
+    for ( let seg of puzzle.segments )
+      initSegNameProp(seg);
     for ( let elem of puzzle.elements ) {
       initElemNameProp(elem);
       initColorProp(elem);
-      for ( let seg of elem.boundaries )
-        initSegNameProp(seg);
     }
     for ( let track of puzzle.tracks )
       initTrackNameProp(track);
 
+    puzzle.on("added", SphSeg, event => {
+      if ( !event.target.name )
+        initSegNameProp(event.target);
+    });
     puzzle.on("added", SphElem, event => {
-      this.initElemNameProp(event.target);
-      this.initColorProp(event.target);
+      initElemNameProp(event.target);
+      initColorProp(event.target);
       for ( let seg of event.target.boundaries )
-        this.initSegNameProp(seg);
+        initSegNameProp(seg);
     });
     puzzle.on("added", SphTrack, event => {
       initTrackNameProp(event.target);
-    });
-    puzzle.on("modified", SphElem, event => {
-      for ( let seg of event.target.boundaries )
-        if ( !seg.name )
-          initSegNameProp(seg);
     });
   }
 
@@ -865,39 +863,45 @@ class SphPuzzleView
   initView(puzzle) {
     puzzle.view = this;
     this.origin = puzzle;
-    for ( let element of puzzle.elements )
-      this.drawElement(element);
+    for ( let segment of puzzle.segments )
+      this.drawSegment(segment);
     for ( let track of puzzle.tracks )
       this.addTwister(track);
 
-    puzzle.on("added", SphElem, event => this.drawElement(event.target));
-    puzzle.on("removed", SphElem, event => this.eraseElement(event.target));
-    puzzle.on("modified", SphElem, event => {
-      this.eraseElement(event.target);
-      this.drawElement(event.target);
+    puzzle.on("added", SphSeg, event => this.drawSegment(event.target));
+    puzzle.on("removed", SphSeg, event => this.eraseSegment(event.target));
+    puzzle.on("modified", SphSeg, event => {
+      if ( "arc" in event.record || "radius" in event.record || "angle" in event.record ) {
+        this.eraseSegment(event.target);
+        this.drawSegment(event.target);
+      } else if ( "orientation" in event.record ) {
+        event.target.view.quaternion.set(...event.target.orientation);
+      }
     });
-    puzzle.on("twisted", SphElem, event => {
+
+    var recolor = event => {
       for ( let seg of event.target.boundaries )
-        seg.view.quaternion.set(...seg.orientation);
-    });
-    puzzle.on("recolored", SphElem, event => {
-      for ( let seg of event.target.boundaries )
-        for ( let sub of seg.view.children )
-          sub.material.color.set(event.target.color);
-    });
+        if ( seg.view )
+          for ( let sub of seg.view.children )
+            sub.material.color.set(event.target.color);
+    };
+    puzzle.on("added", SphElem, recolor);
+    puzzle.on("modified", SphElem, recolor);
+    puzzle.on("recolored", SphElem, recolor);
 
     puzzle.on("added", SphTrack, event => this.addTwister(event.target));
     puzzle.on("removed", SphTrack, event => this.removeTwister(event.target));
     puzzle.on("modified", SphTrack, event => {
-      this.removeTwister(event.target);
-      this.addTwister(event.target);
-    });
-    puzzle.on("twisted", SphTrack, event => {
-      this.removeTwister(event.target);
-      this.addTwister(event.target);
+      if ( "inner" in event.record || "outer" in event.record ) {
+        this.removeTwister(event.target);
+        this.addTwister(event.target);
+      }
     });
   }
-  buildSegView(seg, color, dq=0.01) {
+  drawSegment(seg) {
+    var color = seg.affiliation.color || "black";
+    var dq = 0.01;
+
     // make arc
     {
       let geo = new THREE.Geometry();
@@ -975,91 +979,62 @@ class SphPuzzleView
     obj.add(arc, dash, ang, holder);
     obj.quaternion.set(...seg.orientation);
 
-    return obj;
+    seg.view = obj;
+    obj.userData.origin = seg;
+    this.display.add(seg.view, this.root);
   }
-  drawElement(element) {
-    var obj = new THREE.Object3D();
-    for ( let seg of element.boundaries ) {
-      let subobj = this.buildSegView(seg, element.color);
-      seg.view = subobj;
-      subobj.userData.origin = seg;
-      obj.add(subobj);
-    }
-
-    element.view = obj;
-    obj.userData.origin = element;
-    this.display.add(element.view, this.root);
-  }
-  eraseElement(element) {
-    this.display.remove(element.view, this.root);
-    delete element.view;
+  eraseSegment(seg) {
+    this.display.remove(seg.view, this.root);
+    delete seg.view;
   }
   addTwister(track) {
-    // snap
-    {
-      // let len1 = 0;
-      // let offsets1 = track.inner.map(seg => len1+=seg.arc);
-      // offsets1.pop();
-      // offsets1.unshift(0);
-      // let len2 = 0;
-      // let offsets2 = track.outer.map(seg => len2+=seg.arc);
-      // offsets2.pop();
-      // offsets2.unshift(0);
-      // 
-      // var snaps = new Set();
-      // for ( let offset1 of offsets1 )
-      //   for ( let offset2 of offsets2 )
-      //     snaps.add(this.origin.analyzer.mod4(track.shift-offset1-offset2, snaps));
-      // snaps = Array.from(snaps).sort();
-
-      if ( !track.passwords ) this.origin.decipher([track]);
-      var snaps = Array.from(track.passwords.keys())
-          .map(key => this.origin.analyzer.mod4(track.shift-key)).sort();
-    }
-
     // drag
-    {
-      var circle, plane, moved;
+    var circle, plane, moved, shifts, shifts0;
 
-      var dragstart = event => {
-        var partition = this.origin.analyzer.partitionBy(track.inner, track.outer);
-        if ( partition.length == 1 )
-          return;
-        var fence = track.inner.includes(event.target.parent.userData.origin)
-                  ? track.inner
-                  : track.outer;
-        moved = partition.find(region => region.fences.has(fence));
-        console.assert(moved);
-        moved = Array.from(moved.elements);
+    var dragstart = event => {
+      if ( !track.secret )
+        track.host.decipher(track);
+      if ( !track.secret.regions )
+        return;
 
-        var p = event.point.toArray();
-        circle = fence[0].circle;
-        circle.shift(circle.thetaOf(p));
-        plane = new THREE.Plane(new THREE.Vector3(...circle.center), -dot(circle.center, p));
+      moved = track.inner.includes(event.target.parent.userData.origin)
+            ? track.secret.regions.inner
+            : track.secret.regions.outer;
 
-        for ( let elem of moved ) for ( let seg of elem.boundaries )
-          seg.view.userData.quaternion0 = seg.view.quaternion.clone();
+      shifts = Array.from(track.secret.pseudokeys.keys())
+          .map(kee => this.origin.analyzer.mod4(track.shift-kee)).sort();
+      shifts0 = Array.from(track.secret.passwords.keys())
+          .map(key => this.origin.analyzer.mod4(track.shift-key)).sort();
 
-        event.drag = true;
-      };
-      var drag = event => {
-        var {offsetX, offsetY} = event.originalEvent;
-        var {point} = this.display.pointTo(offsetX, offsetY, plane);
-        if ( !point ) return;
-        var angle = fzy_mod(circle.thetaOf(point.toArray()), 4, snaps, 0.03);
-        var rot = new THREE.Quaternion().setFromAxisAngle(plane.normal, angle*Q);
+      var p = event.point.toArray();
+      circle = moved.fences.values().next().value[0].circle;
+      circle.shift(circle.thetaOf(p));
+      plane = new THREE.Plane(new THREE.Vector3(...circle.center), -dot(circle.center, p));
 
-        for ( let elem of moved ) for ( let seg of elem.boundaries )
-          seg.view.quaternion.multiplyQuaternions(rot, seg.view.userData.quaternion0);
+      for ( let elem of moved.elements ) for ( let seg of elem.boundaries )
+        seg.view.userData.quaternion0 = seg.view.quaternion.clone();
 
-        return angle;
-      };
-      var dragend = event => {
-        var angle = drag(event);
-        var hold = event.target.parent.userData.origin.adj.keys().next().value.affiliation;
-        this.origin.twist(track, angle, hold);
-      };
-    }
+      event.drag = true;
+    };
+    var drag = event => {
+      var {offsetX, offsetY} = event.originalEvent;
+      var {point} = this.display.pointTo(offsetX, offsetY, plane);
+      if ( !point ) return;
+      var angle = circle.thetaOf(point.toArray());
+      angle = fzy_mod(angle, 4, shifts, 0.01);
+      angle = fzy_mod(angle, 4, shifts0, 0.05);
+      var rot = new THREE.Quaternion().setFromAxisAngle(plane.normal, angle*Q);
+
+      for ( let elem of moved.elements ) for ( let seg of elem.boundaries )
+        seg.view.quaternion.multiplyQuaternions(rot, seg.view.userData.quaternion0);
+
+      return angle;
+    };
+    var dragend = event => {
+      var angle = drag(event);
+      var hold = event.target.parent.userData.origin.adj.keys().next().value.affiliation;
+      this.origin.twist(track, angle, hold);
+    };
 
     var targets = [...track.inner, ...track.outer].map(seg => seg.view.children[3]);
     track.twister = {dragstart, drag, dragend, targets, origin:track};
@@ -1336,11 +1311,10 @@ class SphNetworkView
     this.origin = network;
     for ( let knot of network.knots )
       this.drawKnot(knot);
-    for ( let joint of network.joints )
+    for ( let joint of network.joints ) {
       this.drawJoint(joint);
-    var bandages = network.joints.map(j => j.bandage).filter(b => b.length > 1);
-    for ( let bandage of new Set(bandages) )
-      this.groupJoints(bandage);
+      this.updateBandage(joint);
+    }
 
     network.on("statuschanged", SphNetwork, event => {
       if ( this.origin.status == "broken" )
@@ -1356,7 +1330,7 @@ class SphNetworkView
 
       } else if ( event.target instanceof SphJoint ) {
         this.drawJoint(event.target);
-        this.groupJoint(event.target);
+        this.updateBandage(event.target);
       }
     });
     network.on("removed", Object, event => {
@@ -1366,24 +1340,17 @@ class SphNetworkView
         this.eraseKnot(event.target);
 
       } else if ( event.target instanceof SphJoint ) {
-        this.ungroupJoint(event.target);
         this.eraseJoint(event.target);
       }
     });
     network.on("modified", SphJoint, event => {
       if ( this.origin.status == "broken" )
         return;
-      this.updateJoint(event.target);
-    });
-    network.on("binded", SphJoint, event => {
-      if ( this.origin.status == "broken" )
-        return;
-      this.groupJoint(event.target);
-    });
-    network.on("unbinded", SphJoint, event => {
-      if ( this.origin.status == "broken" )
-        return;
-      this.ungroupJoint(event.target);
+
+      if ( "ports" in event.record )
+        this.updateJoint(event.target);
+      else if ( "bandage" in event.record )
+        this.updateBandage(event.target);
     });
   }
   drawKnot(knot) {
@@ -1401,42 +1368,43 @@ class SphNetworkView
     for ( let knot of joint.ports.keys() )
       this.graph.addEdge(joint.node_id, knot.node_id);
   }
-  groupJoint(joint) {
-    var bandage = Array.from(joint.bandage).filter(joint => this.origin.joints.includes(joint));
-    if ( bandage.length <= 1 )
-      return;
+  ungroupJoint(joint) {
+    var node = this.graph.getNode(joint.node_id);
 
-    var nodes = bandage.map(joint => this.graph.getNode(joint.node_id));
-    var bandage_id = nodes.map(node => node.bandage_id).find(id => id);
+    let edges = Array.from(this.graph.edgesBetween(node.bandage_id, undefined));
+
+    if ( edges.every(edge => edge.to == joint.node_id) )
+      this.graph.removeNode(node.bandage_id);
+    else
+      for ( let edge of edges ) if ( edge.to == joint.node_id )
+        this.graph.removeEdge(edge.id);
+
+    delete node.bandage_id;
+  }
+  updateBandage(joint) {
+    var node = this.graph.getNode(joint.node_id);
+
+    if ( joint.bandage.size == 1 ) {
+      if ( node.bandage_id !== undefined )
+        this.ungroupJoint(joint);
+      return;
+    }
+
+    let bandage_id = Array.from(joint.bandage)
+                          .map(joint => joint.node_id).filter(id => id)
+                          .map(id => this.graph.getNode(id))
+                          .map(node => node.bandage_id).find(id => id);
     if ( !bandage_id )
       bandage_id = this.graph.addNode({size:0, shape:"dot", type:"bandage"});
 
-    for ( let node of nodes ) {
-      if ( !node.bandage_id ) {
-        this.graph.addEdge(bandage_id, node.id, {dashes:true});
-        this.graph.updateNode(node.id, {bandage_id});
+    if ( node.bandage_id !== undefined && node.bandage_id != bandage_id )
+      this.ungroupJoint(joint);
 
-      } else if ( node.bandage_id != bandage_id ) {
-        this.graph.removeNode(node.bandage_id);
-        this.graph.updateNode(node.id, {bandage_id});
-      }
+    if ( node.bandage_id === undefined ) {
+      this.graph.addEdge(bandage_id, node.id, {dashes:true});
+      this.graph.updateNode(node.id, {bandage_id});
+      node.bandage_id = bandage_id;
     }
-  }
-  ungroupJoint(joint) {
-    var edge = this.graph.edgesBetween(undefined, joint.node_id).next().value;
-    if ( !edge )
-      return;
-
-    this.graph.removeEdge(edge.id);
-    this.graph.updateNode(joint.node_id, {bandage_id:undefined});
-
-    var edges = Array.from(this.graph.edgesBetween(edge.from, undefined));
-    if ( edges.length == 1 ) {
-      this.graph.removeEdge(edges[0].id);
-      this.graph.updateNode(edges[0].to, {bandage_id:undefined});
-    }
-    if ( edges.length <= 1 )
-      this.graph.removeNode(edge.from);
   }
   eraseKnot(knot) {
     this.graph.removeNode(knot.node_id);

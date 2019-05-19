@@ -424,6 +424,7 @@ class SphTrack
     this.outer = [];
     return this;
   }
+
   insertAfter(seg, seg0) {
     var i = this.inner.indexOf(seg0);
     if ( i != -1 ) {
@@ -442,19 +443,23 @@ class SphTrack
   remove(seg) {
     var i = this.inner.indexOf(seg);
     if ( i != -1 ) {
+      if ( i == 0 && this.inner[1] ) {
+        this.dial(this.inner[1]);
+        i = this.inner.length-1;
+      }
       this.inner.splice(i, 1);
       seg.track = undefined;
-      if ( i == 0 )
-        this.shift = this.shift - seg.arc;
       return;
     }
 
     i = this.outer.indexOf(seg);
     if ( i != -1 ) {
+      if ( i == 0 && this.outer[1] ) {
+        this.dial(this.outer[1]);
+        i = this.outer.length-1;
+      }
       this.outer.splice(i, 1);
       seg.track = undefined;
-      if ( i == 0 )
-        this.shift = this.shift - seg.arc;
       return;
     }
   }
@@ -464,7 +469,38 @@ class SphTrack
     track.latches.set(this, latch_);
   }
   unlock(track) {
-    return this.latches.delete(track) || track.latches.delete(this);
+    this.latches.delete(track);
+    track.latches.delete(this);
+  }
+
+  dial(seg) {
+    if (this.inner.includes(seg) ) {
+      while ( this.inner[0] !== seg ) {
+        this.shift = this.shift - this.inner[0].arc;
+        for ( let [track, latch] of this.latches )
+          latch.center = latch.center - this.inner[0].arc;
+        this.inner.push(this.inner.shift());
+      }
+
+    } else if (this.outer.includes(seg) ) {
+      while ( this.outer[0] !== seg ) {
+        this.shift = this.shift - this.outer[0].arc;
+        this.outer.push(this.outer.shift());
+      }
+
+    } else {
+      throw new Error("seg is not in this track!");
+    }
+  }
+  flip() {
+    [this.inner, this.outer] = [this.outer, this.inner];
+    for ( let [track, latch] of this.latches ) {
+      let latch_ = track.latches.get(this);
+      latch.center = this.shift - latch.center;
+      latch.angle = latch_.angle = 2 - latch.angle;
+      latch_.arc = 4 - latch_.arc;
+      latch_.center = 2 + latch_.center;
+    }
   }
 }
 
@@ -1230,7 +1266,7 @@ class SphAnalyzer
 
   /**
    * Split segment into two segments.
-   * splited segment will be in-place modified as the first part, and create new
+   * Splitted segment will be in-place modified as the first part, and create new
    * object as the second part.
    *
    * @param {number} seg - The segment to split.
@@ -1441,6 +1477,7 @@ class SphAnalyzer
    * Glue adjacent segments with same affiliation.
    *
    * @param {object[]} zippers - The data returned by {@link SphAnalyzer#findZippers}.
+   * @returns {Set<SphSeg>} The end points of glued zippers.
    */
   glueAdj(zippers) {
     if ( zippers.length == 0 )
@@ -1478,6 +1515,7 @@ class SphAnalyzer
     }
 
     // zip
+    var res = new Set();
     for ( let [seg1, seg2] of contacts ) {
       let seg1_ = seg1.next;
       let seg2_ = seg2.next;
@@ -1485,7 +1523,13 @@ class SphAnalyzer
       this.swap(seg1_, seg2, seg1_.angle, 4-seg1_.angle);
       seg1.affiliation.withdraw(seg1);
       seg2.affiliation.withdraw(seg2);
+      res.add(seg1_);
+      res.add(seg2_);
+      res.delete(seg1);
+      res.delete(seg2);
     }
+
+    return res;
   }
 
   /**
@@ -1980,35 +2024,41 @@ class SphAnalyzer
     return res;
   }
   /**
-   * Merge inner and outer side of given track.  It will also swap segments of
-   * the segments of the track for preventing to form sandglass tips.
+   * It will swap segments of the segments of the track for preventing to form
+   * sandglass tips.  You should merge elements at inner/outer side first.
    *
    * @param {SphTrack} track
-   * @param {object} [shields]
-   * @return {SphElem[]} The two elements after sealing.
+   * @return {Array} The swapped segments and intersected tracks.
    */
-  sealTrack(track, shields) {
-    var res = [];
-    for ( let side of ["inner", "outer"] ) {
-      let fence = track[side];
-      let elems = shields
-                ? shields[side].map(seg => seg.affiliation)
-                : track[side].map(seg => seg.affiliation);
-      elems = Array.from(new Set(elems));
-
-      elems[0].merge(...elems.slice(1));
-      res.push(elems[0]);
-
+  sealTrack(track) {
+    var segs = [];
+    var tracks = [];
+    for ( let fence of [track.inner, track.outer] )
       for ( let i=0; i<fence.length; i++ ) {
         let seg1 = (fence[i-1] || fence[fence.length-1]).next;
         let seg2 = fence[i];
+        if ( seg1 === seg2 )
+          continue;
+
+        for ( let [angle, seg, offset] of this.spin(seg1) ) {
+          if ( seg === seg2 )
+            break;
+          if ( seg === seg1 && seg1.angle == 0 )
+            continue;
+          if ( seg === seg2.prev && seg2.angle == 0 )
+            continue;
+          if ( seg.track ) {
+            tracks.push(seg.track);
+            seg.track.tearDown();
+          }
+        }
+
         let ang1 = seg1.angle+2;
         let ang2 = 4-ang1;
-
         this.swap(seg1, seg2, ang1, ang2);
+        segs.push(seg1, seg2);
       }
-    }
-    return res;
+    return [segs, tracks];
   }
   /**
    * Check if loops is separable by circle.
@@ -2104,47 +2154,22 @@ class SphAnalyzer
     return partition;
   }
   /**
-   * Twist along tracks by given angles.
+   * Twist along tracks by given angles.  It only change structure of segments
+   * and tracks, will not rotate orientation of elements.
    *
    * @param {Map<SphTrack,number>} op - The map that tell you which track should
    *   twist by what angle.
-   * @param {SphElem} [hold] - The element whose orientation should be fixed.
-   * @returns {SphTrack[]} New tracks after twist.
+   * @returns {object[]} Partition of this operation, it has entries
+   *   `{elements, fences, rotation}` (see {@link SphAnalyzer#partitionBy}).
    */
-  twist(op, hold) {
+  twist(op) {
     op = new Map(op);
 
     // unlock
     for ( let track of op.keys() )
-      for ( let track_ of track.latches.keys() )
-        track_.tearDown();
+      for ( let old_track of track.latches.keys() )
+        old_track.tearDown();
 
-    // twist
-    var tracks = Array.from(op.keys());
-    var partition = this.partitionBy(...tracks.flatMap(track => [track.inner, track.outer]));
-    var region0 = partition.find(g => g.elements.has(hold)) || partition[0];
-    region0.rotation = [0,0,0,1];
-    var rotated = new Set([region0]);
-
-    for ( let region of rotated ) for ( let bd of region.fences ) {
-      let track = tracks.find(track => track.inner===bd || track.outer===bd);
-      let dual_bd = track.inner===bd ? track.outer : track.inner;
-      let adj_region = partition.find(g => g.fences.has(dual_bd));
-
-      let theta = op.get(track);
-      let rotation = quaternion(bd[0].circle.center, -theta*Q);
-      q_mul(region.rotation, rotation, rotation);
-
-      if ( !rotated.has(adj_region) ) {
-        adj_region.rotation = rotation;
-        rotated.add(adj_region);
-      }
-      console.assert(this.cmp(adj_region.rotation, rotation) == 0);
-    }
-
-    for ( let region of partition )
-      for ( let elem of region.elements )
-        elem.rotate(region.rotation);
     for ( let [track, theta] of op )
       track.shift = this.mod4(track.shift - theta);
 
@@ -2171,16 +2196,51 @@ class SphAnalyzer
     }
 
     // relock
-    var new_tracks = [], new_track;
     for ( let track of op.keys() )
       for ( let seg0 of track.inner )
         for ( let [angle, inter_seg, offset] of this.spin(seg0) )
           if ( angle < 2 && angle > 0 && offset == 0 )
             if ( !inter_seg.track )
-              if ( new_track = this.buildTrack(inter_seg) )
-                new_tracks.push(new_track);
+              this.buildTrack(inter_seg);
+  }
+  /**
+   * Make rotation instruction of twist.
+   *
+   * @param {Map<SphTrack,number>} op - The map that tell you which track should
+   *   twist by what angle.
+   * @param {SphElem} [hold] - The element whose orientation should be fixed.
+   * @returns {object[]} Partition of this operation (or `undefined` if failed),
+   *   it has entries `{elements, fences, rotation}` (see {@link SphAnalyzer#partitionBy}).
+   */
+  rotationsOfTwist(op, hold) {
+    op = new Map(op);
 
-    return new_tracks;
+    var tracks = Array.from(op.keys());
+    var partition = this.partitionBy(...tracks.flatMap(track => [track.inner, track.outer]));
+    var region0 = partition.find(region => region.elements.has(hold)) || partition[0];
+    region0.rotation = [0,0,0,1];
+    var rotated = new Set([region0]);
+
+    for ( let region of rotated ) for ( let bd of region.fences ) {
+      let track = tracks.find(track => track.inner===bd || track.outer===bd);
+      let dual_bd = track.inner===bd ? track.outer : track.inner;
+      let adj_region = partition.find(region => region.fences.has(dual_bd));
+
+      let theta = op.get(track);
+      let rotation = quaternion(bd[0].circle.center, -theta*Q);
+      q_mul(region.rotation, rotation, rotation);
+
+      if ( !rotated.has(adj_region) ) {
+        adj_region.rotation = rotation;
+        rotated.add(adj_region);
+
+      } else {
+        if ( this.cmp(adj_region.rotation, rotation) != 0 )
+          return;
+      }
+    }
+
+    return partition;
   }
 
   /**
@@ -2317,6 +2377,7 @@ class SphAnalyzer
    * Detect non-trivial twist angle of track.
    *
    * @param {SphTrack} track
+   * @param {object} [shields] - Inner and outer shields of this track.
    * @returns {Map<number,object[]>} Map from shift to matched latches.
    */
   decipher(track, shields={}) {
@@ -2380,6 +2441,38 @@ class SphAnalyzer
     }
 
     return passwords;
+  }
+  /**
+   * Detect possible twist angle of track just by segments along track.
+   *
+   * @param {SphTrack} track
+   * @returns {Map<number,SphSeg[][]>} Map from shift to matched pairs of segments.
+   */
+  guessKeys(track) {
+    var len1 = 0;
+    var inner_ticks = [];
+    for ( let seg of track.inner ) {
+      inner_ticks.push([seg, len1]);
+      len1 += seg.arc;
+    }
+    console.assert(this.cmp(len1, 4) == 0);
+    var len2 = 0
+    var outer_ticks = [];
+    for ( let seg of track.outer ) {
+      outer_ticks.push([seg, len2]);
+      len2 += seg.arc;
+    }
+    console.assert(this.cmp(len2, 4) == 0);
+
+    var keys = new Map();
+    for ( let [seg1, offset1] of inner_ticks ) for ( let [seg2, offset2] of outer_ticks ) {
+      let key = track.host.analyzer.mod4(offset1+offset2, keys.keys());
+      if ( !keys.has(key) )
+        keys.set(key, []);
+      keys.get(key).push([seg1, seg2]);
+    }
+
+    return keys;
   }
 
   /**
@@ -3067,48 +3160,153 @@ class Listenable
 }
 
 /**
+ * Proxy of observer system for javascript object.
+ *
+ * @class
+ */
+class Observable extends Listenable
+{
+  constructor() {
+    super();
+    this.changed = false;
+
+    this.routine = this.observeRoutine();
+    var wrapped = () => {
+      requestAnimationFrame(wrapped);
+      var modified = this.takeRecords();
+      if ( modified.size != 0 )
+        this.onchange(modified);
+    };
+    requestAnimationFrame(wrapped);
+  }
+  get observed() {
+    return new Map();
+  }
+  *observeRoutine() {
+    var records = new Map();
+    var new_records = new Map();
+
+    while ( true ) {
+      let modified = new Map();
+
+      if ( this.changed ) {
+        for ( let [target, properties] of this.observed )
+          new_records.set(target, this.record(target, properties));
+
+        for ( let [target, record] of records ) if ( new_records.has(target) )
+          modified.set(target, this.differ(record, new_records.get(target)));
+        for ( let target of records.keys() ) if ( !new_records.has(target) )
+          modified.set(target, "removed");
+        for ( let target of new_records.keys() ) if ( !records.has(target) )
+          modified.set(target, "added");
+
+        [records, new_records] = [new_records, records];
+        new_records.clear();
+        this.changed = false;
+      }
+
+      yield modified;
+    }
+  }
+  onchange(modified) {
+    for ( let [target, record] of modified )
+      if ( record == "removed" )
+        this.trigger("removed", target);
+    for ( let [target, record] of modified )
+      if ( record == "added" )
+        this.trigger("added", target);
+    for ( let [target, record] of modified )
+      if ( typeof record == "object" )
+        this.trigger("modified", target, {record});
+  }
+  takeRecords() {
+    return this.routine.next().value;
+  }
+
+  record(target, properties) {
+    var record = {};
+    for ( let [property, getter] of Object.entries(properties) )
+      record[property] = getter(target);
+    return record;
+  }
+  differ(old_record, new_record) {
+    var diff_record = {};
+    for ( let property of Object.keys(old_record) )
+      if ( !this.compare(old_record[property], new_record[property]) )
+        diff_record[property] = old_record[property];
+    return diff_record;
+  }
+  merge(record, new_record) {
+    return Object.assign(new_record, record);
+  }
+
+  compare(old_value, new_value) {
+    if ( !Array.isArray(old_value) || !Array.isArray(new_value) )
+      return old_value === new_value;
+
+    if ( old_value.length != new_value.length )
+      return false;
+
+    for ( let i=0; i<old_value.length; i++ )
+      if ( !this.compare(old_value[i], new_value[i]) )
+        return false;
+    return true;
+  }
+}
+
+/**
  * Fully functional spherical twisty puzzle.
  * It provide easy-to-use methods to edit, play and analyze this puzzle, but all
  * crucial algorithms should be implemented by analyzer.
- * It also equips with event system, which is useful for making GUI.  The possible
- * events are:
- * `{ type:"added"|"removed", target:SphElem|SphTrack }`, triggered after
- * adding/removing element/track.
- * `{ type:"modified", target:SphElem|SphTrack }`, triggered after modifying
- * element/track, such as adding/removing segments, modifying segment.  Notice
- * that modifying properties `adj` and `track` will not trigger this event.
- * `{ type:"twisted", target:SphElem|SphTrack }`, triggered after twisting
- * element/track.
+ * It also equips with event system, which is useful for making GUI:
+ * `{ type:"added"|"removed", target:SphSeg|SphElem|SphTrack }`, triggered after
+ * adding/removing segment/element/track.
+ * `{ type:"modified", target:SphSeg|SphElem|SphTrack, record:object }`,
+ * triggered after modifying properties of segment/element/track.  `record` is
+ * the old values before modifying.
  *
  * @class
  * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
+ * @property {SphSeg[]} segments - All segments of this puzzle.
  * @property {SphElem[]} elements - All elements of this puzzle.
  * @property {SphTrack[]} tracks - All tracks of this puzzle.
  * @property {SphNetwork} network - network structure of this puzzle.
  */
-class SphPuzzle extends Listenable
+class SphPuzzle extends Observable
 {
-  constructor(analyzer=new SphAnalyzer()) {
+  constructor(analyzer=new SphAnalyzer(), elements=[new SphElem()]) {
     super();
 
     this.analyzer = analyzer;
     this.elements = [];
+    this.segments = [];
     this.tracks = [];
     this.network = new SphNetwork();
 
-    this.init();
+    this.init(elements);
   }
 
   add(target) {
     if ( target instanceof SphElem ) {
+      if ( this.elements.includes(target) )
+        return;
       target.host = this;
       this.elements.push(target);
-      this.trigger("added", target);
+      this.changed = true;
+
+    } else if ( target instanceof SphSeg ) {
+      if ( this.segments.includes(target) )
+        return;
+      target.host = this;
+      this.segments.push(target);
+      this.changed = true;
 
     } else if ( target instanceof SphTrack ) {
+      if ( this.tracks.includes(target) )
+        return;
       target.host = this;
       this.tracks.push(target);
-      this.trigger("added", target);
+      this.changed = true;
 
     } else {
       throw new Error();
@@ -3120,14 +3318,21 @@ class SphPuzzle extends Listenable
       if ( i == -1 )
         return;
       this.elements.splice(i, 1);
-      this.trigger("removed", target);
+      this.changed = true;
+
+    } else if ( target instanceof SphSeg ) {
+      let i = this.segments.indexOf(target);
+      if ( i == -1 )
+        return;
+      this.segments.splice(i, 1);
+      this.changed = true;
 
     } else if ( target instanceof SphTrack ) {
       let i = this.tracks.indexOf(target);
       if ( i == -1 )
         return;
       this.tracks.splice(i, 1);
-      this.trigger("removed", target);
+      this.changed = true;
 
     } else {
       throw new Error();
@@ -3138,9 +3343,14 @@ class SphPuzzle extends Listenable
       this.remove(element);
     for ( let track of this.tracks.slice().reverse() )
       this.remove(track);
+    for ( let segment of this.segments.slice().reverse() )
+      this.remove(segment);
   }
-  init(elements=[new SphElem()]) {
+  init(elements) {
     this.clear();
+    for ( let element of elements )
+      for ( let segment of element.boundaries )
+        this.add(segment);
     for ( let element of elements ) {
       this.add(element);
       for ( let seg of element.boundaries )
@@ -3149,34 +3359,109 @@ class SphPuzzle extends Listenable
     }
   }
 
+  get observed() {
+    const seg_prop = {
+      arc: seg => seg.arc,
+      radius: seg => seg.radius,
+      angle: seg => seg.angle,
+      prev: seg => seg.prev,
+      next: seg => seg.next,
+      adj: seg => Array.from(seg.adj),
+      track: seg => seg.track,
+      affiliation: seg => seg.affiliation,
+      orientation: seg => seg.orientation.slice()
+    };
+    const elem_prop = {
+      boundaries: elem => Array.from(elem.boundaries)
+    };
+    const track_prop = {
+      shift: track => track.shift,
+      inner: track => track.inner.slice(),
+      outer: track => track.outer.slice(),
+      latches: track => Array.from(track.latches)
+        .map(([track_, latch]) => [track_, latch.center, latch.arc, latch.angle])
+    };
+
+    var observed = new Map();
+    for ( let target of this.segments )
+      observed.set(target, seg_prop);
+    for ( let target of this.elements )
+      observed.set(target, elem_prop);
+    for ( let target of this.tracks )
+      observed.set(target, track_prop);
+    return observed;
+  }
+  onchange(modified) {
+    for ( let [target, record] of modified )
+      if ( target instanceof SphSeg && record == "removed" )
+        this.trigger("removed", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphSeg && record == "added" )
+        this.trigger("added", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphSeg && typeof record == "object" )
+        this.trigger("modified", target, {record});
+
+    for ( let [target, record] of modified )
+      if ( target instanceof SphElem && record == "removed" )
+        this.trigger("removed", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphElem && record == "added" )
+        this.trigger("added", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphElem && typeof record == "object" )
+        this.trigger("modified", target, {record});
+
+    for ( let [target, record] of modified )
+      if ( target instanceof SphTrack && record == "removed" )
+        this.trigger("removed", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphTrack && record == "added" )
+        this.trigger("added", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphTrack && typeof record == "object" )
+        this.trigger("modified", target, {record});
+  }
+
   mergeVertex(seg) {
-    var element = seg.affiliation;
     this.analyzer.mergePrev(seg);
-    this.trigger("modified", element);
-    if ( seg.track )
-      this.trigger("modified", seg.track);
+    this.remove(seg);
+
+    for ( let track of this.tracks )
+      delete track.secret;
     this.network.setStatus("broken");
+    this.changed = true;
   }
   interpolate(seg, theta) {
-    var element = seg.affiliation;
     this.analyzer.interpolate(seg, theta);
-    this.trigger("modified", element);
-    if ( seg.track )
-      this.trigger("modified", seg.track);
+    this.add(seg.next);
+
+    for ( let track of this.tracks )
+      delete track.secret;
     this.network.setStatus("broken");
+    this.changed = true;
   }
   mergeEdge(seg1, seg2) {
     if ( seg1.affiliation !== seg2.affiliation || !seg1.adj.has(seg2) )
-      throw new Error("unable to merge non-trivial edge");
+      throw new Error("Unable to merge non-trivial edges!");
 
-    var element = seg1.affiliation;
+    var elem = seg1.affiliation;
     if ( seg1.track )
-      this.remove(seg1.track);
+      this.remove(track);
     var cover = this.analyzer.cover(seg1, seg2);
     console.assert(cover.length > 0);
+
+    var old_boundaries = new Set(elem.boundaries);
     this.analyzer.glueAdj(cover);
-    this.trigger("modified", element);
+    for ( let seg of old_boundaries ) if ( !elem.boundaries.has(seg) )
+      this.remove(seg);
+    for ( let seg of elem.boundaries ) if ( !old_boundaries.has(seg) )
+      this.add(seg);
+
+    for ( let track of this.tracks )
+      delete track.secret;
     this.network.setStatus("broken");
+    this.changed = true;
   }
 
   mergeElements(element0, ...elements) {
@@ -3189,13 +3474,16 @@ class SphPuzzle extends Listenable
     element0.merge(...elements);
     for ( let element of elements )
       this.remove(element);
-    this.trigger("modified", element0);
+
+    for ( let track of this.tracks )
+      delete track.secret;
+    this.changed = true;
 
     return element0;
   }
   unbandage(joint) {
     if ( this.network.status == "broken" )
-      throw new Error("unable to unbandage without network structure!");
+      throw new Error("Unable to unbandage without network structure!");
 
     if ( joint.bandage.size == 1 )
       return;
@@ -3204,14 +3492,18 @@ class SphPuzzle extends Listenable
     var segs = Array.from(this.network.fly(joint))
                     .flatMap(seg => Array.from(seg.walk()));
     var elem = segs[0].affiliation;
-    var elem0 = elem.split(segs)[0];
+    var [elem0] = elem.split(segs);
     this.add(elem0);
-    this.trigger("modified", elem);
+
+    for ( let track of this.tracks )
+      delete track.secret;
+    this.changed = true;
+
     return elem0;
   }
   trim(knot) {
     if ( this.network.status == "broken" )
-      throw new Error("unable to trim knot without network structure!");
+      throw new Error("Unable to trim knot without network structure!");
 
     var joints = knot.joints.flat(2);
     if ( joints.length > 1 ) {
@@ -3225,33 +3517,50 @@ class SphPuzzle extends Listenable
     var segs = knot.segments.flat().flatMap(seg => Array.from(seg.walk()));
     var tracks = segs.map(seg => seg.track).filter(track => track);
 
-    elems[0].merge(...elems.slice(1));
-    elems[0].withdraw(...segs);
-
     for ( let track of new Set(tracks) )
       this.remove(track);
-    for ( let elem of new Set(elems) ) if ( elem !== elems[0] )
-      this.remove(elem);
-    this.trigger("modified", elems[0]);
+    var elem0 = this.mergeElements(...elems);
+    elem0.withdraw(...segs);
+    for ( let seg of segs )
+      this.remove(seg);
+
+    for ( let track of this.tracks )
+      delete track.secret;
+    this.changed = true;
   }
 
-  rotate(q) {
-    for ( let element of this.elements ) {
-      element.rotate(q);
-      this.trigger("twisted", element);
+  rotate(q, target) {
+    if ( !target ) {
+      for ( let elem of target.elements )
+        this.rotate(q, elem);
+
+    } else if ( target instanceof SphElem ) {
+      for ( let seg of target.boundaries )
+        this.rotate(q, seg);
+
+    } else if ( target instanceof SphSeg ) {
+      target.rotate(q);
     }
+
+    this.changed = true;
   }
   slice(center, radius, elements=this.elements.slice()) {
+    this.network.setStatus("broken");
+
     var circle = new SphCircle({radius, orientation:q_align(center)});
     var new_bd = [];
+
     for ( let element of elements ) {
       let [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
       if ( in_segs.length && out_segs.length ) {
-        let [splited] = element.split(out_segs);
-        this.add(splited);
-        this.trigger("modified", element);
+        for ( let seg of element.boundaries )
+          this.add(seg);
+
+        let [splitted] = element.split(out_segs);
+        this.add(splitted);
+
+        new_bd.push(...in_bd, ...out_bd);
       }
-      new_bd.push(...in_bd, ...out_bd);
     }
 
     var track;
@@ -3260,83 +3569,81 @@ class SphPuzzle extends Listenable
         if ( track = this.analyzer.buildTrack(new_bd[0]) )
           this.add(track);
 
-    var sliced_tracks = new Set();
-    for ( let bd of new_bd ) {
-      if ( bd.next.track && !new_bd.includes(bd.next) )
-        sliced_tracks.add(bd.next.track);
-      if ( bd.prev.track && !new_bd.includes(bd.prev) )
-        sliced_tracks.add(bd.prev.track);
-    }
-    for ( let track of sliced_tracks )
-      this.trigger("modified", track);
-
-    this.network.setStatus("broken");
+    for ( let track of this.tracks )
+      delete track.secret;
+    this.changed = true;
 
     return track;
   }
   twist(track, theta, hold) {
     theta = this.analyzer.mod4(theta);
-    var partition = this.analyzer.partitionBy(track.inner, track.outer);
-    if ( partition.length == 1 )
+    var partition = this.analyzer.rotationsOfTwist([[track, theta]], hold);
+    if ( !partition )
       throw new Error("Untwistable!");
-    var moved = partition.filter(g => !g.elements.has(hold))
-                         .flatMap(g => Array.from(g.elements));
-
-    for ( let track_ of track.latches.keys() )
-      this.remove(track_);
-
-    var new_tracks = this.analyzer.twist([[track, theta]], hold);
-
-    for ( let elem of moved )
-      this.trigger("twisted", elem);
-
-    for ( let track_ of new_tracks )
-      this.add(track_);
-    this.trigger("twisted", track);
 
     if ( this.network.status == "up-to-date" )
       this.network.setStatus("outdated");
 
+    for ( let track_ of track.latches.keys() )
+      this.remove(track_);
+    this.analyzer.twist([[track, theta]]);
+    for ( let track_ of track.latches.keys() )
+      this.add(track_);
+
+    for ( let region of partition ) if ( region.rotation[3] != 1 )
+      for ( let elem of region.elements )
+        this.rotate(region.rotation, elem);
+
+    this.changed = true;
+
     return track;
   }
-  decipher(tracks=this.tracks) {
-    for ( let track of tracks ) if ( !track.passwords ) {
-      track.shields = {};
-      track.shields.inner = this.analyzer.raiseShield(track.inner);
-      track.shields.outer = this.analyzer.raiseShield(track.outer);
-      track.passwords = this.analyzer.decipher(track, track.shields);
+  decipher(track) {
+    track.secret = {};
+    track.secret.shields = {};
+    track.secret.shields.inner = this.analyzer.raiseShield(track.inner);
+    track.secret.shields.outer = this.analyzer.raiseShield(track.outer);
+
+    track.secret.passwords = this.analyzer.decipher(track, track.secret.shields);
+    track.secret.pseudokeys = this.analyzer.guessKeys(track);
+
+    var partition = this.analyzer.partitionBy(track.inner, track.outer);
+    if ( partition.length == 2 ) {
+      track.secret.regions = {};
+      track.secret.regions.inner = partition.find(region => region.fences.has(track.inner));
+      track.secret.regions.outer = partition.find(region => region.fences.has(track.outer));
     }
+
+    return track.secret;
   }
 
   clean() {
     this.network.setStatus("broken");
 
-    // merge unlockable track
-    for ( let track of this.tracks ) if ( track.passwords && track.passwords.size == 0 ) {
-      let [elem1, elem2] = this.analyzer.sealTrack(track, track.shields);
+    // merge untwistable, unlockable track
+    for ( let track of this.tracks ) {
+      let shields = {};
+      shields.inner = this.analyzer.raiseShield(track.inner);
+      shields.outer = this.analyzer.raiseShield(track.outer);
+      let elements1 = Array.from(new Set(shields.inner.map(seg => seg.affiliation)));
+      let elements2 = Array.from(new Set(shields.outer.map(seg => seg.affiliation)));
 
-      if ( track.shields ) {
-        for ( let element of new Set(track.shields.inner.map(seg => seg.affiliation)) )
-          if ( element !== elem1 )
-            this.remove(element);
-        for ( let element of new Set(track.shields.outer.map(seg => seg.affiliation)) )
-          if ( element !== elem2 )
-            this.remove(element);
-
-      } else {
-        for ( let element of new Set(track.inner.map(seg => seg.affiliation)) )
-          if ( element !== elem1 )
-            this.remove(element);
-        for ( let element of new Set(track.outer.map(seg => seg.affiliation)) )
-          if ( element !== elem2 )
-            this.remove(element);
-
+      if ( elements1.some(elem => elements2.includes(elem)) ) {
+        let elements = Array.from(new Set([...elements1, ...elements2]));
+        this.mergeElements(...elements);
+        continue;
       }
-      this.trigger("modified", elem1);
-      this.trigger("modified", elem2);
 
-      delete track.passwords;
-      delete track.shields;
+      let passwords = this.analyzer.decipher(track, shields);
+      if ( passwords.size != 0 )
+        continue;
+
+      this.mergeElements(...elements1);
+      this.mergeElements(...elements2);
+
+      let [segments, tracks] = this.analyzer.sealTrack(track);
+      for ( let track of tracks )
+        this.remove(track);
     }
 
     // merge untwistable edges
@@ -3349,8 +3656,6 @@ class SphPuzzle extends Listenable
       let tips = this.analyzer.findSandglassTips(elem.boundaries);
       for ( let [seg1, seg2] of tips )
         this.analyzer.swap(seg1, seg2, 2, 2);
-      if ( tips.length )
-        this.trigger("modified", elem);
     }
 
     // merge trivial edges
@@ -3362,13 +3667,19 @@ class SphPuzzle extends Listenable
         for ( let [seg1,,,seg2,,] of subzippers ) {
           nontrivial.delete(seg1);
           nontrivial.delete(seg2);
+          if ( seg1.track )
+            this.remove(seg1.track);
         }
         zippers.push(...subzippers);
       }
 
       if ( zippers.length ) {
+        var old_boundaries = new Set(element.boundaries);
         this.analyzer.glueAdj(zippers);
-        this.trigger("modified", element);
+        for ( let seg of old_boundaries ) if ( !element.boundaries.has(seg) )
+          this.remove(seg);
+        for ( let seg of element.boundaries ) if ( !old_boundaries.has(seg) )
+          this.add(seg);
       }
     }
 
@@ -3389,7 +3700,7 @@ class SphPuzzle extends Listenable
 
   recognize() {
     if ( this.network.status == "broken" )
-      throw new Error("unable to recognize configuration without network structure!");
+      throw new Error("Unable to recognize configuration without network structure!");
 
     this.network.setStatus("up-to-date");
     for ( let knot of this.network.knots ) {
@@ -3399,18 +3710,20 @@ class SphPuzzle extends Listenable
   }
   assemble(seg0, orientation0) {
     if ( this.network.status == "broken" )
-      throw new Error("unable to assemble puzzle without network structure!");
+      throw new Error("Unable to assemble puzzle without network structure!");
 
     seg0 = seg0 || this.network.knots[0].segments[0][0];
     var [knot0, index0] = this.network.indicesOf(seg0).next().value;
     orientation0 = orientation0 || seg0.orientation.slice();
 
+    var orientations0 = this.elements.map(elem => elem.fly().next().value)
+                                     .map(seg => [seg, seg.orientation.slice()]);
+
     this.network.setStatus("up-to-date");
     this.analyzer.assemble(this.network.knots);
     this.analyzer.orient(knot0, index0, orientation0);
 
-    for ( let elem of this.elements )
-      this.trigger("twisted", elem);
+    this.changed = true;
   }
   check() {
     console.assert(this.network.status == "up-to-date");
@@ -3425,7 +3738,7 @@ class SphPuzzle extends Listenable
 
   grab(point) {
     if ( this.network.status == "broken" )
-      throw new Error("unable to grab element of puzzle without network structure!");
+      throw new Error("Unable to grab element of puzzle without network structure!");
 
     return this.analyzer.grab(this.network.knots[0], point);
   }
@@ -3444,12 +3757,10 @@ class SphPuzzle extends Listenable
  * events are:
  * `{ type:"statuschanged", target:SphNetwork }`, triggered when network structure
  * is broken, up-to-date or outdated.
- * `{ type:"added"|"removed"|"modified", target:SphKnot|SphJoint }`, triggered
- * after adding/removing/modifying knot/joint.
- * `{ type:"binded"|"unbinded", target:SphJoint }`, triggered after
- * binding/unbinding joints.
- * `{ type:"twisted", target:SphKnot }`, triggered after configuration/segments
- * changed.
+ * `{ type:"added"|"removed", target:SphKnot|SphJoint }`, triggered after
+ * adding/removing knot/joint.
+ * `{ type:"modified", target:SphKnot|SphJoint, record:object }`, triggered after
+ * modifying properties of knot/joint.  `record` is the old values before modifying.
  *
  * @class
  * @property {string} status - Status of network structure and configuration:
@@ -3459,7 +3770,7 @@ class SphPuzzle extends Listenable
  * @property {SphKnot[]} knots - All knots of this network.
  * @property {SphJoint[]} joints - All joints of this network.
  */
-class SphNetwork extends Listenable
+class SphNetwork extends Observable
 {
   constructor() {
     super();
@@ -3477,14 +3788,18 @@ class SphNetwork extends Listenable
   }
   add(target) {
     if ( target instanceof SphKnot ) {
+      if ( this.knots.includes(target) )
+        return;
       target.host = this;
       this.knots.push(target);
-      this.trigger("added", target);
+      this.changed = true;
 
     } else if ( target instanceof SphJoint ) {
+      if ( this.joints.includes(target) )
+        return;
       target.host = this;
       this.joints.push(target);
-      this.trigger("added", target);
+      this.changed = true;
 
     } else {
       throw new Error();
@@ -3496,15 +3811,14 @@ class SphNetwork extends Listenable
       if ( i == -1 )
         return;
       this.knots.splice(i, 1);
-      this.trigger("removed", target);
+      this.changed = true;
 
     } else if ( target instanceof SphJoint ) {
       let i = this.joints.indexOf(target);
       if ( i == -1 )
         return;
       this.joints.splice(i, 1);
-
-      this.trigger("removed", target);
+      this.changed = true;
 
     } else {
       throw new Error();
@@ -3527,6 +3841,46 @@ class SphNetwork extends Listenable
           this.add(joint);
   }
 
+  get observed() {
+    const knot_prop = {
+      segments: knot => knot.segments.map(a => a.slice()),
+      joints: knot => knot.joints.map(a => a.map(b => b.slice())),
+      configuration: knot => knot.configuration
+    };
+    const joint_prop = {
+      ports: joint => Array.from(joint.ports).map(([knot, q]) => [knot, q.slice()]),
+      bandage: joint => Array.from(joint.bandage)
+    };
+
+    var observed = new Map();
+    for ( let target of this.knots )
+      observed.set(target, knot_prop);
+    for ( let target of this.joints )
+      observed.set(target, joint_prop);
+    return observed;
+  }
+  onchange(modified) {
+    for ( let [target, record] of modified )
+      if ( target instanceof SphKnot && record == "removed" )
+        this.trigger("removed", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphKnot && record == "added" )
+        this.trigger("added", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphKnot && typeof record == "object" )
+        this.trigger("modified", target, {record});
+
+    for ( let [target, record] of modified )
+      if ( target instanceof SphJoint && record == "removed" )
+        this.trigger("removed", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphJoint && record == "added" )
+        this.trigger("added", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphJoint && typeof record == "object" )
+        this.trigger("modified", target, {record});
+  }
+
   makeJoint(knot, index) {
     console.assert(this.knots.includes(knot));
     var joint = knot.jointAt(index, false);
@@ -3539,6 +3893,7 @@ class SphNetwork extends Listenable
   alignJoint(joint) {
     var knot = joint.ports.keys().next().value;
     knot.align(knot.indexOf(joint));
+    this.changed = true;
   }
 
   fuse(...joints) {
@@ -3552,7 +3907,7 @@ class SphNetwork extends Listenable
 
     for ( let joint of joints.slice(1) )
       this.remove(joint);
-    this.trigger("modified", joints[0]);
+    this.changed = true;
 
     return joints[0];
   }
@@ -3560,12 +3915,12 @@ class SphNetwork extends Listenable
     if ( !joint.ports.has(knot) )
       return;
     joint.unfuse(knot);
+    this.changed = true;
     if ( joint.ports.size == 0 ) {
       this.unbind(joint);
       this.remove(joint);
       return;
     } else {
-      this.trigger("modified", joint);
       return joint;
     }
   }
@@ -3581,7 +3936,7 @@ class SphNetwork extends Listenable
     for ( let joint of joints.slice(1) )
       joints[0].bind(joint);
 
-    this.trigger("binded", joints[0]);
+    this.changed = true;
 
     return joints[0].bandage;
   }
@@ -3589,7 +3944,7 @@ class SphNetwork extends Listenable
     if ( joint.bandage.size == 1 )
       return;
     joint.unbind();
-    this.trigger("unbinded", joint);
+    this.changed = true;
   }
 
   *indicesOf(target) {
@@ -3662,7 +4017,7 @@ class SphNetwork extends Listenable
     knot.joints = knot.model.reorder(knot.joints, perm);
     knot.segments = knot.model.reorder(knot.segments, perm);
     if ( config ) knot.configuration = config;
-    this.trigger("twisted", knot);
+    this.changed = true;
   }
 }
 
