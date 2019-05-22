@@ -2272,7 +2272,7 @@ class SphAnalyzer
       for ( i=0; i<shield.length; i++ ) if ( !untwistable.has(shield[i]) ) {
         let [,,,meeted] = this.relationTo(shield[i].circle, circle0);
 
-        if ( meeted > 0 || !this.isTwistable(shield[i], shield) ) {
+        if ( meeted > 1 || !this.isTwistable(shield[i], shield) ) {
           let new_untwistable = new Set([shield[i]]);
           for ( let unseg of new_untwistable )
             for ( let adj_seg of unseg.adj.keys() )
@@ -2305,9 +2305,9 @@ class SphAnalyzer
    *   `angle` is angle between latch and this track.
    */
   detectLatches(fence, cracks, shield) {
-    const isFree = (cracks, shield) => {
-      var pre = cracks.filter(crack => crack.angle==0);
-      var post = cracks.filter(crack => crack.angle==2);
+    const isFree = (subcracks, shield) => {
+      var pre = subcracks.filter(crack => crack.angle==0);
+      var post = subcracks.filter(crack => crack.angle==2);
       for ( let crack1 of pre ) for ( let crack2 of post )
         if ( this.cmp(2-crack1.segment.radius, crack2.segment.radius) == 0 )
           if ( !shield || !shield.includes(crack2.segment) )
@@ -2353,20 +2353,26 @@ class SphAnalyzer
       } else { // find fixed latches
         let [theta, angle, radius] = tick;
         let [arc] = this.leaf(angle, fence[0].radius, radius);
+        let tick0_ = [this.mod4(theta-arc, [0])];
+        let tick_ = [tick0_[0], 2-angle, 2-radius];
+
         if ( this.cmp([arc, radius], [2, 1]) <= 0 ) {
-          let tick0_ = [this.mod4(theta-arc, [0])];
-          let tick_ = [tick0_[0], 2-angle, 2-radius];
           if ( !ticks.some(tick => this.cmp(tick, tick0_)==0 || this.cmp(tick, tick_)==0) )
             continue;
-
-          if ( shield && !this.isSeparableBy(shield, tick.segment.circle) )
+        } else {
+          if ( !ticks.some(tick => this.cmp(tick, tick0_)==0) )
             continue;
-
-          let center = this.mod4(theta-arc/2, centers);
-          centers.add(center);
-          arc = this.snap(arc, [2]);
-          latches.push({arc, center, angle});
+          [theta, angle, radius] = tick_;
+          arc = 4-arc;
         }
+
+        if ( shield && !this.isSeparableBy(shield, tick.segment.circle) )
+          continue;
+
+        let center = this.mod4(theta-arc/2, centers);
+        centers.add(center);
+        arc = this.snap(arc, [2]);
+        latches.push({arc, center, angle});
 
       }
     }
@@ -2391,15 +2397,15 @@ class SphAnalyzer
         let seg = fence[i-1] || fence[fence.length-1];
 
         let [ang1, seg1] = [seg.next.angle, seg.next];
-        let cracks_ = [];
+        let subcracks = [];
         for ( let [angle, segment, offset] of this.spin(seg1) ) {
           angle = this.snap(angle+ang1, [0, 2, 4]);
           let sgn = this.cmp([angle, segment.radius-1], [2, seg.radius-1]);
           console.assert(sgn <= 0);
           if ( sgn >= 0 ) break;
-          cracks_.push({angle, segment});
+          subcracks.push({angle, segment});
         }
-        cracks.push(cracks_);
+        cracks.push(subcracks);
       }
 
       let latches_ = this.detectLatches(fence, cracks, shield);
@@ -3140,12 +3146,20 @@ class Listenable
     this._listeners[type].splice(i, 1);
     return true;
   }
+  once(type, target=Object, listener) {
+    var remover = () => {
+      this.off(type, target, listener);
+      this.off(type, target, remover);
+    };
+    this.on(type, target, listener);
+    this.on(type, target, remover);
+  }
   trigger(type, target, event={}) {
     event.type = type;
     event.target = target;
     event.currentTarget = this;
 
-    for ( let [clz, listener] of (this._listeners[type] || []) ) {
+    for ( let [clz, listener] of Array.from(this._listeners[type] || []) ) {
       if ( typeof clz == "function" ) {
         if ( target instanceof clz )
           listener.call(this, event);
@@ -3170,19 +3184,14 @@ class Observable extends Listenable
     super();
     this.changed = false;
 
-    this.routine = this.observeRoutine();
-    var wrapped = () => {
-      requestAnimationFrame(wrapped);
-      var modified = this.takeRecords();
-      if ( modified.size != 0 )
-        this.onchange(modified);
-    };
+    this.routine = this.recordRoutine();
+    var wrapped = () => (requestAnimationFrame(wrapped), this.onchange(this.takeRecords()));
     requestAnimationFrame(wrapped);
   }
   get observed() {
     return new Map();
   }
-  *observeRoutine() {
+  *recordRoutine() {
     var records = new Map();
     var new_records = new Map();
 
@@ -3208,7 +3217,12 @@ class Observable extends Listenable
       yield modified;
     }
   }
+  takeRecords() {
+    return this.routine.next().value;
+  }
   onchange(modified) {
+    if ( modified.size == 0 )
+      return;
     for ( let [target, record] of modified )
       if ( record == "removed" )
         this.trigger("removed", target);
@@ -3218,9 +3232,7 @@ class Observable extends Listenable
     for ( let [target, record] of modified )
       if ( typeof record == "object" )
         this.trigger("modified", target, {record});
-  }
-  takeRecords() {
-    return this.routine.next().value;
+    this.trigger("changed", this);
   }
 
   record(target, properties) {
@@ -3259,13 +3271,22 @@ class Observable extends Listenable
  * It provide easy-to-use methods to edit, play and analyze this puzzle, but all
  * crucial algorithms should be implemented by analyzer.
  * It also equips with event system, which is useful for making GUI:
+ * `{ type:"statuschanged", target:SphNetwork }`, triggered when network structure
+ * is broken, up-to-date or outdated.
  * `{ type:"added"|"removed", target:SphSeg|SphElem|SphTrack }`, triggered after
  * adding/removing segment/element/track.
  * `{ type:"modified", target:SphSeg|SphElem|SphTrack, record:object }`,
  * triggered after modifying properties of segment/element/track.  `record` is
- * the old values before modifying.
+ * object of copies of old properties before modifying; only modified properties
+ * will be recorded.
+ * `{ type:"changed", target:this }`, triggered when something changed (after
+ * triggering all others events).  This event is useful to initialization;
+ * it is hard to initialize listeners directly under unsync event system.
  *
  * @class
+ * @property {string} status - Status of puzzle:
+ *   "ready" means it is ready to simulate twisting of puzzle;
+ *   "unprepared" means there are broken secrets of tracks.
  * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
  * @property {SphSeg[]} segments - All segments of this puzzle.
  * @property {SphElem[]} elements - All elements of this puzzle.
@@ -3277,15 +3298,27 @@ class SphPuzzle extends Observable
   constructor(analyzer=new SphAnalyzer(), elements=[new SphElem()]) {
     super();
 
+    this.status = "unprepared";
     this.analyzer = analyzer;
     this.elements = [];
     this.segments = [];
     this.tracks = [];
     this.network = new SphNetwork();
 
+    this.statuschanged = false;
+    this.changed = false;
+
     this.init(elements);
   }
 
+  setStatus(status) {
+    if ( !["ready", "unprepared"].includes(status) )
+      throw new Error("Wrong status!");
+    if ( this.status != status ) {
+      this.statuschanged = true;
+      this.status = status;
+    }
+  }
   add(target) {
     if ( target instanceof SphElem ) {
       if ( this.elements.includes(target) )
@@ -3392,6 +3425,13 @@ class SphPuzzle extends Observable
     return observed;
   }
   onchange(modified) {
+    if ( this.statuschanged ) {
+      this.trigger("statuschanged", this);
+      this.statuschanged = false;
+    }
+
+    if ( modified.size == 0 )
+      return;
     for ( let [target, record] of modified )
       if ( target instanceof SphSeg && record == "removed" )
         this.trigger("removed", target);
@@ -3421,14 +3461,14 @@ class SphPuzzle extends Observable
     for ( let [target, record] of modified )
       if ( target instanceof SphTrack && typeof record == "object" )
         this.trigger("modified", target, {record});
+
+    this.trigger("changed", this);
   }
 
   mergeVertex(seg) {
     this.analyzer.mergePrev(seg);
     this.remove(seg);
 
-    for ( let track of this.tracks )
-      delete track.secret;
     this.network.setStatus("broken");
     this.changed = true;
   }
@@ -3436,8 +3476,6 @@ class SphPuzzle extends Observable
     this.analyzer.interpolate(seg, theta);
     this.add(seg.next);
 
-    for ( let track of this.tracks )
-      delete track.secret;
     this.network.setStatus("broken");
     this.changed = true;
   }
@@ -3447,7 +3485,7 @@ class SphPuzzle extends Observable
 
     var elem = seg1.affiliation;
     if ( seg1.track )
-      this.remove(track);
+      this.remove(seg1.track);
     var cover = this.analyzer.cover(seg1, seg2);
     console.assert(cover.length > 0);
 
@@ -3458,8 +3496,6 @@ class SphPuzzle extends Observable
     for ( let seg of elem.boundaries ) if ( !old_boundaries.has(seg) )
       this.add(seg);
 
-    for ( let track of this.tracks )
-      delete track.secret;
     this.network.setStatus("broken");
     this.changed = true;
   }
@@ -3475,8 +3511,7 @@ class SphPuzzle extends Observable
     for ( let element of elements )
       this.remove(element);
 
-    for ( let track of this.tracks )
-      delete track.secret;
+    this.setStatus("unprepared");
     this.changed = true;
 
     return element0;
@@ -3495,8 +3530,7 @@ class SphPuzzle extends Observable
     var [elem0] = elem.split(segs);
     this.add(elem0);
 
-    for ( let track of this.tracks )
-      delete track.secret;
+    this.setStatus("unprepared");
     this.changed = true;
 
     return elem0;
@@ -3523,24 +3557,6 @@ class SphPuzzle extends Observable
     elem0.withdraw(...segs);
     for ( let seg of segs )
       this.remove(seg);
-
-    for ( let track of this.tracks )
-      delete track.secret;
-    this.changed = true;
-  }
-
-  rotate(q, target) {
-    if ( !target ) {
-      for ( let elem of target.elements )
-        this.rotate(q, elem);
-
-    } else if ( target instanceof SphElem ) {
-      for ( let seg of target.boundaries )
-        this.rotate(q, seg);
-
-    } else if ( target instanceof SphSeg ) {
-      target.rotate(q);
-    }
 
     this.changed = true;
   }
@@ -3569,54 +3585,11 @@ class SphPuzzle extends Observable
         if ( track = this.analyzer.buildTrack(new_bd[0]) )
           this.add(track);
 
-    for ( let track of this.tracks )
-      delete track.secret;
+    this.setStatus("unprepared");
     this.changed = true;
 
     return track;
   }
-  twist(track, theta, hold) {
-    theta = this.analyzer.mod4(theta);
-    var partition = this.analyzer.rotationsOfTwist([[track, theta]], hold);
-    if ( !partition )
-      throw new Error("Untwistable!");
-
-    if ( this.network.status == "up-to-date" )
-      this.network.setStatus("outdated");
-
-    for ( let track_ of track.latches.keys() )
-      this.remove(track_);
-    this.analyzer.twist([[track, theta]]);
-    for ( let track_ of track.latches.keys() )
-      this.add(track_);
-
-    for ( let region of partition ) if ( region.rotation[3] != 1 )
-      for ( let elem of region.elements )
-        this.rotate(region.rotation, elem);
-
-    this.changed = true;
-
-    return track;
-  }
-  decipher(track) {
-    track.secret = {};
-    track.secret.shields = {};
-    track.secret.shields.inner = this.analyzer.raiseShield(track.inner);
-    track.secret.shields.outer = this.analyzer.raiseShield(track.outer);
-
-    track.secret.passwords = this.analyzer.decipher(track, track.secret.shields);
-    track.secret.pseudokeys = this.analyzer.guessKeys(track);
-
-    var partition = this.analyzer.partitionBy(track.inner, track.outer);
-    if ( partition.length == 2 ) {
-      track.secret.regions = {};
-      track.secret.regions.inner = partition.find(region => region.fences.has(track.inner));
-      track.secret.regions.outer = partition.find(region => region.fences.has(track.outer));
-    }
-
-    return track.secret;
-  }
-
   clean() {
     this.network.setStatus("broken");
 
@@ -3688,6 +3661,75 @@ class SphPuzzle extends Observable
       for ( let seg of element.boundaries )
         if ( seg !== seg.prev && this.analyzer.isTrivialVertex(seg) )
           this.mergeVertex(seg);
+
+    // decipher all tracks
+    for ( let track of this.tracks )
+      this.decipher(track);
+
+    this.setStatus("ready");
+    this.statuschanged = true;
+  }
+
+  rotate(q, target) {
+    if ( !target ) {
+      for ( let elem of target.elements )
+        this.rotate(q, elem);
+
+    } else if ( target instanceof SphElem ) {
+      for ( let seg of target.boundaries )
+        this.rotate(q, seg);
+
+    } else if ( target instanceof SphSeg ) {
+      target.rotate(q);
+    }
+
+    this.changed = true;
+  }
+  twist(track, theta, hold) {
+    theta = this.analyzer.mod4(theta);
+    var partition = this.analyzer.rotationsOfTwist([[track, theta]], hold);
+    if ( !partition )
+      throw new Error("Untwistable!");
+
+    if ( this.network.status == "up-to-date" )
+      this.network.setStatus("outdated");
+
+    for ( let track_ of track.latches.keys() )
+      this.remove(track_);
+    this.analyzer.twist([[track, theta]]);
+    for ( let track_ of track.latches.keys() )
+      this.add(track_);
+
+    for ( let region of partition ) if ( region.rotation[3] != 1 )
+      for ( let elem of region.elements )
+        this.rotate(region.rotation, elem);
+
+    for ( let track_ of track.latches.keys() )
+      this.decipher(track_);
+
+    this.changed = true;
+
+    return track;
+  }
+  decipher(track) {
+    track.secret = {};
+
+    track.secret.shields = {};
+    track.secret.shields.inner = this.analyzer.raiseShield(track.inner);
+    track.secret.shields.outer = this.analyzer.raiseShield(track.outer);
+    track.secret.passwords = this.analyzer.decipher(track, track.secret.shields);
+    track.secret.passwords = new Map(Array.from(track.secret.passwords).sort((a,b) => a[0]-b[0]));
+    track.secret.pseudokeys = this.analyzer.guessKeys(track);
+    track.secret.pseudokeys = new Map(Array.from(track.secret.pseudokeys).sort((a,b) => a[0]-b[0]));
+
+    var partition = this.analyzer.partitionBy(track.inner, track.outer);
+    if ( partition.length == 2 ) {
+      track.secret.regions = {};
+      track.secret.regions.inner = partition.find(region => region.fences.has(track.inner)).elements;
+      track.secret.regions.outer = partition.find(region => region.fences.has(track.outer)).elements;
+    }
+
+    return track.secret;
   }
 
   // network
@@ -3697,7 +3739,6 @@ class SphPuzzle extends Observable
     this.network.setStatus("outdated");
     this.network.init(knots);
   }
-
   recognize() {
     if ( this.network.status == "broken" )
       throw new Error("Unable to recognize configuration without network structure!");
@@ -3707,6 +3748,7 @@ class SphPuzzle extends Observable
       let [config, perms] = this.analyzer.recognize(knot.model, knot.segments, []);
       this.network.transit(knot, perms[0], config);
     }
+    this.network.setIndices(this.segments);
   }
   assemble(seg0, orientation0) {
     if ( this.network.status == "broken" )
@@ -3716,12 +3758,10 @@ class SphPuzzle extends Observable
     var [knot0, index0] = this.network.indicesOf(seg0).next().value;
     orientation0 = orientation0 || seg0.orientation.slice();
 
-    var orientations0 = this.elements.map(elem => elem.fly().next().value)
-                                     .map(seg => [seg, seg.orientation.slice()]);
-
     this.network.setStatus("up-to-date");
     this.analyzer.assemble(this.network.knots);
     this.analyzer.orient(knot0, index0, orientation0);
+    this.network.setIndices(this.segments);
 
     this.changed = true;
   }
@@ -3753,14 +3793,17 @@ class SphPuzzle extends Observable
  * network to build whole puzzle; parameters of segments make bridge between
  * concrete objects and network structure, but it only makes sense under a given
  * configuration.
- * It equips with event system, which is useful for making GUI.  The possible
- * events are:
+ * It equips with event system, which is useful for making GUI:
  * `{ type:"statuschanged", target:SphNetwork }`, triggered when network structure
  * is broken, up-to-date or outdated.
  * `{ type:"added"|"removed", target:SphKnot|SphJoint }`, triggered after
  * adding/removing knot/joint.
  * `{ type:"modified", target:SphKnot|SphJoint, record:object }`, triggered after
- * modifying properties of knot/joint.  `record` is the old values before modifying.
+ * modifying properties of knot/joint.  `record` is object of copies of old
+ * properties before modifying; only modified properties will be recorded.
+ * `{ type:"changed", target:this }`, triggered when something changed (after
+ * triggering all others events).  This event is useful to initialization;
+ * it is hard to initialize listeners directly under unsync event system.
  *
  * @class
  * @property {string} status - Status of network structure and configuration:
@@ -3778,12 +3821,17 @@ class SphNetwork extends Observable
     this.status = "broken";
     this.knots = [];
     this.joints = [];
+
+    this.statuschanged = false;
+    this.changed = false;
   }
 
   setStatus(status) {
+    if ( !["up-to-date", "outdated", "broken"].includes(status) )
+      throw new Error("Wrong status!");
     if ( this.status != status ) {
+      this.statuschanged = true;
       this.status = status;
-      this.trigger("statuschanged", this);
     }
   }
   add(target) {
@@ -3860,6 +3908,13 @@ class SphNetwork extends Observable
     return observed;
   }
   onchange(modified) {
+    if ( this.statuschanged ) {
+      this.trigger("statuschanged", this);
+      this.statuschanged = false;
+    }
+
+    if ( modified.size == 0 )
+      return;
     for ( let [target, record] of modified )
       if ( target instanceof SphKnot && record == "removed" )
         this.trigger("removed", target);
@@ -3879,6 +3934,8 @@ class SphNetwork extends Observable
     for ( let [target, record] of modified )
       if ( target instanceof SphJoint && typeof record == "object" )
         this.trigger("modified", target, {record});
+
+    this.trigger("changed", this);
   }
 
   makeJoint(knot, index) {
@@ -3947,9 +4004,17 @@ class SphNetwork extends Observable
     this.changed = true;
   }
 
+  setIndices(segments) {
+    for ( let seg of segments )
+      seg.index = this.indicesOf(seg).next().value;
+  }
   *indicesOf(target) {
     var index;
     if ( target instanceof SphSeg ) {
+      if ( this.status == "up-to-date" && target.index ) {
+        yield target.index;
+        return;
+      }
       for ( let knot of this.knots )
         if ( index = knot.indexOf(target) ) {
           yield [knot, index];

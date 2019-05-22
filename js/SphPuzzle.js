@@ -186,7 +186,7 @@ class Display
         click_spot = this.spotOn(event.offsetX, event.offsetY);
       }, false);
       this.dom.addEventListener("mousemove", event => {
-        if ( click_spot && click_spot.object ) {
+        if ( click_spot ) {
           if ( Math.abs(event.movementX) > 1 || Math.abs(event.movementY) > 1 )
             click_spot = undefined;
         }
@@ -762,9 +762,15 @@ class SphPuzzleView
       this.display.add(this.ball, this.root);
     }
 
-    puzzle.takeRecords();
-    this.initProp(puzzle);
-    this.initView(puzzle);
+    puzzle.view = this;
+    this.origin = puzzle;
+    if ( puzzle.changed ) {
+      puzzle.once("changed", puzzle, () => { this.initProp(puzzle); this.initView(puzzle); });
+
+    } else {
+      this.initProp(puzzle);
+      this.initView(puzzle);
+    }
 
     this.display.animate(this.hoverRoutine());
   }
@@ -861,8 +867,6 @@ class SphPuzzleView
 
   // 3D view
   initView(puzzle) {
-    puzzle.view = this;
-    this.origin = puzzle;
     for ( let segment of puzzle.segments )
       this.drawSegment(segment);
     for ( let track of puzzle.tracks )
@@ -895,6 +899,21 @@ class SphPuzzleView
       if ( "inner" in event.record || "outer" in event.record ) {
         this.removeTwister(event.target);
         this.addTwister(event.target);
+      }
+    });
+
+    puzzle.on("statuschanged", puzzle, event => {
+      if ( puzzle.status == "ready" ) {
+        for ( let track of puzzle.tracks )
+          if ( track.secret.regions )
+            for ( let target of track.twister.targets )
+              target.userData.draggable = true;
+
+      } else {
+        for ( let track of puzzle.tracks )
+          if ( track.secret.regions )
+            for ( let target of track.twister.targets )
+              target.userData.draggable = false;
       }
     });
   }
@@ -988,18 +1007,12 @@ class SphPuzzleView
     delete seg.view;
   }
   addTwister(track) {
-    // drag
     var circle, plane, moved, shifts, shifts0;
 
     var dragstart = event => {
-      if ( !track.secret )
-        track.host.decipher(track);
-      if ( !track.secret.regions )
-        return;
-
-      moved = track.inner.includes(event.target.parent.userData.origin)
-            ? track.secret.regions.inner
-            : track.secret.regions.outer;
+      [circle, moved] = track.inner.includes(event.target.parent.userData.origin)
+                      ? [track.inner[0].circle, track.secret.regions.inner]
+                      : [track.outer[0].circle, track.secret.regions.outer];
 
       shifts = Array.from(track.secret.pseudokeys.keys())
           .map(kee => this.origin.analyzer.mod4(track.shift-kee)).sort();
@@ -1007,11 +1020,10 @@ class SphPuzzleView
           .map(key => this.origin.analyzer.mod4(track.shift-key)).sort();
 
       var p = event.point.toArray();
-      circle = moved.fences.values().next().value[0].circle;
       circle.shift(circle.thetaOf(p));
       plane = new THREE.Plane(new THREE.Vector3(...circle.center), -dot(circle.center, p));
 
-      for ( let elem of moved.elements ) for ( let seg of elem.boundaries )
+      for ( let elem of moved ) for ( let seg of elem.boundaries )
         seg.view.userData.quaternion0 = seg.view.quaternion.clone();
 
       event.drag = true;
@@ -1025,21 +1037,22 @@ class SphPuzzleView
       angle = fzy_mod(angle, 4, shifts0, 0.05);
       var rot = new THREE.Quaternion().setFromAxisAngle(plane.normal, angle*Q);
 
-      for ( let elem of moved.elements ) for ( let seg of elem.boundaries )
+      for ( let elem of moved ) for ( let seg of elem.boundaries )
         seg.view.quaternion.multiplyQuaternions(rot, seg.view.userData.quaternion0);
 
       return angle;
     };
     var dragend = event => {
       var angle = drag(event);
-      var hold = event.target.parent.userData.origin.adj.keys().next().value.affiliation;
+      var hold = this.origin.elements.find(elem => !moved.has(elem));
       this.origin.twist(track, angle, hold);
     };
 
     var targets = [...track.inner, ...track.outer].map(seg => seg.view.children[3]);
     track.twister = {dragstart, drag, dragend, targets, origin:track};
     for ( let holder of targets ) {
-      holder.userData.draggable = true;
+      if ( track.host.status == "ready" )
+        holder.userData.draggable = true;
       holder.addEventListener("dragstart", dragstart);
       holder.addEventListener("drag", drag);
       holder.addEventListener("dragend", dragend);
@@ -1170,6 +1183,12 @@ class SphPuzzleView
       boundaries.push(this.link(seg, sel_mode));
     detail.push({type: "folder", name: "boundaries", open: true, properties: boundaries});
 
+    // if ( this.origin.network.status == "up-to-date" ) {
+    //   var joints = Array.from(this.origin.network.jointsOf(elem))
+    //                     .map(joint => this.link(joint, sel_mode));
+    //   detail.push({type: "folder", name: "joints", properties: joints});
+    // }
+
     return detail;
   }
   makeSegProperties(seg, sel_mode) {
@@ -1188,6 +1207,11 @@ class SphPuzzleView
     detail.push(this.link(seg.affiliation, sel_mode, "affiliation"));
     detail.push(this.link(seg.prev, sel_mode, "prev"));
     detail.push(this.link(seg.next, sel_mode, "next"));
+
+    if ( seg.host.network.status == "up-to-date" ) {
+      let [knot, [i,j,k,l]] = seg.index;
+      detail.push({type: "text", name: "index", get: () => `${knot.name}[${i},${j};${k},${l}]`});
+    }
 
     if ( seg.track )
       detail.push(this.link(seg.track, sel_mode, "track"));
@@ -1219,6 +1243,46 @@ class SphPuzzleView
     for ( let seg of track.outer )
       outer.push(this.link(seg, sel_mode));
     detail.push({type: "folder", name: "outer", properties: outer});
+
+    if ( track.host.status == "ready" && track.secret ) {
+      var secret = [];
+
+      var pseudokeys = [];
+      for ( let [kee, matches] of track.secret.pseudokeys )
+        pseudokeys.push({type: "text", name: `${kee}`,
+          get: () => matches.map(([seg1, seg2]) => `${seg1.name}-${seg2.name}`).join()});
+      secret.push({type: "folder", name: "pseudokeys", properties: pseudokeys});
+
+      var passwords = [];
+      for ( let [key, matches] of track.secret.passwords )
+        passwords.push({type: "text", name: `${key}`,
+          get: () => matches.map(({center, arc, angle}) => `(${center}, ${arc}, ${angle})`).join()});
+      secret.push({type: "folder", name: "passwords", properties: passwords});
+
+      var shields_inner = [];
+      for ( let seg of track.secret.shields.inner )
+        shields_inner.push(this.link(seg, sel_mode));
+      secret.push({type: "folder", name: "shields.inner", properties: shields_inner});
+
+      var shields_outer = [];
+      for ( let seg of track.secret.shields.outer )
+        shields_outer.push(this.link(seg, sel_mode));
+      secret.push({type: "folder", name: "shields.outer", properties: shields_outer});
+
+      if ( track.secret.regions ) {
+        var regions_inner = [];
+        for ( let seg of track.secret.regions.inner )
+          regions_inner.push(this.link(seg, sel_mode));
+        secret.push({type: "folder", name: "regions.inner", properties: regions_inner});
+
+        var regions_outer = [];
+        for ( let seg of track.secret.regions.outer )
+          regions_outer.push(this.link(seg, sel_mode));
+        secret.push({type: "folder", name: "regions.outer", properties: regions_outer});
+      }
+
+      detail.push({type: "folder", name: "secret", properties: secret});
+    }
 
     return detail;
   }
@@ -1261,8 +1325,15 @@ class SphNetworkView
       this.selector.preselection = undefined;
     });
 
-    this.initProp(network);
-    this.initView(network);
+    network.view = this;
+    this.origin = network;
+    if ( network.changed ) {
+      network.once("changed", network, () => { this.initProp(network); this.initView(network); });
+
+    } else {
+      this.initProp(network);
+      this.initView(network);
+    }
 
     animate(this.hoverRoutine());
   }
@@ -1307,8 +1378,6 @@ class SphNetworkView
 
   // network view
   initView(network) {
-    network.view = this;
-    this.origin = network;
     for ( let knot of network.knots )
       this.drawKnot(knot);
     for ( let joint of network.joints ) {
@@ -1323,8 +1392,6 @@ class SphNetworkView
         this.graph.enable();
     });
     network.on("added", Object, event => {
-      if ( this.origin.status == "broken" )
-        return;
       if ( event.target instanceof SphKnot ) {
         this.drawKnot(event.target);
 
@@ -1334,8 +1401,6 @@ class SphNetworkView
       }
     });
     network.on("removed", Object, event => {
-      if ( this.origin.status == "broken" )
-        return;
       if ( event.target instanceof SphKnot ) {
         this.eraseKnot(event.target);
 
@@ -1344,9 +1409,6 @@ class SphNetworkView
       }
     });
     network.on("modified", SphJoint, event => {
-      if ( this.origin.status == "broken" )
-        return;
-
       if ( "ports" in event.record )
         this.updateJoint(event.target);
       else if ( "bandage" in event.record )
@@ -1593,7 +1655,14 @@ class SphStateView
     `);
     this.container = document.getElementById(container_id);
 
-    this.initView(network);
+    network.state_view = this;
+    this.origin = network;
+    if ( network.changed ) {
+      network.once("changed", network, () => this.initView(network));
+
+    } else {
+      this.initView(network);
+    }
 
     animate(this.hoverRoutine());
   }
@@ -1602,11 +1671,22 @@ class SphStateView
   initView(network) {
     for ( let knot of network.knots )
       this.drawTab(knot);
+
+    if ( network.status == "broken" )
+      this.container.classList.add("broken");
+    else
+      this.container.classList.remove("broken");
+
+    if ( network.status == "outdated" )
+      this.container.classList.add("outdated");
+    else
+      this.container.classList.remove("outdated");
+
     network.on("added", SphKnot, event => this.drawTab(event.target));
     network.on("removed", SphKnot, event => this.eraseTab(event.target));
-    network.on("twisted", SphKnot, event => this.updateTab(event.target));
+    network.on("modified", SphKnot, event => this.updateTab(event.target));
     this.selector.on("add", SphKnot, event => this.showTab(event.target));
-    network.on("statuschanged", SphNetwork, event => {
+    network.on("statuschanged", network, event => {
       if ( event.target.status == "broken" )
         this.container.classList.add("broken");
       else
@@ -1715,6 +1795,7 @@ class SphStateView
             else
               this.selector.reselect();
           }
+          event.stopPropagation();
         });
 
         list.appendChild(item);
@@ -1759,6 +1840,7 @@ class SphStateView
       }
   }
 
+  // hover/select feedback
   getItem(knot, [i,j]) {
     return knot.tab.querySelector(`div.list:nth-of-type(${i+1})>div.item:nth-of-type(${j+1})`);
   }
@@ -2246,13 +2328,13 @@ class SphPuzzleWorld
     // 3D view
     var dom = document.getElementById(id_display);
     var display = new Display(id_display, dom.clientWidth, dom.clientHeight);
-    new SphPuzzleView(display, this.puzzle, this.selector);
+    var puzzle_view = new SphPuzzleView(display, this.puzzle, this.selector);
 
     // network view
     var graph = new Graph(id_network);
-    new SphNetworkView(graph, this.puzzle.network, this.selector);
+    var network_view = new SphNetworkView(graph, this.puzzle.network, this.selector);
 
-    this.state = new SphStateView(id_state, this.puzzle.network, this.selector);
+    var state_view = new SphStateView(id_state, this.puzzle.network, this.selector);
 
     // panel
     this.panel = new Panel();
@@ -2260,7 +2342,7 @@ class SphPuzzleWorld
     var cmd_panel = this.panel.ctrls[this.panel.addFolder("commands")];
     this.cmd = new SphPuzzleWorldCmdMenu(cmd_panel, this.selector, this.puzzle);
 
-    new SphPuzzleViewExplorer(this.selector, this.puzzle);
+    var explorer = new SphPuzzleViewExplorer(this.selector, this.puzzle);
 
     // var pzl_panel = this.panel.ctrls[this.panel.addFolder("puzzle")];
     // this.pzl_tree = new SphPuzzleTreeViewPanel(pzl_panel, this.puzzle, this.puzzle.view);
@@ -2269,7 +2351,7 @@ class SphPuzzleWorld
 
     var sel_panel = this.panel.ctrls[this.panel.addFolder("select", true)];
     this.sel = new SelectPanel(sel_panel, this.selector);
-    this.sel.addPropBuilder(this.puzzle.view);
-    this.sel.addPropBuilder(this.puzzle.network.view);
+    this.sel.addPropBuilder(puzzle_view);
+    this.sel.addPropBuilder(network_view);
   }
 }
