@@ -1018,71 +1018,39 @@ class SphAnalyzer
       return [0, 4, 0, 0]; // anti-exclude
     else if ( this.cmp(2-distance, radius1 + (2-radius2)) == 0 )
       return [0, 4, 0, 1]; // kissing anti-exclude
-    else if ( distance < radius1 + radius2 )
-      return [...this.intersect(radius1, radius2, distance), 2]; // intersect
+    else if ( distance < radius1 + radius2 ) {
+      let arc1 = this.abcA(radius2, radius1, distance)*2;
+      let arc2 = this.abcA(radius1, radius2, distance)*2;
+      let angle = this.abcA(distance, radius1, radius2);
+      return [angle, arc1, arc2, 2]; // intersect
+    }
     else
       throw new Error(`unknown case: [${radius1}, ${radius2}, ${distance}]`);
   }
-  /**
-   * Compute intersection between two circles.
-   *
-   * @param {number} radius1 - Radius of the first circle to intersect.
-   * @param {number} radius2 - Radius of the second circle to intersect.
-   * @param {number} distance - Distance between centers of two circles.
-   * @returns {number[]} Information about intersection, which has values
-   *   `[ang, arc1, arc2]` (see method {@link SphAnalyzer#relationTo}).
-   */
-  intersect(radius1, radius2, distance) {
-    var a = radius2*Q;
-    var b = radius1*Q;
-    var c = distance*Q;
-
-    // cosine rules for spherical triangle: cos a = cos b cos c + sin b sin c cos A
-    var [ca, cb, cc] = [Math.cos(a), Math.cos(b), Math.cos(c)];
-    var [sa, sb, sc] = [Math.sin(a), Math.sin(b), Math.sin(c)];
+  // cosine rules for spherical triangle: cos a = cos b cos c + sin b sin c cos A
+  abcA(a, b, c) {
+    var [ca, cb, cc] = [Math.cos(a*Q), Math.cos(b*Q), Math.cos(c*Q)];
+    var [sb, sc] = [Math.sin(b*Q), Math.sin(c*Q)];
     var cA = (ca - cb*cc)/(sb*sc);
-    var cB = (cb - cc*ca)/(sc*sa);
-    var cC = (cc - ca*cb)/(sa*sb);
-
-    var angle = Math.acos(cC)/Q;
-    var arc1 = Math.acos(cA)*2/Q;
-    var arc2 = Math.acos(cB)*2/Q;
-    console.assert(!Number.isNaN(arc1) && arc1 > 0);
-    console.assert(!Number.isNaN(arc2) && arc2 > 0);
-    console.assert(!Number.isNaN(angle) && angle > 0);
-
-    return [angle, arc1, arc2];
+    return Math.acos(cA)/Q;
   }
-  /**
-   * Compute arc of leaf shape.
-   * Given tip angle and radius of edges, compute spherical arc angle of edges.
-   *
-   * @param {number} angle - Tip angle of leaf shape.
-   * @param {number} radius1 - Radius of left edge of leaf shape.
-   *   Center of curvature is at the right of edge.
-   * @param {number} radius2 - Radius of right edge of leaf shape.
-   *   Center of curvature is at the left of edge.
-   * @returns {number[]} The arcs of left edge and right edge, which has values
-   *   `[arc1, arc2]`.
-   */
-  leaf(angle, radius1, radius2) {
-    var a = radius1*Q;
-    var b = radius2*Q;
-    var C = (2-angle)*Q;
-
-    // cotangent rule for spherical triangle: cos b cos C = cot a sin b - cot A sin C
-    var [ca, sa] = [Math.cos(a), Math.sin(a)];
-    var [cb, sb] = [Math.cos(b), Math.sin(b)];
-    var [cC, sC] = [Math.cos(C), Math.sin(C)];
+  // cosine rules for spherical triangle: cos a = cos b cos c + sin b sin c cos A
+  Abca(A, b, c) {
+    var cA = Math.cos(A*Q);
+    var [cb, cc] = [Math.cos(b*Q), Math.cos(c*Q)];
+    var [sb, sc] = [Math.sin(b*Q), Math.sin(c*Q)];
+    var ca = cb*cc + sb*sc*cA;
+    return Math.acos(ca)/Q;
+  }
+  // cotangent rule for spherical triangle: cos b cos C = cot a sin b - cot A sin C
+  abCA(a, b, C) {
+    var [ca, sa] = [Math.cos(a*Q), Math.sin(a*Q)];
+    var [cb, sb] = [Math.cos(b*Q), Math.sin(b*Q)];
+    var [cC, sC] = [Math.cos(C*Q), Math.sin(C*Q)];
     var [cA_, sA_] = [ca*sb-sa*cb*cC, sa*sC];
-    var [cB_, sB_] = [cb*sa-sb*ca*cC, sb*sC];
-
-    var arc2 = Math.atan2(sA_, cA_)*2/Q;
-    var arc1 = Math.atan2(sB_, cB_)*2/Q;
-    console.assert(!Number.isNaN(arc1) && arc1 > 0);
-    console.assert(!Number.isNaN(arc2) && arc2 > 0);
-
-    return [arc1, arc2];
+    if ( sA_ < 0 )
+      [cA_, sA_] = [-cA_, -sA_];
+    return Math.sign(2-this.mod4(C)) * Math.atan2(sA_, cA_)/Q;
   }
   /**
    * Find circle passing through three points.
@@ -1111,7 +1079,7 @@ class SphAnalyzer
       let c1 = rotate([1,0,0], q_align(v1.map((x,i) => x+v2[i]), v2));
       let c2 = rotate([1,0,0], q_align(v3.map((x,i) => x+v2[i]), v2));
       let dis = angleTo(c1, c2)/Q;
-      let [,arc,] = this.intersect(1, 1, dis);
+      let arc = this.abcA(1, 1, dis)*2;
       center = rotate([Math.cos(arc*Q/2), -Math.sin(arc*Q/2), 0], q_align(c1, c2));
 
     }
@@ -1133,7 +1101,8 @@ class SphAnalyzer
    * @returns {SphCircle} The circle that intersect `circle`.
    */
   intercircle(circle, theta, arc, angle) {
-    var [dis2, radius2] = this.leaf(circle.radius, arc/2, 2-angle);
+    var dis2 = this.abCA(arc/2, 2-angle, 2-circle.radius)*2;
+    var radius2 = this.abCA(2-angle, arc/2, 2-circle.radius)*2;
     var vec = [
       Math.sin(dis2/2*Q)*Math.cos(theta*Q),
       Math.sin(dis2/2*Q)*Math.sin(theta*Q),
@@ -1387,8 +1356,8 @@ class SphAnalyzer
 
     seg2_prev.connect(seg1);
     seg1_prev.connect(seg2);
-    seg1.angle = seg2_ang + ang1;
-    seg2.angle = seg1_ang + ang2;
+    seg1.angle = this.snap(seg2_ang + ang1, [0, 4]);
+    seg2.angle = this.snap(seg1_ang + ang2, [0, 4]);
   }
   /**
    * Find cover between two adjacent segments.
@@ -1533,82 +1502,173 @@ class SphAnalyzer
   }
 
   /**
-   * Find meet point between this segment and circle.
+   * Find meet point between this loop and circle.
    * They can meet at the start point of segment, but not at the end point of segment.
    *
-   * @param {SphSeg} segment - The segment to meet.
+   * @param {SphSeg} segment0 - The starting segment of loop to meet.
    * @param {SphCircle} circle - The circle to meet with.
    * @yields {object} Information about meet point, which has values
-   *   `{angle, segment, offset, circle, theta}`.
+   *   `{angle, segment, offset, theta, type}`.
    *   `angle` is angle from `circle` to `segment` at meet point (angle between
    *   two directed tangent vectors), in the range of [-2, 2].
    *   `segment` is the segment that meets with circle;
    *   `offset` is offset of meet point along `segment`, in the range of
    *   [0, `segment.arc`);
-   *   `circle` is the circle that segment meets with;
-   *   `theta` is offset of meet point along `circle`.
+   *   `theta` is offset of meet point along `circle`;
+   *   `type` is string with format "[+-][0+-]": The first character is start side
+   *   respect to circle: "+" means in circle; "-" means out of circle.  The second
+   *   character is direction of U-turn: "+" means left U-turn; "-" means right
+   *   U-turn; "0" means passing through circle.  Cross-meets have type "[+-]0",
+   *   and touch-meets have type "[+-][+-]".  The type of first meet will be
+   *   assigned after finishing all meetings.
    */
-  *meetWith(segment, circle) {
-    var circle_ = segment.circle;
-    var [angle, arc, arc_, meeted] = this.relationTo(circle_, circle);
-    var offset = 0, theta = 0;
+  *meetWith(segment0, circle) {
+    const TYPES = {
+      [[+1,-1]]: "+-", [[+1,0]]: "+0", [[+1,+1]]: "++",
+      [[-1,-1]]: "--", [[-1,0]]: "-0", [[-1,+1]]: "-+"
+    };
+    function *setType(meet) {
+      var pre_side, first_meet, meet;
+      try {
+        meet = yield;
 
-    if ( meeted === undefined ) {
-      theta = this.mod4(circle.thetaOf(segment.vertex));
+        while ( true ) {
+          if ( !first_meet ) {
+            first_meet = meet;
+            pre_side = Math.sign(1/meet.angle);
 
-      if ( angle == 0 ) angle = +0;
-      if ( angle == 2 ) angle = -2;
+          } else {
+            meet.type = [pre_side];
+            pre_side = Math.sign(1/meet.angle);
 
-      yield {angle, segment, offset, circle, theta};
+            if ( meet.type[0] != pre_side )
+              meet.type.push(0);
+            else if ( pre_side > 0 )
+              meet.type.push(-Math.sign((meet.offset==0 ? meet.segment.angle : 2) + meet.angle - 3));
+            else
+              meet.type.push(-Math.sign((meet.offset==0 ? meet.segment.angle : 2) + meet.angle - 1));
 
-    } else if ( meeted == 0 ) {
-      return;
+            meet.type = TYPES[meet.type];
+          }
 
-    } else if ( meeted == 1 ) {
-      theta = this.mod4(circle.thetaOf(circle_.center)+arc_/2);
-      offset = this.mod4(circle_.thetaOf(circle.center)-arc/2, [0, segment.arc]);
+          meet = yield meet;
+        }
 
-      if ( angle == 0 && arc == 4 ) angle = +0;
-      if ( angle == 0 && arc == 0 ) angle = -0;
-      if ( angle == 2 && arc == 4 ) angle = +2;
-      if ( angle == 2 && arc == 0 ) angle = -2;
+      } finally {
+        if ( first_meet ) {
+          meet = first_meet;
 
-      if ( offset < segment.arc )
-        yield {angle, segment, offset, circle, theta};
+          meet.type = [pre_side];
+          pre_side = Math.sign(1/meet.angle);
 
-    } else if ( meeted == 2 ) {
-      theta = this.mod4(circle.thetaOf(circle_.center)+arc_/2);
-      offset = this.mod4(circle_.thetaOf(circle.center)-arc/2, [0, segment.arc]);
-      let meet1 = {angle, segment, offset, circle, theta};
+          if ( meet.type[0] != pre_side )
+            meet.type.push(0);
+          else if ( pre_side > 0 )
+            meet.type.push(-Math.sign((meet.offset==0 ? meet.segment.angle : 2) + meet.angle - 3));
+          else
+            meet.type.push(-Math.sign((meet.offset==0 ? meet.segment.angle : 2) + meet.angle - 1));
 
-      theta = this.mod4(circle.thetaOf(circle_.center)-arc_/2);
-      offset = this.mod4(circle_.thetaOf(circle.center)+arc/2, [0, segment.arc]);
-      angle = -angle;
-      let meet2 = {angle, segment, offset, circle, theta};
-
-      if ( meet2.offset < meet1.offset )
-        [meet1, meet2] = [meet2, meet1];
-      if ( meet1.offset < segment.arc )
-        yield meet1;
-      if ( meet2.offset < segment.arc )
-        yield meet2;
-
+          meet.type = TYPES[meet.type];
+        }
+      }
     }
+    setType = setType();
+    setType.next();
+
+    var abs4 = ang => Math.min(this.mod4(ang), this.mod4(-ang));
+    for ( let segment of segment0.walk() ) {
+      let circle_ = segment.circle;
+      let [angle, arc, arc_, meeted] = this.relationTo(circle_, circle);
+      let offset = 0, theta = 0;
+      let start = this.cmp(circle.radius, angleTo(circle.center, segment.vertex)/Q);
+      let end = this.cmp(circle.radius, angleTo(circle.center, segment.next.vertex)/Q);
+
+      if ( meeted === undefined ) {
+        console.assert(start == 0 && end == 0);
+        theta = this.mod4(circle.thetaOf(segment.vertex));
+
+        if ( angle == 0 ) angle = +0;
+        if ( angle == 2 ) angle = -2;
+
+        yield setType.next({angle, segment, offset, theta}).value;
+
+      } else if ( meeted == 0 ) {
+        console.assert(start != 0 && end != 0 && start * end > 0);
+        // nothing
+
+      } else if ( meeted == 1 ) {
+        theta = this.mod4(circle.thetaOf(circle_.center)+arc_/2);
+        offset = this.mod4(circle_.thetaOf(circle.center)-arc/2);
+        console.assert(start + end != 0 || segment.arc == 4);
+
+        if ( angle == 0 && arc == 4 ) angle = +0;
+        if ( angle == 0 && arc == 0 ) angle = -0;
+        if ( angle == 2 && arc == 4 ) angle = +2;
+        if ( angle == 2 && arc == 0 ) angle = -2;
+
+        if ( end == 0 ) {
+          if ( fzy_cmp(abs4(offset-segment.arc), 0, this.tol*10) )
+            console.assert(`too large error: ${abs4(offset-segment.arc)}`);
+          offset = segment.arc;
+        }
+        if ( start == 0 ) {
+          if ( fzy_cmp(abs4(offset), 0, this.tol*10) )
+            console.assert(`too large error: ${abs4(offset)}`);
+          offset = 0;
+        }
+
+        if ( offset < segment.arc )
+          yield setType.next({angle, segment, offset, theta}).value;
+
+      } else if ( meeted == 2 ) {
+        theta = this.mod4(circle.thetaOf(circle_.center)+arc_/2);
+        offset = this.mod4(circle_.thetaOf(circle.center)-arc/2);
+        let meet1 = {angle, segment, offset, theta};
+
+        theta = this.mod4(circle.thetaOf(circle_.center)-arc_/2);
+        offset = this.mod4(circle_.thetaOf(circle.center)+arc/2);
+        angle = -angle;
+        let meet2 = {angle, segment, offset, theta};
+
+        if ( end == 0 ) {
+          let d1 = abs4(meet1.offset-segment.arc);
+          let d2 = abs4(meet2.offset-segment.arc);
+          let meet = d1 < d2 ? meet1 : meet2;
+          if ( fzy_cmp(abs4(meet.offset-segment.arc), 0, this.tol*10) )
+            console.assert(`too large error: ${abs4(meet.offset-segment.arc)}`);
+          meet.offset = segment.arc;
+        }
+        if ( start == 0 ) {
+          let d1 = abs4(meet1.offset);
+          let d2 = abs4(meet2.offset);
+          let meet = d1 < d2 ? meet1 : meet2;
+          if ( fzy_cmp(abs4(meet.offset), 0, this.tol*10) )
+            console.assert(`too large error: ${abs4(meet.offset)}`);
+          meet.offset = 0;
+        }
+
+        if ( meet2.offset < meet1.offset )
+          [meet1, meet2] = [meet2, meet1];
+        if ( meet1.offset < segment.arc )
+          yield setType.next(meet1).value;
+        if ( meet2.offset < segment.arc )
+          yield setType.next(meet2).value;
+
+      }
+    }
+
+    setType.return();
   }
   /**
-   * Sort and classify type of meets.
-   * This function will add property `type` to meet.  Type has format "[+-][0+-]".
-   * The first character is start side respect to circle: "+" means in circle;
-   * "-" means out of circle.  The second character is direction of U-turn: "+"
-   * means left U-turn; "-" means right U-turn; "0" means passing through circle.
-   * Cross-meets have type "[+-]0", and touch-meets have type "[+-][+-]".
+   * Sort meets along intersecting circle.
    * If two touch-meets has inclusion relation, properties `submeet`/`supermeet`
    * will be added to meet object.
    *
    * @param {object[]} meets - The meets to sort.
+   * @param {SphCircle} circle - The circle of meets.
    * @returns {object[]} Sorted meets.
    */
-  sortMeets(meets) {
+  sortMeets(meets, circle) {
     // sort meets by `theta`
     var mmeets = [];
     var pos = [];
@@ -1633,54 +1693,52 @@ class SphAnalyzer
     // sort meets with same `theta`
     meets.splice(0, meets.length);
     for ( let mmeet of mmeets ) {
-      // convert to beams: [angle, curvature, pseudo_index]
-      var post_beams = mmeet.map(({angle, segment, offset}, index) =>
-          [              angle,      1-segment.radius, +(index+1)]);
-      var  pre_beams = mmeet.map(({angle, segment, offset}, index) =>
-        offset == 0
-        ? [segment.angle+angle, segment.prev.radius-1, -(index+1)]
-        : [            2+angle,      segment.radius-1, -(index+1)]);
-      var post_field = [0, 1-mmeet[0].circle.radius, +0];
-      var  pre_field = [2, mmeet[0].circle.radius-1, -0];
+      // convert to beams: [side, angle, curvature, pseudo_index]
+      var post_beams = [];
+      var  pre_beams = [];
+      for ( let i=0; i<mmeet.length; i++ ) {
+        let meet = mmeet[i];
+        let side, ang, cur;
 
-      // mod angle into range [-2, 2] and deal with boundary case
-      post_beams = post_beams.map(([ang, cur, i]) =>
-        this.cmp([this.mod4(ang), cur, i], pre_field) <= 0
-        ? [+this.mod4(+ang), cur, i] : [-this.mod4(-ang), cur, i]);
-      pre_beams = pre_beams.map(([ang, cur, i]) =>
-        this.cmp([this.mod4(ang), cur, i], pre_field) <= 0
-        ? [+this.mod4(+ang), cur, i] : [-this.mod4(-ang), cur, i]);
+        side = ["-0", "++", "+-"].includes(meet.type) ? +1 : -1;
+        ang = meet.angle;
+        cur = 1-meet.segment.radius;
+        post_beams.push([side, ang, cur, +(i+1)]);
+
+        side = ["+0", "++", "+-"].includes(meet.type) ? +1 : -1;
+        if ( meet.offset == 0 )
+          [ang, cur] = [meet.segment.angle+meet.angle, meet.segment.prev.radius-1];
+        else
+          [ang, cur] = [2+meet.angle, meet.segment.radius-1];
+        if ( meet.type[1] == "0" )
+          ang = side*this.mod4(side*ang);
+        else if ( meet.type[1] == "+" )
+          ang = meet.angle + this.mod4(ang-meet.angle, [0]);
+        else if ( meet.type[1] == "-" )
+          ang = meet.angle - this.mod4(meet.angle-ang, [0]);
+        pre_beams.push([side, ang, cur, -(i+1)]);
+      }
 
       // separate as in and out of field
-      var in_beams = [], out_beams = [];
-      for ( let beams of [pre_beams, post_beams] ) for ( let beam of beams ) {
-        if ( this.cmp(beam, post_field) >= 0 )
-          in_beams.push(beam);
-        else
-          out_beams.push(beam);
-      }
+      var  in_beams = [...post_beams.filter(beam => beam[0] > 0),
+                       ...pre_beams.filter(beam => beam[0] > 0)];
+      var out_beams = [...post_beams.filter(beam => beam[0] < 0),
+                       ...pre_beams.filter(beam => beam[0] < 0)];
       in_beams.sort(this.cmp.bind(this));
       out_beams.sort(this.cmp.bind(this));
-      in_beams = in_beams.map(e => e[2]);
-      out_beams = out_beams.map(e => e[2]);
+      in_beams = in_beams.map(e => e[3]);
+      out_beams = out_beams.map(e => e[3]);
 
       // parse structure
-      const types = {
-        [[+1,-1]]: "+-", [[+1,0]]: "+0", [[+1,+1]]: "++",
-        [[-1,-1]]: "--", [[-1,0]]: "-0", [[-1,+1]]: "-+"
-      };
-      function parseTouch(beams, start, end, meet, side, side_) {
-        meet.type = types[[side_, side]];
+      function parseTouch(beams, start, end, meet) {
         meet.submeets = [];
 
-        var subside = -side;
         for ( let i=start+1; i<=end-1; i++ ) {
-          console.assert(Math.sign(beams[i]) == subside);
           let submeet = mmeet[Math.abs(beams[i])-1];
 
           let j = beams.indexOf(-beams[i]);
           console.assert(j != -1 && j > i && j <= end-1);
-          parseTouch(beams, i, j, submeet, subside, side_);
+          parseTouch(beams, i, j, submeet);
           submeet.supermeet = meet;
           meet.submeets.push(submeet);
           i = j;
@@ -1688,23 +1746,18 @@ class SphAnalyzer
       }
 
       var in_parsed = [], out_parsed = [];
-      for ( let [beams, parsed, side_] of [[ in_beams,  in_parsed, +1],
-                                           [out_beams, out_parsed, -1]] ) {
-        let side = Math.sign(beams[0]);
+      for ( let [beams, parsed] of [[in_beams, in_parsed], [out_beams, out_parsed]] ) {
+        console.assert(beams.every((v,i) => Math.sign(beams[i]) != Math.sign(beams[i+1])));
         for ( let i=0; i<beams.length; i++ ) {
-          console.assert(Math.sign(beams[i]) == side);
           let meet = mmeet[Math.abs(beams[i])-1];
           let j = beams.indexOf(-beams[i]);
 
           if ( j == -1 ) {
-            console.assert(!meet.type || meet.type == types[[-side*side_,0]]);
-            meet.type = types[[-side*side_,0]];
             parsed.push(meet);
-            side = -side;
 
           } else {
             console.assert(j > i);
-            parseTouch(beams, i, j, meet, side, side_);
+            parseTouch(beams, i, j, meet);
             parsed.push(meet);
             i = j;
           }
@@ -1734,6 +1787,11 @@ class SphAnalyzer
       }
     }
 
+    var pre_sides = meets.map(meet => ["-0", "+-", "--"].includes(meet.type));
+    var post_sides = meets.map(meet => ["+0", "+-", "--"].includes(meet.type));
+    post_sides.unshift(post_sides.pop());
+    console.assert(pre_sides.every((s,i) => pre_sides[i] == post_sides[i]));
+
     return meets;
   }
   /**
@@ -1757,10 +1815,10 @@ class SphAnalyzer
     var orientation = q_mul(q_align(vertex, point), quaternion([0,1,0], radius*Q));
     var circle = new SphCircle({orientation, radius});
 
-    var meets = Array.from(boundaries)
-                     .flatMap(seg => Array.from(this.meetWith(seg, circle)));
+    var meets = Array.from(this.loops(boundaries))
+                     .flatMap(segs => Array.from(this.meetWith(segs[0], circle)));
     console.assert(meets.length > 0);
-    meets = this.sortMeets(meets);
+    meets = this.sortMeets(meets, circle);
     if ( meets.find(meet => this.mod4(meet.theta, [0]) == 0) )
       return;
     else
@@ -1780,13 +1838,9 @@ class SphAnalyzer
     // INTERPOLATE
     // find meet points and sort by `theta`
     var paths = [];
-    for ( let seg0 of elem.fly() ) {
-      let path = [];
-      for ( let seg of seg0.walk() )
-        path.push(...this.meetWith(seg, circle));
-      paths.push(path);
-    }
-    var meets = this.sortMeets(paths.flat());
+    for ( let seg0 of elem.fly() )
+      paths.push(Array.from(this.meetWith(seg0, circle)));
+    var meets = this.sortMeets(paths.flat(), circle);
 
     // interpolate
     for ( let path of paths ) for ( let meet of path.slice(0).reverse() )
@@ -1926,9 +1980,9 @@ class SphAnalyzer
 
     var circle = seg0.circle;
     var side = undefined;
-    let meets = Array.from(this.loops(boundaries)).flat()
-                     .flatMap(seg => Array.from(this.meetWith(seg, circle)));
-    meets = this.sortMeets(meets);
+    let meets = Array.from(this.loops(boundaries))
+                     .flatMap(segs => Array.from(this.meetWith(segs[0], circle)));
+    meets = this.sortMeets(meets, circle);
 
     if ( meets.length == 0 )
       return true;
@@ -2069,8 +2123,8 @@ class SphAnalyzer
    */
   isSeparableBy(boundaries, circle) {
     for ( let loop of this.loops(boundaries) ) {
-      let meets = loop.flatMap(seg => Array.from(this.meetWith(seg, circle)));
-      meets = this.sortMeets(meets);
+      let meets = Array.from(this.meetWith(loop[0], circle));
+      meets = this.sortMeets(meets, circle);
       if ( meets.some(meet => meet.type[1]=="0") )
         return false;
     }
@@ -2352,7 +2406,7 @@ class SphAnalyzer
 
       } else { // find fixed latches
         let [theta, angle, radius] = tick;
-        let [arc] = this.leaf(angle, fence[0].radius, radius);
+        let arc = this.abCA(fence[0].radius, radius, 2-angle)*2;
         let tick0_ = [this.mod4(theta-arc, [0])];
         let tick_ = [tick0_[0], 2-angle, 2-radius];
 
@@ -2614,14 +2668,14 @@ class SphAnalyzer
     var meets = [];
     for ( let park of parks )
       for ( let [loops, side] of [[park.loops, +1], [park.profile, -1]] )
-        for ( let loop of loops ) for ( let seg of loop )
-          for ( let meet of this.meetWith(seg, circle) ) {
+        for ( let loop of loops )
+          for ( let meet of this.meetWith(loop[0], circle) ) {
             meet.park = park;
             meet.loop = loop;
             meet.side = side;
             meets.push(meet);
           }
-    meets = this.sortMeets(meets);
+    meets = this.sortMeets(meets, circle);
 
     // find joints
     for ( let i=0; i<meets.length; i++ )

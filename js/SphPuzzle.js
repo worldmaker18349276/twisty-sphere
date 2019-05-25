@@ -1007,10 +1007,10 @@ class SphPuzzleView
     delete seg.view;
   }
   addTwister(track) {
-    var circle, plane, moved, shifts, shifts0;
+    var circle, plane, angle, moving, shifts, shifts0;
 
     var dragstart = event => {
-      [circle, moved] = track.inner.includes(event.target.parent.userData.origin)
+      [circle, moving] = track.inner.includes(event.target.parent.userData.origin)
                       ? [track.inner[0].circle, track.secret.regions.inner]
                       : [track.outer[0].circle, track.secret.regions.outer];
 
@@ -1023,28 +1023,33 @@ class SphPuzzleView
       circle.shift(circle.thetaOf(p));
       plane = new THREE.Plane(new THREE.Vector3(...circle.center), -dot(circle.center, p));
 
-      for ( let elem of moved ) for ( let seg of elem.boundaries )
+      for ( let elem of moving ) for ( let seg of elem.boundaries )
         seg.view.userData.quaternion0 = seg.view.quaternion.clone();
 
       event.drag = true;
+      angle = 0;
     };
     var drag = event => {
       var {offsetX, offsetY} = event.originalEvent;
       var {point} = this.display.pointTo(offsetX, offsetY, plane);
-      if ( !point ) return;
-      var angle = circle.thetaOf(point.toArray());
+      if ( !point ) return angle;
+      var angle_ = circle.thetaOf(point.toArray());
+      if ( Number.isNaN(angle_) )
+        return angle;
+
+      angle = angle_;
       angle = fzy_mod(angle, 4, shifts, 0.01);
       angle = fzy_mod(angle, 4, shifts0, 0.05);
       var rot = new THREE.Quaternion().setFromAxisAngle(plane.normal, angle*Q);
 
-      for ( let elem of moved ) for ( let seg of elem.boundaries )
+      for ( let elem of moving ) for ( let seg of elem.boundaries )
         seg.view.quaternion.multiplyQuaternions(rot, seg.view.userData.quaternion0);
 
       return angle;
     };
     var dragend = event => {
       var angle = drag(event);
-      var hold = this.origin.elements.find(elem => !moved.has(elem));
+      var hold = this.origin.elements.find(elem => !moving.has(elem));
       this.origin.twist(track, angle, hold);
     };
 
