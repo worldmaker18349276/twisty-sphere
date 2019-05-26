@@ -3244,6 +3244,12 @@ class Observable extends Listenable
         this.trigger("modified", target, {record});
     this.trigger("changed", this);
   }
+  initialize(callback) {
+    if ( this.changed )
+      puzzle.once("changed", puzzle, callback);
+    else
+      callback();
+  }
 
   record(target, properties) {
     var record = {};
