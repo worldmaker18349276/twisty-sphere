@@ -142,6 +142,33 @@ function q_spin(q, theta, out=[]) {
  * @type {number}
  */
 const Q = Math.PI/2;
+
+// cosine rules for spherical triangle: cos a = cos b cos c + sin b sin c cos A
+function abcA(a, b, c) {
+  var [ca, cb, cc] = [Math.cos(a*Q), Math.cos(b*Q), Math.cos(c*Q)];
+  var [sb, sc] = [Math.sin(b*Q), Math.sin(c*Q)];
+  var cA = (ca - cb*cc)/(sb*sc);
+  return Math.acos(cA)/Q;
+}
+// cosine rules for spherical triangle: cos a = cos b cos c + sin b sin c cos A
+function Abca(A, b, c) {
+  var cA = Math.cos(A*Q);
+  var [cb, cc] = [Math.cos(b*Q), Math.cos(c*Q)];
+  var [sb, sc] = [Math.sin(b*Q), Math.sin(c*Q)];
+  var ca = cb*cc + sb*sc*cA;
+  return Math.acos(ca)/Q;
+}
+// cotangent rule for spherical triangle: cos b cos C = cot a sin b - cot A sin C
+function abCA(a, b, C) {
+  var [ca, sa] = [Math.cos(a*Q), Math.sin(a*Q)];
+  var [cb, sb] = [Math.cos(b*Q), Math.sin(b*Q)];
+  var [cC, sC] = [Math.cos(C*Q), Math.sin(C*Q)];
+  var [cA_, sA_] = [ca*sb-sa*cb*cC, sa*sC];
+  if ( sA_ < 0 ) cA_ = -cA_;
+  if ( sa < 0 ) sA_ = -sA_;
+  return Math.atan2(sA_, cA_)/Q;
+}
+
 /**
  * Spherical circle with orientation.
  * The orientation define coordinate of points on the circle.
@@ -1019,99 +1046,13 @@ class SphAnalyzer
     else if ( this.cmp(2-distance, radius1 + (2-radius2)) == 0 )
       return [0, 4, 0, 1]; // kissing anti-exclude
     else if ( distance < radius1 + radius2 ) {
-      let arc1 = this.abcA(radius2, radius1, distance)*2;
-      let arc2 = this.abcA(radius1, radius2, distance)*2;
-      let angle = this.abcA(distance, radius1, radius2);
+      let arc1 = abcA(radius2, radius1, distance)*2;
+      let arc2 = abcA(radius1, radius2, distance)*2;
+      let angle = abcA(distance, radius1, radius2);
       return [angle, arc1, arc2, 2]; // intersect
     }
     else
       throw new Error(`unknown case: [${radius1}, ${radius2}, ${distance}]`);
-  }
-  // cosine rules for spherical triangle: cos a = cos b cos c + sin b sin c cos A
-  abcA(a, b, c) {
-    var [ca, cb, cc] = [Math.cos(a*Q), Math.cos(b*Q), Math.cos(c*Q)];
-    var [sb, sc] = [Math.sin(b*Q), Math.sin(c*Q)];
-    var cA = (ca - cb*cc)/(sb*sc);
-    return Math.acos(cA)/Q;
-  }
-  // cosine rules for spherical triangle: cos a = cos b cos c + sin b sin c cos A
-  Abca(A, b, c) {
-    var cA = Math.cos(A*Q);
-    var [cb, cc] = [Math.cos(b*Q), Math.cos(c*Q)];
-    var [sb, sc] = [Math.sin(b*Q), Math.sin(c*Q)];
-    var ca = cb*cc + sb*sc*cA;
-    return Math.acos(ca)/Q;
-  }
-  // cotangent rule for spherical triangle: cos b cos C = cot a sin b - cot A sin C
-  abCA(a, b, C) {
-    var [ca, sa] = [Math.cos(a*Q), Math.sin(a*Q)];
-    var [cb, sb] = [Math.cos(b*Q), Math.sin(b*Q)];
-    var [cC, sC] = [Math.cos(C*Q), Math.sin(C*Q)];
-    var [cA_, sA_] = [ca*sb-sa*cb*cC, sa*sC];
-    if ( sA_ < 0 )
-      [cA_, sA_] = [-cA_, -sA_];
-    return Math.sign(2-this.mod4(C)) * Math.atan2(sA_, cA_)/Q;
-  }
-  /**
-   * Find circle passing through three points.
-   * The circle will pass through `v1, v2, v3` by order, and `v1` is located at
-   * 0 with respect to orientation of circle.  If two are same, the smallest
-   * circle passing through those points are returned.  Further, if they are
-   * (nearly) opposite points or same points, the result may be broken.
-   *
-   * @param {number[]} v1 - The first point.
-   * @param {number[]} v2 - The second point.
-   * @param {number[]} v3 - The third point.
-   * @returns {SphCircle} The circle passing through those points.
-   */
-  heart(v1, v2, v3) {
-    var center;
-    if ( this.cmp(angleTo(v1, v2)/Q, 0) == 0 ) {
-      center = v1.map((x,i) => x+v3[i]);
-
-    } else if ( this.cmp(angleTo(v2, v3)/Q, 0) == 0 ) {
-      center = v1.map((x,i) => x+v2[i]);
-
-    } else if ( this.cmp(angleTo(v3, v1)/Q, 0) == 0 ) {
-      center = v1.map((x,i) => x+v2[i]);
-
-    } else {
-      let c1 = rotate([1,0,0], q_align(v1.map((x,i) => x+v2[i]), v2));
-      let c2 = rotate([1,0,0], q_align(v3.map((x,i) => x+v2[i]), v2));
-      let dis = angleTo(c1, c2)/Q;
-      let arc = this.abcA(1, 1, dis)*2;
-      center = rotate([Math.cos(arc*Q/2), -Math.sin(arc*Q/2), 0], q_align(c1, c2));
-
-    }
-
-    var radius = angleTo(center, v1)/Q;
-    var orientation = q_align(center, v1);
-    console.assert(this.cmp(angleTo(center, v1)/Q, radius) == 0);
-    console.assert(this.cmp(angleTo(center, v2)/Q, radius) == 0);
-    console.assert(this.cmp(angleTo(center, v3)/Q, radius) == 0);
-    return new SphCircle({radius, orientation});
-  }
-  /**
-   * Make circle that intersect given circle.
-   *
-   * @param {SphCircle} circle - The circle to intersect.
-   * @param {number} theta - The center of intersection.
-   * @param {number} arc - The arc of intersection.
-   * @param {number} angle - The angle of intersection.
-   * @returns {SphCircle} The circle that intersect `circle`.
-   */
-  intercircle(circle, theta, arc, angle) {
-    var dis2 = this.abCA(arc/2, 2-angle, 2-circle.radius)*2;
-    var radius2 = this.abCA(2-angle, arc/2, 2-circle.radius)*2;
-    var vec = [
-      Math.sin(dis2/2*Q)*Math.cos(theta*Q),
-      Math.sin(dis2/2*Q)*Math.sin(theta*Q),
-      Math.cos(dis2/2*Q)
-    ];
-    var center = rotate(vec, circle.orientation);
-    var orientation = q_align(center, circle.center);
-    var radius = radius2/2;
-    return new SphCircle({radius, orientation});
   }
 
   /**
@@ -2406,7 +2347,7 @@ class SphAnalyzer
 
       } else { // find fixed latches
         let [theta, angle, radius] = tick;
-        let arc = this.abCA(fence[0].radius, radius, 2-angle)*2;
+        let arc = abCA(radius, fence[0].radius, 2-angle)*2;
         let tick0_ = [this.mod4(theta-arc, [0])];
         let tick_ = [tick0_[0], 2-angle, 2-radius];
 
@@ -2466,6 +2407,21 @@ class SphAnalyzer
       latches[side] = latches_;
     }
 
+    // Make circle that intersect given circle
+    function intercircle(circle, theta, arc, angle) {
+      const ABca = (A, B, c) => 2-abCA(2-A, 2-B, 2-c);
+      var dis = ABca(2-angle, arc/2, circle.radius);
+      var radius = ABca(arc/2, 2-angle, circle.radius);
+      var vec = [
+        Math.sin(dis*Q)*Math.cos(theta*Q),
+        Math.sin(dis*Q)*Math.sin(theta*Q),
+        Math.cos(dis*Q)
+      ];
+      var center = rotate(vec, circle.orientation);
+      var orientation = q_align(center, circle.center);
+      return new SphCircle({radius, orientation});
+    }
+
     var passwords = new Map();
     for ( let latch2 of latches.outer ) for ( let latch1 of latches.inner ) {
       if ( this.cmp(latch1.arc, latch2.arc) != 0 )
@@ -2479,7 +2435,7 @@ class SphAnalyzer
         latch2 = Object.assign({angle:2-latch1.angle}, latch2);
         if ( shields.outer ) {
           let {center, arc, angle} = latch2;
-          let circle = this.intercircle(track.outer[0].circle, center, arc, angle);
+          let circle = intercircle(track.outer[0].circle, center, arc, angle);
           if ( !this.isSeparableBy(shields.outer, circle) )
             continue;
         }
@@ -2488,7 +2444,7 @@ class SphAnalyzer
         latch1 = Object.assign({angle:2-latch2.angle}, latch1);
         if ( shields.inner ) {
           let {center, arc, angle} = latch1;
-          let circle = this.intercircle(track.inner[0].circle, center, arc, angle);
+          let circle = intercircle(track.inner[0].circle, center, arc, angle);
           if ( this.isSeparableBy(shields.inner, circle) )
             continue;
         }
