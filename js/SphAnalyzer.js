@@ -1639,7 +1639,7 @@ class SphAnalyzer
       var  pre_beams = [];
       for ( let i=0; i<mmeet.length; i++ ) {
         let meet = mmeet[i];
-        let side, ang, cur;
+        let side, ang, cur, da;
 
         side = ["-0", "++", "+-"].includes(meet.type) ? +1 : -1;
         ang = meet.angle;
@@ -1648,15 +1648,17 @@ class SphAnalyzer
 
         side = ["+0", "++", "+-"].includes(meet.type) ? +1 : -1;
         if ( meet.offset == 0 )
-          [ang, cur] = [meet.segment.angle+meet.angle, meet.segment.prev.radius-1];
+          [da, cur] = [meet.segment.angle, meet.segment.prev.radius-1];
         else
-          [ang, cur] = [2+meet.angle, meet.segment.radius-1];
-        if ( meet.type[1] == "0" )
-          ang = side*this.mod4(side*ang);
+          [da, cur] = [2, meet.segment.radius-1];
+        if ( meet.type == "+0" )
+          ang = this.mod4(da+ang+1)-1;
+        else if ( meet.type == "-0" )
+          ang = this.mod4(da+ang+3)-3;
         else if ( meet.type[1] == "+" )
-          ang = meet.angle + this.mod4(ang-meet.angle, [0]);
+          ang = ang + da;
         else if ( meet.type[1] == "-" )
-          ang = meet.angle - this.mod4(meet.angle-ang, [0]);
+          ang = ang + da - 4;
         pre_beams.push([side, ang, cur, -(i+1)]);
       }
 
