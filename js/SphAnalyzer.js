@@ -3779,7 +3779,6 @@ class SphPuzzle extends Observable
       let [config, perms] = this.analyzer.recognize(knot.model, knot.segments, []);
       this.network.transit(knot, perms[0], config);
     }
-    this.network.setIndices(this.segments);
   }
   assemble(seg0, orientation0) {
     if ( this.network.status == "broken" )
@@ -3795,7 +3794,6 @@ class SphPuzzle extends Observable
     this.network.setStatus("up-to-date");
     this.analyzer.assemble(this.network.knots);
     this.analyzer.orient(knot0, index0, orientation0);
-    this.network.setIndices(this.segments);
 
     for ( let seg of this.segments )
       if ( seg.track )
@@ -4046,17 +4044,9 @@ class SphNetwork extends Observable
     this.changed = true;
   }
 
-  setIndices(segments) {
-    for ( let seg of segments )
-      seg.index = this.indicesOf(seg).next().value;
-  }
   *indicesOf(target) {
     var index;
     if ( target instanceof SphSeg ) {
-      if ( this.status == "up-to-date" && target.index ) {
-        yield target.index;
-        return;
-      }
       for ( let knot of this.knots )
         if ( index = knot.indexOf(target) ) {
           yield [knot, index];

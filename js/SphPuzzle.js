@@ -24,8 +24,7 @@ function animate(routine) {
 
 class Display
 {
-  constructor(id, width, height) {
-    var parent = document.getElementById(id);
+  constructor(container, width, height) {
     this.width = width;
     this.height = height;
 
@@ -33,7 +32,7 @@ class Display
     this.renderer = new THREE.WebGLRenderer({antialias:true});
     this.renderer.setSize(width, height);
     this.dom = this.renderer.domElement;
-    parent.appendChild(this.dom);
+    container.appendChild(this.dom);
 
     this.scene = new THREE.Scene();
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.3));
@@ -495,8 +494,8 @@ class Panel
 
 class Graph
 {
-  constructor(id) {
-    this.dom = document.getElementById(id);
+  constructor(container) {
+    this.dom = container;
 
     this.nodes = new vis.DataSet();
     this.edges = new vis.DataSet();
@@ -579,6 +578,96 @@ class Graph
       if ( !from || options.from == from )
         if ( !to || options.to == to )
           yield options;
+  }
+}
+
+class Tabs
+{
+  constructor(id) {
+    document.body.appendChild(css`
+      .tab-title-container {
+        white-space: nowrap;
+        border: 1px solid #ccc;
+        background-color: #f1f1f1;
+        overflow-x: hidden;
+        height: 50px;
+        box-sizing: border-box;
+      }
+      .tab-title-container .tab-title {
+        display: inline-block;
+        background-color: inherit;
+        height: 100%;
+        padding: calc(25px - 0.5em) 16px;
+        cursor: pointer;
+        box-sizing: border-box;
+      }
+      .tab-title-container .tab-title:hover {
+        background-color: #ddd;
+      }
+      .tab-title-container .tab-title.active {
+        background-color: #ccc;
+      }
+      .tab-content-container {
+        height: calc(100% - 50px);
+        box-sizing: border-box;
+        border: 1px solid #ccc;
+      }
+
+      .tab-content {
+        display: none;
+      }
+      .tab-content.active {
+        display: block;
+      }
+    `);
+    this.container = document.getElementById(id);
+    this.container.classList.add("tab-container");
+
+    this.titles = document.createElement("div");
+    this.titles.classList.add("tab-title-container");
+    this.container.appendChild(this.titles);
+
+    this.contents = document.createElement("div");
+    this.contents.classList.add("tab-content-container");
+    this.container.appendChild(this.contents);
+
+    this.titles.addEventListener("click", event => {
+      if ( event.target.classList.contains("tab-title") )
+        this.active(event.target.tabcontent);
+    });
+    this.titles.addEventListener("wheel", event => {
+      event.preventDefault();
+      event.currentTarget.scrollLeft += event.deltaY * 10;
+    });
+  }
+
+  add(name) {
+    var title = document.createElement("div");
+    title.classList.add("tab-title");
+    title.textContent = name;
+    this.titles.appendChild(title);
+
+    var content = document.createElement("div");
+    content.classList.add("tab-content");
+    this.contents.appendChild(content);
+
+    title.tabcontent = content;
+    content.tabtitle = title;
+    this.active(content);
+    return content;
+  }
+  remove(content) {
+    this.contents.removeChild(content);
+    this.titles.removeChild(content.tabtitle);
+  }
+  active(content) {
+    for ( let content of this.contents.querySelectorAll(".tab-content.active") )
+      content.classList.remove("active");
+    for ( let title of this.titles.querySelectorAll(".tab-title.active") )
+      title.classList.remove("active");
+
+    content.classList.add("active");
+    content.tabtitle.classList.add("active");
   }
 }
 
@@ -910,10 +999,12 @@ class SphPuzzlePropBuilder
     detail.push(this.link(seg.prev, sel_mode, "prev"));
     detail.push(this.link(seg.next, sel_mode, "next"));
 
-    if ( seg.host.network.status == "up-to-date" ) {
-      let [knot, [i,j,k,l]] = seg.index;
-      detail.push({type: "text", name: "index", get: () => `${knot.name}[${i},${j};${k},${l}]`});
-    }
+    detail.push({type: "text", name: "index", get: () => {
+      if ( seg.host.network.status != "up-to-date" )
+        return "undefined";
+      var [knot, [i,j,k,l]] = seg.host.network.indicesOf(seg).next().value;
+      return `${knot.name}[${i},${j};${k},${l}]`;
+    }});
 
     if ( seg.track )
       detail.push(this.link(seg.track, sel_mode, "track"));
@@ -1224,6 +1315,7 @@ class SphPuzzleView
       angle = angle_;
       angle = fzy_mod(angle, 4, shifts, 0.01);
       angle = fzy_mod(angle, 4, shifts0, 0.05);
+      angle = fzy_mod(angle, 4, [0], 0.05);
       var rot = new THREE.Quaternion().setFromAxisAngle(plane.normal, angle*Q);
 
       for ( let elem of moving ) for ( let seg of elem.boundaries )
@@ -1233,8 +1325,10 @@ class SphPuzzleView
     };
     var dragend = event => {
       var angle = drag(event);
-      var hold = this.origin.elements.find(elem => !moving.has(elem));
-      this.origin.twist(track, angle, hold);
+      if ( angle !== 0 ) {
+        var hold = this.origin.elements.find(elem => !moving.has(elem));
+        this.origin.twist(track, angle, hold);
+      }
     };
 
     var targets = [...track.inner, ...track.outer].map(seg => seg.view.children[3]);
@@ -1557,14 +1651,11 @@ class SphNetworkView
 
 class SphStateView
 {
-  constructor(container_id, network, selector) {
+  constructor(container, network, selector) {
     this.network = network;
     this.selector = selector;
 
     document.body.appendChild(css`
-      .state-container {
-        overflow: auto;
-      }
       .state-container.broken {
         color: gray;
       }
@@ -1603,7 +1694,7 @@ class SphStateView
         opacity: 0.3;
       }
     `);
-    this.container = document.getElementById(container_id);
+    this.container = container;
     this.container.classList.add("state-container");
     this.container.addEventListener("click", () => this.selector.reselect());
 
@@ -2285,23 +2376,31 @@ class SphPuzzleViewExplorer
 
 class SphPuzzleWorld
 {
-  constructor(puzzle, id_display, id_network, id_state) {
+  constructor(puzzle, id_display) {
     this.puzzle = puzzle;
     this.selector = new Selector();
+    var tabs = new Tabs(id_display);
 
     // prop builder
     var prop = new SphPuzzlePropBuilder(this.puzzle, this.selector);
 
     // 3D view
-    var dom = document.getElementById(id_display);
-    var display = new Display(id_display, dom.clientWidth, dom.clientHeight);
+    var tab_3D = tabs.add("3D view");
+    tab_3D.style = "width:100%; height:100%; padding:0;";
+    var display = new Display(tab_3D, tab_3D.clientWidth, tab_3D.clientHeight);
     var puzzle_view = new SphPuzzleView(display, this.puzzle, this.selector);
 
     // network view
-    var graph = new Graph(id_network);
+    var tab_net = tabs.add("Network view");
+    tab_net.style = "width:100%; height:100%; padding:0;";
+    var graph = new Graph(tab_net);
     var network_view = new SphNetworkView(graph, this.puzzle.network, this.selector);
 
-    var state_view = new SphStateView(id_state, this.puzzle.network, this.selector);
+    // state view
+    var tab_state = tabs.add("State view");
+    tab_state.style = `padding-top:10px; padding-left:5px; box-sizing:border-box;
+        width:100%; height:100%; margin:0; overflow:auto;`;
+    var state_view = new SphStateView(tab_state, this.puzzle.network, this.selector);
 
     // panel
     this.panel = new Panel();
@@ -2321,5 +2420,7 @@ class SphPuzzleWorld
     this.sel = new SelectPanel(sel_panel, this.selector, prop);
     var detail_panel = this.panel.ctrls[this.panel.addFolder("detail", true)];
     this.detail = new DetailPanel(detail_panel, this.selector, prop);
+
+    tabs.active(tab_3D);
   }
 }
