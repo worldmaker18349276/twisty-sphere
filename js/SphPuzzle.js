@@ -1656,6 +1656,9 @@ class SphStateView
     this.selector = selector;
 
     document.body.appendChild(css`
+      .state-container>div {
+        margin: 10px 12px;
+      }
       .state-container.broken {
         color: gray;
       }
@@ -2376,31 +2379,12 @@ class SphPuzzleViewExplorer
 
 class SphPuzzleWorld
 {
-  constructor(puzzle, id_display) {
+  constructor(puzzle, id_display, id_network, id_state) {
     this.puzzle = puzzle;
     this.selector = new Selector();
-    var tabs = new Tabs(id_display);
 
     // prop builder
     var prop = new SphPuzzlePropBuilder(this.puzzle, this.selector);
-
-    // 3D view
-    var tab_3D = tabs.add("3D view");
-    tab_3D.style = "width:100%; height:100%; padding:0;";
-    var display = new Display(tab_3D, tab_3D.clientWidth, tab_3D.clientHeight);
-    var puzzle_view = new SphPuzzleView(display, this.puzzle, this.selector);
-
-    // network view
-    var tab_net = tabs.add("Network view");
-    tab_net.style = "width:100%; height:100%; padding:0;";
-    var graph = new Graph(tab_net);
-    var network_view = new SphNetworkView(graph, this.puzzle.network, this.selector);
-
-    // state view
-    var tab_state = tabs.add("State view");
-    tab_state.style = `padding-top:10px; padding-left:5px; box-sizing:border-box;
-        width:100%; height:100%; margin:0; overflow:auto;`;
-    var state_view = new SphStateView(tab_state, this.puzzle.network, this.selector);
 
     // panel
     this.panel = new Panel();
@@ -2421,6 +2405,24 @@ class SphPuzzleWorld
     var detail_panel = this.panel.ctrls[this.panel.addFolder("detail", true)];
     this.detail = new DetailPanel(detail_panel, this.selector, prop);
 
-    tabs.active(tab_3D);
+    // 3D view
+    var dom_3D = document.getElementById(id_display);
+    if ( dom_3D ) {
+      var display = new Display(dom_3D, dom_3D.clientWidth, dom_3D.clientHeight);
+      var puzzle_view = new SphPuzzleView(display, this.puzzle, this.selector);
+    }
+
+    // network view
+    var dom_net = document.getElementById(id_network);
+    if ( dom_net ) {
+      var graph = new Graph(dom_net);
+      var network_view = new SphNetworkView(graph, this.puzzle.network, this.selector);
+    }
+
+    // state view
+    var dom_state = document.getElementById(id_state);
+    if ( dom_state ) {
+      var state_view = new SphStateView(dom_state, this.puzzle.network, this.selector);
+    }
   }
 }
