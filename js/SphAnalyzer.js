@@ -3487,6 +3487,7 @@ class SphPuzzle extends Observable
     this.analyzer.mergePrev(seg);
     this.remove(seg);
 
+    this.setStatus("unprepared");
     this.network.setStatus("broken");
     this.changed = true;
   }
@@ -3494,6 +3495,7 @@ class SphPuzzle extends Observable
     this.analyzer.interpolate(seg, theta);
     this.add(seg.next);
 
+    this.setStatus("unprepared");
     this.network.setStatus("broken");
     this.changed = true;
   }
@@ -3514,6 +3516,7 @@ class SphPuzzle extends Observable
     for ( let seg of elem.boundaries ) if ( !old_boundaries.has(seg) )
       this.add(seg);
 
+    this.setStatus("unprepared");
     this.network.setStatus("broken");
     this.changed = true;
   }
@@ -3688,19 +3691,10 @@ class SphPuzzle extends Observable
     this.statuschanged = true;
   }
 
-  rotate(q, target) {
-    if ( !target ) {
-      for ( let elem of target.elements )
-        this.rotate(q, elem);
-
-    } else if ( target instanceof SphElem ) {
-      for ( let seg of target.boundaries )
-        this.rotate(q, seg);
-
-    } else if ( target instanceof SphSeg ) {
-      target.rotate(q);
-    }
-
+  rotate(q) {
+    for ( let elem of target.elements )
+      for ( let seg of elem.boundaries )
+        target.rotate(q);
     this.changed = true;
   }
   twist(track, theta, hold) {
@@ -3720,7 +3714,8 @@ class SphPuzzle extends Observable
 
     for ( let region of partition ) if ( region.rotation[3] != 1 )
       for ( let elem of region.elements )
-        this.rotate(region.rotation, elem);
+        for ( let seg of elem.boundaries )
+          seg.rotate(region.rotation);
 
     for ( let track_ of track.latches.keys() )
       this.decipher(track_);
@@ -3732,13 +3727,31 @@ class SphPuzzle extends Observable
   decipher(track) {
     track.secret = {};
 
-    track.secret.shields = {};
-    track.secret.shields.inner = this.analyzer.raiseShield(track.inner);
-    track.secret.shields.outer = this.analyzer.raiseShield(track.outer);
-    track.secret.passwords = this.analyzer.decipher(track, track.secret.shields);
+    var shields = {};
+    shields.inner = this.analyzer.raiseShield(track.inner);
+    shields.outer = this.analyzer.raiseShield(track.outer);
+    track.secret.passwords = this.analyzer.decipher(track, shields);
     track.secret.passwords = new Map(Array.from(track.secret.passwords).sort((a,b) => a[0]-b[0]));
     track.secret.pseudokeys = this.analyzer.guessKeys(track);
     track.secret.pseudokeys = new Map(Array.from(track.secret.pseudokeys).sort((a,b) => a[0]-b[0]));
+
+    track.secret.partition = {};
+    track.secret.partition.inner = new Set(track.inner);
+    for ( let seg0 of track.secret.partition.inner ) {
+      for ( let seg of seg0.walk() )
+        track.secret.partition.inner.add(seg);
+      if ( !track.inner.includes(seg0) )
+        for ( let seg of seg0.adj.keys() )
+          track.secret.partition.inner.add(seg);
+    }
+    track.secret.partition.outer = new Set(track.outer);
+    for ( let seg0 of track.secret.partition.outer ) {
+      for ( let seg of seg0.walk() )
+        track.secret.partition.outer.add(seg);
+      if ( !track.outer.includes(seg0) )
+        for ( let seg of seg0.adj.keys() )
+          track.secret.partition.outer.add(seg);
+    }
 
     var partition = this.analyzer.partitionBy(track.inner, track.outer);
     if ( partition.length == 2 ) {
@@ -3776,10 +3789,21 @@ class SphPuzzle extends Observable
     var [knot0, index0] = this.network.indicesOf(seg0).next().value;
     orientation0 = orientation0 || seg0.orientation.slice();
 
+    for ( let track of this.tracks.slice().reverse() )
+      this.remove(track);
+
     this.network.setStatus("up-to-date");
     this.analyzer.assemble(this.network.knots);
     this.analyzer.orient(knot0, index0, orientation0);
     this.network.setIndices(this.segments);
+
+    for ( let seg of this.segments )
+      if ( seg.track )
+        this.add(seg.track);
+    if ( this.status == "ready" ) {
+      for ( let track of this.tracks )
+        this.decipher(track);
+    }
 
     this.changed = true;
   }

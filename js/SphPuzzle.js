@@ -961,27 +961,15 @@ class SphPuzzlePropBuilder
           get: () => matches.map(({center, arc, angle}) => `(${center}, ${arc}, ${angle})`).join()});
       secret.push({type: "folder", name: "passwords", properties: passwords});
 
-      var shields_inner = [];
-      for ( let seg of track.secret.shields.inner )
-        shields_inner.push(this.link(seg, sel_mode));
-      secret.push({type: "folder", name: "shields.inner", properties: shields_inner});
+      var partition_inner = [];
+      for ( let seg of track.secret.partition.inner )
+        partition_inner.push(this.link(seg, sel_mode));
+      secret.push({type: "folder", name: "partition.inner", properties: partition_inner});
 
-      var shields_outer = [];
-      for ( let seg of track.secret.shields.outer )
-        shields_outer.push(this.link(seg, sel_mode));
-      secret.push({type: "folder", name: "shields.outer", properties: shields_outer});
-
-      if ( track.secret.regions ) {
-        var regions_inner = [];
-        for ( let seg of track.secret.regions.inner )
-          regions_inner.push(this.link(seg, sel_mode));
-        secret.push({type: "folder", name: "regions.inner", properties: regions_inner});
-
-        var regions_outer = [];
-        for ( let seg of track.secret.regions.outer )
-          regions_outer.push(this.link(seg, sel_mode));
-        secret.push({type: "folder", name: "regions.outer", properties: regions_outer});
-      }
+      var partition_outer = [];
+      for ( let seg of track.secret.partition.outer )
+        partition_outer.push(this.link(seg, sel_mode));
+      secret.push({type: "folder", name: "partition.outer", properties: partition_outer});
 
       detail.push({type: "folder", name: "secret", properties: secret});
     }
@@ -1574,23 +1562,18 @@ class SphStateView
     this.selector = selector;
 
     document.body.appendChild(css`
-      .state-tab {
-        display: none;
+      .state-container {
+        overflow: auto;
       }
-      .state-tab.show {
-        display: block;
-      }
-      .broken * {
+      .state-container.broken {
         color: gray;
       }
-      .outdated .state-name::after {
-        content: "*";
-      }
-      .emphasized {
-        font-weight: bold;
-      }
-      .highlighted {
-        outline: 1px dashed gray;
+
+      .list {
+        margin-left: 15px;
+        margin-top: 3px;
+        margin-bottom: 3px;
+        font-family: "Lucida Console", Monaco, monospace;
       }
       .list::before {
         content: '[';
@@ -1610,11 +1593,19 @@ class SphStateView
         content: ', ';
         white-space: pre;
       }
-      .dragging {
+      .item.emphasized {
+        font-weight: bold;
+      }
+      .item.highlighted {
+        outline: 1px dashed gray;
+      }
+      .item.dragging {
         opacity: 0.3;
       }
     `);
     this.container = document.getElementById(container_id);
+    this.container.classList.add("state-container");
+    this.container.addEventListener("click", () => this.selector.reselect());
 
     network.state_view = this;
     this.origin = network;
@@ -1640,7 +1631,6 @@ class SphStateView
     network.on("added", SphKnot, event => this.drawTab(event.target));
     network.on("removed", SphKnot, event => this.eraseTab(event.target));
     network.on("modified", SphKnot, event => this.updateTab(event.target));
-    this.selector.on("add", SphKnot, event => this.showTab(event.target));
     network.on("statuschanged", network, event => {
       if ( event.target.status == "broken" )
         this.container.classList.add("broken");
@@ -1762,10 +1752,9 @@ class SphStateView
   }
   drawTab(knot) {
     var tab = document.createElement("div");
-    tab.classList.add("state-tab");
+    this.container.appendChild(tab);
 
     var title = document.createElement("h3");
-    title.classList.add("state-name");
     title.textContent = knot.name;
     tab.appendChild(title);
 
@@ -1775,17 +1764,10 @@ class SphStateView
 
     knot.tab = tab;
     tab.origin = knot;
-    this.container.appendChild(tab);
-
-    this.showTab(knot);
   }
   eraseTab(knot) {
     this.container.removeChild(knot.tab);
-  }
-  showTab(knot) {
-    for ( let tab of this.container.querySelectorAll(".state-tab.show") )
-      tab.classList.remove("show");
-    knot.tab.classList.add("show");
+    delete knot.tab;
   }
   updateTab(knot) {
     for ( let [[i,j,k,l], seg] of knot.model.items(knot.segments) )
