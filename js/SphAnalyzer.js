@@ -3248,7 +3248,7 @@ class Observable extends Listenable
   }
   initialize(callback) {
     if ( this.changed )
-      puzzle.once("changed", puzzle, callback);
+      this.once("changed", this, callback);
     else
       callback();
   }

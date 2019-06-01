@@ -1,40 +1,34 @@
-// #### ######## ######## ########  
-//  ##     ##    ##       ##     ## 
-//  ##     ##    ##       ##     ## 
-//  ##     ##    ######   ########  
-//  ##     ##    ##       ##   ##   
-//  ##     ##    ##       ##    ##  
-// ####    ##    ######## ##     ## 
+"use strict";
 
+// ######## ##     ## ##    ##  ######  ######## ####  #######  ##    ##         
+// ##       ##     ## ###   ## ##    ##    ##     ##  ##     ## ###   ##         
+// ##       ##     ## ####  ## ##          ##     ##  ##     ## ####  ##         
+// ######   ##     ## ## ## ## ##          ##     ##  ##     ## ## ## ## ####### 
+// ##       ##     ## ##  #### ##          ##     ##  ##     ## ##  ####         
+// ##       ##     ## ##   ### ##    ##    ##     ##  ##     ## ##   ###         
+// ##        #######  ##    ##  ######     ##    ####  #######  ##    ##         
+// ########     ###     ######  ######## ########  
+// ##     ##   ## ##   ##    ## ##       ##     ## 
+// ##     ##  ##   ##  ##       ##       ##     ## 
+// ########  ##     ##  ######  ######   ##     ## 
+// ##     ## #########       ## ##       ##     ## 
+// ##     ## ##     ## ##    ## ##       ##     ## 
+// ########  ##     ##  ######  ######## ########  
+// ##     ##  #######  ########  ######## ##       #### ##    ##  ######   
+// ###   ### ##     ## ##     ## ##       ##        ##  ###   ## ##    ##  
+// #### #### ##     ## ##     ## ##       ##        ##  ####  ## ##        
+// ## ### ## ##     ## ##     ## ######   ##        ##  ## ## ## ##   #### 
+// ##     ## ##     ## ##     ## ##       ##        ##  ##  #### ##    ##  
+// ##     ## ##     ## ##     ## ##       ##        ##  ##   ### ##    ##  
+// ##     ##  #######  ########  ######## ######## #### ##    ##  ######   
+//  ######  ##    ##  ######  ######## ######## ##     ## 
+// ##    ##  ##  ##  ##    ##    ##    ##       ###   ### 
+// ##         ####   ##          ##    ##       #### #### 
+//  ######     ##     ######     ##    ######   ## ### ## 
+//       ##    ##          ##    ##    ##       ##     ## 
+// ##    ##    ##    ##    ##    ##    ##       ##     ## 
+//  ######     ##     ######     ##    ######## ##     ## 
 
-// iterator tools
-function* map(it, mapping=function(v,i){return v;}) {
-  var i = 0;
-  for ( let v of it )
-    yield mapping(v,i++);
-}
-function* flatmap(it, mapping=function(v,i){return [v];}) {
-  var i = 0;
-  for ( let v of it )
-    yield* mapping(v,i++);
-}
-function* filter(it, filtering=function(v,i){return true;}) {
-  var i = 0;
-  for ( let v of it )
-    if ( filtering(v,i++) )
-      yield v;
-}
-function reduce(it, callback, initial) {
-  if ( initial === undefined ) {
-    var original_callback = callback;
-    callback = function(acc, value){ callback = original_callback; return value; }
-  }
-  for ( let v of it )
-    initial = callback(initial, v);
-  return initial;
-}
-
-function* repeat(v) { while ( true ) yield v; }
 // zip iterables, where un-iterable transform as infinited repeated iterator
 function* zip(...iterables) {
   var iterators = iterables.map(it => {
@@ -58,17 +52,6 @@ function* comb2(list) {
     for ( let j=i+1; j<length; j++ )
       yield [list[i], list[j]];
 }
-
-// in-place filter array, return false if nothing change
-function filterInPlace(arr, condition) {
-  var j = 0;
-  for ( var i = 0; i < arr.length; i++ )
-    if ( condition(arr[i], i, arr) ) arr[j++] = arr[i];
-  if ( arr.length === j )
-    return true;
-  arr.length = j;
-  return false;
-}
 function removeFirst(arr, filter) {
   var i = arr.findIndex(filter);
   if ( i === -1 )
@@ -76,101 +59,6 @@ function removeFirst(arr, filter) {
   arr.splice(i, 1);
   return true;
 }
-function findMax(arr, key=arr) {
-  let j = 0;
-  for ( let i=0; i < arr.length; i++ )
-    if ( key[i] > key[j] )
-      j = i;
-  return j;
-}
-
-// iterate uv values along z-curve order by order
-function* ziter() {
-  var queue = [1/2, 1/2, 1, 1];
-  while ( true ) {
-    let u = queue.shift();
-    let v = queue.shift();
-    let w = queue.shift();
-    let h = queue.shift();
-    yield [u, v];
-    queue.push(u-w/4, v-h/4, w/2, h/2,
-               u+w/4, v-h/4, w/2, h/2,
-               u-w/4, v+h/4, w/2, h/2,
-               u+w/4, v+h/4, w/2, h/2);
-  }
-}
-
-// ######## ##     ## ######## ######## ##    ## 
-// ##       ##     ##      ##       ##   ##  ##  
-// ##       ##     ##     ##       ##     ####   
-// ######   ##     ##    ##       ##       ##    
-// ##       ##     ##   ##       ##        ##    
-// ##       ##     ##  ##       ##         ##    
-// ##        #######  ######## ########    ##    
-
-
-// fuzzy compare tool
-class FuzzyTool
-{
-  constructor(param) {
-    param = Object.assign({
-      precision: 5
-    }, param);
-    this.precision = param.precision;
-    this.tolerance = Math.pow(10, -this.precision);
-    this.scale = Math.pow(10, this.precision);
-  }
-  toString(value) {
-    var val = value.toFixed(this.precision);
-    if ( val === "-"+(0).toFixed(this.precision) )
-      val = (0).toFixed(this.precision);
-    return val;
-  }
-  round(value) {
-    // return parseFloat(value.toFixed(this.precision));
-    return Math.round(value * this.scale) / this.scale;
-  }
-  roundTo(value, pool) {
-    res = pool.find(v => this.equals(value, v));
-    return res === undefined ? value : res;
-  }
-  greater_than(v1, v2) {
-    return (v1-v2 > -this.tolerance);
-  }
-  less_than(v1, v2) {
-    return (v1-v2 < this.tolerance);
-  }
-  inrange(v, v1, v2) {
-    return this.greater_than(v, v1) && this.less_than(v, v2);
-  }
-  equals(v1, v2) {
-    if ( v1.fuzzyKeys !== undefined && v2.fuzzyKeys !== undefined )
-      return this.equals(v1.fuzzyKeys(), v2.fuzzyKeys());
-    else if ( v1.x !== undefined && v1.y !== undefined && v1.z !== undefined ) // THREE.Vector3
-      return (Math.abs(v1.x-v2.x) < this.tolerance)
-          && (Math.abs(v1.y-v2.y) < this.tolerance)
-          && (Math.abs(v1.z-v2.z) < this.tolerance);
-    else if ( v1.constant !== undefined && v1.normal !== undefined ) // THREE.Plane
-      return this.equals(v1.constant, v2.constant)
-          && this.equals(v1.normal, v2.normal);
-    else
-      return Math.abs(v1-v2) < this.tolerance;
-  }
-  isZero(value) {
-    return Math.abs(value) < this.tolerance;
-  }
-  sign(value) {
-    return (Math.abs(value) < this.tolerance) ? 0 : Math.sign(value);
-  }
-  collect(it) {
-    var res = [];
-    for ( let value of it )
-      if ( !res.find(v => this.equals(v, value)) )
-        res.push(value);
-    return res;
-  }
-}
-var defaultFuzzyTool = new FuzzyTool();
 
 
 //  ######   ########  #######  
@@ -189,22 +77,57 @@ const EDGES_DUAL = Object.freeze({ca:"b",  ab:"c",  bc:"a"});
 const EDGES_NEXT = Object.freeze({ca:"ab", ab:"bc", bc:"ca"});
 const EDGES_PREV = Object.freeze({ca:"bc", ab:"ca", bc:"ab"});
 
+/**
+ * Use doubly linked faces structure to speed up computing.
+ * Below We will use `(face,edge)` to denote the edge of face, if it is link to
+ * `(adjFace,adjEdge)`, then
+ *     [ adjFace, adjEdge ] = [ face[edge], face.adj[edge] ]
+ *     [ face, edge ] = [ adjFace[adjEdge], adjFace.adj[adjEdge] ]
+ * 
+ * Now geometry has properties:
+ *   name
+ *   vertices (v_index -> Vector3)
+ *   faces (f_index -> Face3)
+ *   faceVertexUvs (layer_index -> f_index -> vertex_number -> Vector2)
+ *   nlayer: number of layers of textures
+ *   boundaries ( [[Face3, edge], ...] )
+ *   ...
+ *   flying: if this geometry is flying
+ * 
+ * And face has properties:
+ *   a, b, c (v_index): indices of vertices counterclockwise
+ *   ca, ab, bc (Face3): adjacent faces of corresponding edges
+ *   adj.ca, adj.ab, adj.bc (edge): adjacent edges of adjacent faces
+ *   labels.ca, labels.ab, labels.bc: label of each edge
+ *   vertexUvs (layer_index -> vertex_number -> Vector2)
+ *   vertexNormals (vertex_number -> Vector3)
+ *   vertexColors (vertex_number -> Color)
+ */
 class Geometer
 {
-  // doubly linked faces structure:
-  // we use `(face,edge)` to denote the edge of face
-  // if it is link to `(adjFace,adjEdge)`, then we have
-  // >  [ adjFace, adjEdge ] = [ face[edge], face.adj[edge] ]
-  // >  [ face, edge ] = [ adjFace[adjEdge], adjFace.adj[adjEdge] ]
-
-  // if `(face1,edge1)` and `(face2,edge2)` are adjacent (share same vertices)
+  /**
+   * Check if `(face1,edge1)` and `(face2,edge2)` are adjacent (share same vertices).
+   * 
+   * @param {Face3} face1
+   * @param {String} edge1
+   * @param {Face3} face2
+   * @param {String} edge2
+   * @returns {boolean}
+   */
   static areAdjacent(face1, edge1, face2, edge2) {
     return (face1[edge1[0]] === face2[edge2[1]]) && (face1[edge1[1]] === face2[edge2[0]]);
   }
-  // connect `(face,edge)` and `(adjFace,adjEdge)`,
-  //   then return connected links: `[ [face,edge], [adjFace,adjEdge] ]`
-  // or disconnect `(face,edge)` if `adjFace` is undefined,
-  //   then return connected links: `[ [face,edge] ]`
+  /**
+   * Connect `(face,edge)` and `(adjFace,adjEdge)`, then return connected links:
+   * `[ [face,edge], [adjFace,adjEdge] ]`, or disconnect `(face,edge)` if
+   * `adjFace` is undefined, then return connected links: `[ [face,edge] ]`.
+   * 
+   * @param {Face3} face
+   * @param {String} edge
+   * @param {Face3=} adjFace
+   * @param {String=} adjEdge
+   * @returns {Array}
+   */
   static connect(face, edge, adjFace, adjEdge) {
     if ( adjFace ) {
       if ( !face.adj ) face.adj = {};
@@ -222,7 +145,13 @@ class Geometer
       return [[face, edge]];
     }
   }
-  // find all boundaries (`face[edge] === undefined`) in `faces`
+  /**
+   * Find all boundaries (``face[edge] === undefined``) in `faces`.
+   * 
+   * @param {Geometry} geometry
+   * @returns {Array} List with entries ``[face, edge]`` such that
+   *   ``face[edge] === undefined``.
+   */
   static boundariesIn(geometry) {
     var boundaries = [];
     for ( let face of geometry.faces ) for ( let edge of EDGES )
@@ -231,10 +160,15 @@ class Geometer
     return boundaries;
   }
 
-  // modify structure of Face3 to faster computing
+  /**
+   * Build additional structure of face to speed up computing.
+   * 
+   * @param {Geometry} geometry
+   * @returns {Geometry}
+   */
   static fly(geometry) {
     if ( geometry.flying )
-      return;
+      return geometry;
     var uvs = geometry.faceVertexUvs;
     const nlayer = geometry.nlayer = geometry.faceVertexUvs.length;
 
@@ -262,14 +196,21 @@ class Geometer
     // find boundaries of faces
     geometry.boundaries = this.boundariesIn(geometry);
     geometry.flying = true;
+    return geometry;
   }
+  /**
+   * Apply additional structure of face to original properties.
+   * 
+   * @param {Geometry} geometry
+   * @returns {Geometry}
+   */
   static land(geometry) {
     var uvs = geometry.faceVertexUvs = [[]];
     const nlayer = geometry.nlayer;
     for ( let l=0; l<nlayer; l++ )
       uvs[l] = [];
 
-    for ( let x in geometry.faces ) {
+    for ( let x=0,len=geometry.faces.length; x<len; x++ ) {
       let face = geometry.faces[x];
 
       if ( face.vertexUvs ) {
@@ -284,7 +225,13 @@ class Geometer
           uvs[l][x] = [new THREE.Vector2(0,0),new THREE.Vector2(0,0),new THREE.Vector2(0,0)];
       }
     }
+    return geometry;
   }
+  /**
+   * Check additional structure of face.
+   * 
+   * @param {Geometry} geometry
+   */
   static check(geometry) {
     console.assert(geometry.flying);
     console.assert(geometry.nlayer >= geometry.faceVertexUvs.length);
@@ -309,9 +256,14 @@ class Geometer
     }
   }
 
-  // copy flying face
-  // shallow copy flying data `face.labels`, `face.vertexUvs`,
-  //   but no link `face.ca`, `face.ab`, `face.bc` and `face.adj`
+  /**
+   * Shallow copy flying data ``face.labels``, ``face.vertexUvs``, but no link
+   * ``face.ca``, ``face.ab``, ``face.bc`` and ``face.adj``.
+   * 
+   * @param {Face3} face - The input face.
+   * @param {Face3=} out - The output face.
+   * @returns {Face3} The output face.
+   */
   static copyFace(face, out=new THREE.Face3().copy(face)) {
     out.labels = Object.assign({}, face.labels);
 
@@ -325,7 +277,13 @@ class Geometer
 
     return out;
   }
-  // copy flying faces with adjacent links
+  /**
+   * Copy flying faces with adjacent links.
+   * 
+   * @param {Face3[]} face - The input faces.
+   * @param {Face3[]=} out - The output faces.
+   * @returns {Face3[]} The output faces.
+   */
   static copyFaces(faces, out=faces.map(face=>new THREE.Face3().copy(face))) {
     for ( let [face, out_face] of zip(faces, out) ) {
       this.copyFace(face, out_face);
@@ -343,7 +301,13 @@ class Geometer
     }
     return out;
   }
-  // copy flying geometry
+  /**
+   * Copy flying geometry.
+   * 
+   * @param {Geometry} face - The input geometry.
+   * @param {Geometry=} out - The output geometry.
+   * @returns {Geometry} The output geometry.
+   */
   static copy(geometry, out=geometry.clone()) {
     out.nlayer = geometry.nlayer;
     this.copyFaces(geometry.faces, out.faces);
@@ -352,6 +316,12 @@ class Geometer
     return out;
   }
 
+  /**
+   * Reverse side of face of geometry.
+   * 
+   * @param {Geometry} geometry
+   * @returns {Geometry} This geometry.
+   */
   static reverse(geometry) {
     const EDGES_REV = {ca:"ca", ab:"bc", bc:"ab"};
 
@@ -381,7 +351,11 @@ class Geometer
     return geometry;
   }
 
-  // trim trivial vertices
+  /**
+   * Trim trivial vertices, which are not refered by any face.
+   * 
+   * @param {Geometry} geometry
+   */
   static trimVertices(geometry) {
     // find non-trivial vertices, which must be refered by face
     var nontriviality = []; // index of vertex -> if vertex is non-trivial
@@ -406,20 +380,28 @@ class Geometer
     geometry.vertices = nontrivial_vertices;
   }
 
-  // split `face` at `edge` with interpolation alpha `t` and vertex index `k`
-  // return the splited face `[face_A, face_B]`
-  //
-  //          c                            c          
-  //         / \                          /|\         
-  //        /   \                        / | \        
-  //       /     \                      /  |  \       
-  //      /       \                    /   |   \      
-  //     /  face   \       ===>       /    |    \     
-  //    /           \               A-side | B-side   
-  //   /             \              /face  |  face\   
-  //  /_______________\            /_______|_______\  
-  // a        |        b          a       b a       b 
-  //    split edge `ab`
+  /**
+   * Split `face` at `edge` with interpolation alpha `t` and vertex index `k`,
+   * and return the splited face `[face_A, face_B]`.
+   * 
+   *              c                            c          
+   *             / \                          /|\         
+   *            /   \                        / | \        
+   *           /     \                      /  |  \       
+   *          /       \                    /   |   \      
+   *         /  face   \       ===>       /    |    \     
+   *        /           \               A-side | B-side   
+   *       /             \              /face  |  face\   
+   *      /_______________\            /_______|_______\  
+   *     a        |        b          a       b a       b 
+   *        split edge `ab`
+   * 
+   * @param {Face3} face
+   * @param {String} edge
+   * @param {number} t
+   * @param {number} k
+   * @returns {Face3[]}
+   */
   static _split_face(face, edge, t, k) {
     const ab = edge;
     const bc = EDGES_NEXT[ab];
@@ -468,9 +450,18 @@ class Geometer
 
     return [face_A, face_B];
   }
-  // interpolate `geometry` at edge `(face,edge)`
-  // new faces will be insert after splited faces
-  // return the new faces splited out of `face` and its dual
+  /**
+   * Interpolate `geometry` at edge `(face,edge)`, and return the new faces
+   * splited out of `face` and its dual.  New faces will be insert after splited
+   * faces.
+   * 
+   * @param {Geometry} geometry
+   * @param {Face3} face
+   * @param {String} edge
+   * @param {number} t
+   * @param {number} k
+   * @returns {Face3[]}
+   */
   static interpolateAtEdge(geometry, face, edge, t, k) {
     var [adjFace, adjEdge] = [face[edge], face.adj[edge]];
 
@@ -523,13 +514,29 @@ class Geometer
 
     return [face_A, face_B, adjFace_A, adjFace_B];
   }
-  // slice `geometry` by `plane`
-  // in-place modify `geometry` as positive side, and modify `geometry_back` as negative side
-  static slice(geometry, plane, geometry_back, label, label_back=label) {
+  /**
+   * Slice `geometry` by `plane`.
+   * It will in-place modify `geometry` as positive side, and modify, if have,
+   * `geometry_back` as negative side.
+   * 
+   * @param {Geometry} geometry
+   * @param {Plane} plane
+   * @param {Geometry} [geometry_back]
+   * @param {object} [label]
+   * @param {object} [label_back]
+   * @param {number} [tol=1e-5]
+   * @returns {number} `0` for slice case, `1` for all positive case, and `-1`
+   *   for all negative case.
+   */
+  static slice(geometry, plane, geometry_back, label, label_back=label, tol=1e-5) {
     plane = new THREE.Plane().copy(plane);
 
     var dis = geometry.vertices.map(v => plane.distanceToPoint(v));
-    var sgn = dis.map(d => defaultFuzzyTool.sign(d));
+    var sgn = dis.map(d => Math.abs(d)<tol ? 0 : Math.sign(d));
+    if ( sgn.every(s => s>=0) )
+      return +1;
+    if ( sgn.every(s => s<=0) )
+      return -1;
 
     // split edge
     // notice: `geometry.faces` will be modified in method `interpolateAtEdge`,
@@ -565,8 +572,8 @@ class Geometer
         face[SIDE] = FRONT;
       else if ( VERTICES.every(a => sgn[face[a]] <= 0) )
         face[SIDE] = BACK;
-      else
-        console.assert(false);
+      // else
+      //   console.assert(false);
     }
     
     // unlink edge between two sides
@@ -614,7 +621,15 @@ class Geometer
 
       geometry_back.flying = true;
     }
+
+    return 0;
   }
+  /**
+   * Walk along boundaries of geometry.
+   * 
+   * @param {Geometry} geometry
+   * @returns {Array} Loops.
+   */
   static walkAlongBoundaries(geometry) {
     var loops = [];
     var boundaries = geometry.boundaries.slice(0);
@@ -633,6 +648,12 @@ class Geometer
     }
     return loops;
   }
+  /**
+   * Walk along boundaries of given faces.
+   * 
+   * @param {Face3} faces
+   * @returns {Array} Loops.
+   */
   static boundariesLoopsOf(faces) {
     var boundaries = [];
     for ( let face of faces ) for ( let edge of EDGES )
@@ -658,7 +679,8 @@ class Geometer
     // offset and rotation to plane
     var offset = plane.normal.clone().multiplyScalar(-plane.constant);
     var {phi, theta} = new THREE.Spherical().setFromVector3(plane.normal);
-    var rot = new THREE.Quaternion().setFromAxisAngle({x:-Math.cos(theta), y:0, z:Math.sin(theta)}, phi);
+    var rot = new THREE.Quaternion()
+      .setFromAxisAngle({x:-Math.cos(theta), y:0, z:Math.sin(theta)}, phi);
 
     // project vertices onto the plane
     var points = {};
@@ -701,7 +723,7 @@ class Geometer
         loop.push([face_ca, bd_ca]); // rose-like filling
       }
 
-      if ( loop.length === 2 ) {
+      if ( loop.length == 2 ) {
         this.connect(...loop[0], ...loop[1]);
       } else {
         throw "???";
@@ -769,11 +791,7 @@ class Geometer
     // this.trimVertices(geometry);
   }
   // merge duplicated (or similar) vertices and sew boundaries caused by merging
-  static reduceVertices(geometry, snap=true, sew=true) {
-    var vec_hash = snap
-                 ? v => v.toArray().map(x => defaultFuzzyTool.toString(x)).join()
-                 : v => geometry.vertices.indexOf(v);
-    var vertices_hashmap = {}; // hash of vertex -> index of merged vertex
+  static reduceVertices(geometry, snap=true, sew=true, tol=1e-5) {
     var merged_vertices = [];
     var merged_vertices_map = {}; // original index of vertex -> index of merged vertex
     var duplicated = {}; // index of merged vertex -> if vertex is duplicated
@@ -781,12 +799,14 @@ class Geometer
 
     // merge duplicated vertices
     for ( let i=0, len=geometry.vertices.length; i<len; i++ ) {
-      let hash = vec_hash(geometry.vertices[i]);
-      let new_index = vertices_hashmap[hash];
+      vec = geometry.vertices[i];
+      if ( snap )
+        vec = merged_vertices.find(v => vec.manhattanDistanceTo(v) < tol) || vec;
+
+      let new_index = merged_vertices.indexOf(vec);
 
       if ( new_index === undefined ) {
-        new_index = merged_vertices.push(geometry.vertices[i])-1;
-        vertices_hashmap[hash] = new_index;
+        new_index = merged_vertices.push(vec)-1;
         merged_vertices_map[i] = new_index;
   
       } else {
@@ -861,91 +881,81 @@ class Geometer
   
     geometry.faces = merged_faces;
   }
-  // // merge gapless pairs of faces and separate gapless edges
-  // static regularization(geometry) {
-  //   var face_hashmap = {}; // hash of vertices of face -> [face, sorted_edges, parity]
-  //   function face_hash(face) {
-  //     var edges = EDGES.slice(0);
-  //     edges.sort((e1, e2) => face[EDGES_DUAL[e1]] - face[EDGES_DUAL[e2]]);
-  //     var parity = edges[0][1] == edges[1][0] ? 0 : 1; // parity of permutation
-  //     return [edges.map(e => face[EDGES_DUAL[e]]).join(), edges, parity];
-  //   }
-  // 
-  //   // remove gapless pair of faces
-  //   for ( let face of geometry.faces ) {
-  //     let [hash, edges, parity] = face_hash(face);
-  //     if ( face_hashmap[hash] === undefined ) {
-  //       face_hashmap[hash] = [face, edges, parity];
-  // 
-  //     } else {
-  //       let [anti_face, anti_edges, anti_parity] = face_hashmap[hash];
-  //       console.assert(anti_parity !== parity);
-  // 
-  //       // merge links
-  //       for ( let [edge, anti_edge] of zip(edges, anti_edges) )
-  //         if ( face[edge].dual !== anti_face[anti_edge] )
-  //           face[edge].merge(anti_face[anti_edge]);
-  // 
-  //       delete face_hashmap[hash];
-  //     }
-  //   }
-  // 
-  //   geometry.faces = [...face_hashmap.values()];
-  // 
-  //   var tab_hashmap = {}; // hash of vertices of edge -> set of tabs
-  //   function tab_hash(tab) {
-  //     var a = tab.face[tab.edge[0]];
-  //     var b = tab.face[tab.edge[1]];
-  //     if ( a > b )
-  //       return tab_hash(tab.face[tab.edge]);
-  //     else
-  //       return [a+","+b, tab];
-  //   }
-  // 
-  //   // find meeting edges
-  //   for ( let face of geometry.faces ) for ( let edge of EDGES ) if ( face[edge].isEdge ) {
-  //     let [hash, tab] = tab_hash(face[edge]);
-  //     if ( tab_hashmap[hash] === undefined )
-  //       tab_hashmap[hash] = new Set([]);
-  //     tab_hashmap[hash].add(tab);
-  //   }
-  // 
-  //   // separate gapless edges
-  //   const LEFT = Symbol("LEFT");
-  //   const RIGHT = Symbol("RIGHT");
-  // 
-  //   for ( let tabs of tab_hashmap ) if ( tabs.size() > 1 ) {
-  //     let tab0 = tabs.values().next().value;
-  // 
-  //     // rotate to align edge "ab" to axis +y
-  //     let i = tab0.face[tab0.edge[0]];
-  //     let j = tab0.face[tab0.edge[1]];
-  //     let dir = new THREE.Vector3().subVectors(geometry.vertices[j], geometry.vertices[i]);
-  //     let {phi, theta} = new THREE.Spherical().setFromVector3(dir);
-  //     let rot = new THREE.Quaternion().setFromAxisAngle({x:-Math.cos(theta), y:0, z:Math.sin(theta)}, phi);
-  // 
-  //     let tabs_ = []; // list of tabs and its metadata: {tab, theta, side}
-  //     for ( let tab of tabs ) {
-  //       let normal = tab.face.normal.clone().applyQuaternion(rot);
-  //       let theta = new THREE.Spherical().setFromVector3(normal).theta;
-  //       tabs_.push({tab, theta, side:LEFT});
-  // 
-  //       let tab = tab.dual;
-  //       normal = tab.face.normal.clone().negate().applyQuaternion(rot);
-  //       theta = new THREE.Spherical().setFromVector3(normal).theta;
-  //       tabs_.push({tab, theta, side:RIGHT});
-  //     }
-  // 
-  //     tabs_.sort((a, b) => a.theta-b.theta);
-  //     let prev_side = tabs_[tabs_.length-1].side;
-  //     console.assert(tabs_.every(a => prev_side !== (prev_side = a.side)));
-  // 
-  //     if ( tabs_[0].side === LEFT )
-  //         tabs_.push(tabs_.shift());
-  //     for ( let i=0; i+1<tabs_.length; i+=2 )
-  //       tabs_[i].tab.glue(tabs_[i+1].tab);
-  //   }
-  // }
+  // merge gapless pairs of faces and separate gapless edges
+  static regularization(geometry) {
+    var face_hashmap = {}; // hash of vertices of face -> [face, sorted_edges, parity]
+    function face_hash(face) {
+      var edges = EDGES.slice(0);
+      edges.sort((e1, e2) => face[EDGES_DUAL[e1]] - face[EDGES_DUAL[e2]]);
+      var parity = edges[0][1] == edges[1][0] ? 0 : 1; // parity of permutation
+      return [edges.map(e => face[EDGES_DUAL[e]]).join(), edges, parity];
+    }
+  
+    // remove gapless pair of faces
+    for ( let face of geometry.faces ) {
+      let [hash, edges, parity] = face_hash(face);
+      if ( face_hashmap[hash] === undefined ) {
+        face_hashmap[hash] = [face, edges, parity];
+  
+      } else {
+        let [anti_face, anti_edges, anti_parity] = face_hashmap[hash];
+        console.assert(anti_parity != parity);
+  
+        // merge links
+        for ( let [edge, anti_edge] of zip(edges, anti_edges) )
+          this.connect(face[edge], face.adj[edge],
+                       anti_face[anti_edge], anti_face.adj[anti_edge]);
+  
+        delete face_hashmap[hash];
+      }
+    }
+  
+    geometry.faces = Object.values(face_hashmap).map(h => h[0]);
+  
+    var tab_hashmap = {}; // hash of vertices of edge -> {face, edge, side}
+    function tab_hash(face, edge) {
+      var a = face[edge[0]];
+      var b = face[edge[1]];
+      var hash = a<b ? a+","+b :  b+","+a;
+      return [hash, a<b];
+    }
+  
+    // find meeting edges
+    for ( let face of geometry.faces ) for ( let edge of EDGES ) if ( face[edge] ) {
+      let [hash, side] = tab_hash(face, edge);
+      if ( tab_hashmap[hash] === undefined )
+        tab_hashmap[hash] = new Set([]);
+      tab_hashmap[hash].add({face, edge, side});
+    }
+  
+    // separate gapless edges
+    for ( let tabs of tab_hashmap ) if ( tabs.size() > 1 ) {
+      let tab0 = tabs.values().next().value;
+  
+      // rotate to align edge "ab" to axis +y
+      let i = tab0.face[tab0.edge[0]];
+      let j = tab0.face[tab0.edge[1]];
+      if ( !tab0.side ) [i, j] = [j, i];
+      let dir = new THREE.Vector3().subVectors(geometry.vertices[j], geometry.vertices[i]);
+      let {phi, theta} = new THREE.Spherical().setFromVector3(dir);
+      let rot = new THREE.Quaternion()
+        .setFromAxisAngle({x:-Math.cos(theta), y:0, z:Math.sin(theta)}, phi);
+  
+      for ( let tab of tabs ) {
+        let normal = tab.face.normal.clone().applyQuaternion(rot);
+        tab.theta = new THREE.Spherical().setFromVector3(normal).theta;
+      }
+  
+      tabs = Array.from(tabs).sort((a, b) => a.theta-b.theta);
+      let prev_side = tabs[tabs.length-1].side;
+      console.assert(tabs.every(a => prev_side != (prev_side = a.side)));
+  
+      if ( tabs[0].side )
+          tabs.push(tabs.shift());
+      for ( let i=0; i+1<tabs.length; i+=2 )
+        this.connect(tabs[i].face, tabs[i].edge, tabs[i+1].face, tabs[i+1].edge);
+    }
+  }
 
   // divide faces triangly
   //   c
@@ -959,51 +969,49 @@ class Geometer
   static divideFaces(geometry, N=1) {
     // divide vertices
     var _cache = {};
-    function _interpolate_vertices(i, j, t) {
+    function _interpolate_vertices(i, j, t, N) {
       if ( i > j ) [i, j, t] = [j, i, N-t];
       if ( t === 0 ) return i;
       if ( t === N ) return j;
-      if ( _cache[i+","+j+":"+t] !== undefined )
-        return _cache[i+","+j+":"+t];
+      var key = `${i},${j}:${t}/${N}`;
+      if ( _cache[key] !== undefined )
+        return _cache[key];
 
       var vi = geometry.vertices[i];
       var vj = geometry.vertices[j];
       var vk = vi.clone().lerp(vj, t/N);
       var k = geometry.vertices.push(vk)-1;
-      _cache[i+","+j+":"+t] = k;
+      _cache[key] = k;
       return k;
     }
     function _divide_vertices(a, b, c) {
-      var divided = Array.from({length: N+1}, (v, i) => new Array(N-i));
-      for ( let nx=0; nx<=N; nx++ ) for ( let ny=0; ny<=N-nx; ny++ ) {
-        if ( ny === 0 )
-          divided[nx][ny] = _interpolate_vertices(a, b, nx);
-        else if ( nx === 0 )
-          divided[nx][ny] = _interpolate_vertices(a, c, ny);
-        else if ( nx + ny === N )
-          divided[nx][ny] = _interpolate_vertices(b, c, ny);
-        else {
-          let dx = geometry.vertices[b].clone().sub(geometry.vertices[a]).multiplyScalar(nx/N);
-          let dy = geometry.vertices[c].clone().sub(geometry.vertices[a]).multiplyScalar(ny/N);
-          let v = geometry.vertices[a].clone().add(dx).add(dy);
-          divided[nx][ny] = geometry.vertices.push(v)-1;
-        }
+      var divided = Array.from({length: N+1}, (v, i) => new Array(N+1-i));
+      for ( let nx=0; nx<=N; nx++ ) {
+        let a_ = _interpolate_vertices(a, b, nx, N);
+        let c_ = _interpolate_vertices(c, b, nx, N);
+        for ( let ny=0; ny<=N-nx; ny++ )
+          divided[nx][ny] = _interpolate_vertices(a_, c_, ny, N-nx);
       }
       return divided;
     }
     function _divide_triangly(a, b, c) {
-      var divided = Array.from({length: N+1}, (v, i) => new Array(N-i));
-      for ( let nx=0; nx<=N; nx++ ) for ( let ny=0; ny<=N-nx; ny++ ) {
-        if ( nx === 0 && ny === 0 )
-          divided[nx][ny] = a;
-        else if ( nx === N && ny === 0 )
-          divided[nx][ny] = b;
-        else if ( nx === 0 && ny === N )
-          divided[nx][ny] = c;
-        else {
-          let dx = b.clone().sub(a).multiplyScalar(nx/N);
-          let dy = c.clone().sub(a).multiplyScalar(ny/N);
-          divided[nx][ny] = a.clone().add(dx).add(dy);
+      var divided = Array.from({length: N+1}, (v, i) => new Array(N+1-i));
+      for ( let nx=0; nx<=N; nx++ ) {
+        let a_, c_;
+        if ( nx == 0 )
+          a_ = a, c_ = c;
+        else if ( nx == N )
+          a_ = b, c_ = b;
+        else
+          a_ = a.lerp(b, nx/N), c_ = c.lerp(b, nx/N);
+
+        for ( let ny=0; ny<=N-nx; ny++ ) {
+          if ( ny == 0 )
+            divided[nx][0] = a_;
+          else if ( ny == N-nx )
+            divided[nx][N-nx] = c_;
+          else
+            divided[nx][ny] = a_.lerp(c_, ny/(N-nx));
         }
       }
       return divided;
@@ -1135,14 +1143,14 @@ class Geometer
     }
   }
 
-  static makeEdgeHelper(geometry, face, edge) {
-    var v1 = geometry.vertices[face[edge[0]]];
-    var v2 = geometry.vertices[face[edge[1]]];
-    var dir = new THREE.Vector3().subVectors(v2, v1);
-    var len = dir.length();
-    var head = 0.05<0.4*len ? 0.05 : 0.4*len;
-    var arrow = new THREE.ArrowHelper(dir.normalize(), v1, len, 0xff0000, head);
-    return arrow;
-  }
+  // makeEdgeHelper(geometry, face, edge) {
+  //   var v1 = geometry.vertices[face[edge[0]]];
+  //   var v2 = geometry.vertices[face[edge[1]]];
+  //   var dir = new THREE.Vector3().subVectors(v2, v1);
+  //   var len = dir.length();
+  //   var head = 0.05<0.4*len ? 0.05 : 0.4*len;
+  //   var arrow = new THREE.ArrowHelper(dir.normalize(), v1, len, 0xff0000, head);
+  //   return arrow;
+  // }
 }
 
