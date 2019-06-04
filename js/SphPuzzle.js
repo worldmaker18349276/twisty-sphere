@@ -1179,13 +1179,13 @@ class SphPuzzleView
     puzzle.on("statuschanged", puzzle, event => {
       if ( puzzle.status == "ready" ) {
         for ( let track of puzzle.tracks )
-          if ( track.secret.regions )
+          if ( track.twister && track.secret && track.secret.regions )
             for ( let target of track.twister.targets )
               target.userData.draggable = true;
 
       } else {
         for ( let track of puzzle.tracks )
-          if ( track.secret.regions )
+          if ( track.twister && track.secret && track.secret.regions )
             for ( let target of track.twister.targets )
               target.userData.draggable = false;
       }

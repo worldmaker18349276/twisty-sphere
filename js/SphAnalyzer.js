@@ -3581,35 +3581,53 @@ class SphPuzzle extends Observable
 
     this.changed = true;
   }
-  slice(center, radius, elements=this.elements.slice()) {
-    this.network.setStatus("broken");
+  sliceElement(element, circle) {
+    var [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
+    if ( in_segs.length && out_segs.length ) {
+      this.network.setStatus("broken");
 
-    var circle = new SphCircle({radius, orientation:q_align(center)});
-    var new_bd = [];
+      for ( let seg of element.boundaries )
+        this.add(seg);
 
-    for ( let element of elements ) {
-      let [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
-      if ( in_segs.length && out_segs.length ) {
-        for ( let seg of element.boundaries )
-          this.add(seg);
+      let [splitted] = element.split(out_segs);
+      this.add(splitted);
 
-        let [splitted] = element.split(out_segs);
-        this.add(splitted);
-
-        new_bd.push(...in_bd, ...out_bd);
-      }
-    }
-
-    var track;
-    if ( new_bd.length )
-      if ( !new_bd[0].track )
-        if ( track = this.analyzer.buildTrack(new_bd[0]) )
+      let track;
+      if ( in_bd[0] && !in_bd[0].track )
+        if ( track = this.analyzer.buildTrack(in_bd[0]) )
           this.add(track);
 
-    this.setStatus("unprepared");
-    this.changed = true;
+      this.setStatus("unprepared");
+      this.changed = true;
 
-    return track;
+      return [element, splitted];
+
+    } else if ( in_segs.length ) {
+      return [element, undefined];
+
+    } else if ( out_segs.length ) {
+      return [undefined, element];
+
+    } else {
+      throw new Error("unknown case");
+    }
+  }
+  slice(center, radius) {
+    var circle = new SphCircle({radius, orientation:q_align(center)});
+    for ( let element of this.elements.slice() )
+      this.sliceElement(element, circle);
+
+    for ( let track of this.tracks.slice().reverse() ) {
+      let circle = track.circle;
+
+      if ( this.analyzer.cmp(radius, circle.radius) == 0
+           && this.analyzer.cmp(center, circle.center) == 0 )
+        return track;
+
+      if ( this.analyzer.cmp(radius, 2-circle.radius) == 0
+           && this.analyzer.cmp(center, circle.center.map(x => -x)) == 0 )
+        return track;
+    }
   }
   clean() {
     this.network.setStatus("broken");
@@ -3691,15 +3709,6 @@ class SphPuzzle extends Observable
     this.statuschanged = true;
   }
 
-  prepare() {
-    // decipher all tracks
-    for ( let track of this.tracks )
-      this.decipher(track);
-
-    this.setStatus("ready");
-    this.statuschanged = true;
-  }
-
   rotate(q) {
     for ( let elem of target.elements )
       for ( let seg of elem.boundaries )
@@ -3771,6 +3780,13 @@ class SphPuzzle extends Observable
 
     return track.secret;
   }
+  prepare() {
+    for ( let track of this.tracks )
+      this.decipher(track);
+
+    this.setStatus("ready");
+    this.statuschanged = true;
+  }
 
   // network
   structurize() {
@@ -3789,13 +3805,13 @@ class SphPuzzle extends Observable
       this.network.transit(knot, perms[0], config);
     }
   }
-  assemble(seg0, orientation0) {
+  assemble(seg0) {
     if ( this.network.status == "broken" )
       throw new Error("Unable to assemble puzzle without network structure!");
 
     seg0 = seg0 || this.network.knots[0].segments[0][0];
     var [knot0, index0] = this.network.indicesOf(seg0).next().value;
-    orientation0 = orientation0 || seg0.orientation.slice();
+    var orientation0 = seg0.orientation.slice();
 
     for ( let track of this.tracks.slice().reverse() )
       this.remove(track);

@@ -81,11 +81,69 @@ class ModeledSphPuzzle extends SphPuzzle
 
   mergeElements(element0, ...elements) {
     elements = Array.from(new Set(elements)).filter(elem => elem !== element0);
+    if ( elements.length == 0 )
+      return;
     super.mergeElements(element0, ...elements);
     element0.shape = element0.shape.union(...elements.map(elem => elem.shape));
     this.reshaped.add(element0);
   }
-  slice(center, radius, elements=this.elements.slice(), knife) {
+  sliceElement(element, circle, knife) {
+    var [inner, outer] = super.sliceElement(element, circle);
+
+    if ( inner && outer ) {
+      if ( Array.isArray(knife) ) {
+        outer.shape = element.shape.cutByPlane(knife[0]);
+        inner.shape = element.shape.cutByPlane(knife[1]);
+      } else {
+        outer.shape = element.shape.subtract(knife);
+        inner.shape = element.shape.intersect(knife);
+      }
+      this.reshaped.add(outer);
+
+    } else if ( inner ) {
+      if ( Array.isArray(knife) )
+        inner.shape = element.shape.cutByPlane(knife[1]);
+      else
+        inner.shape = element.shape.intersect(knife);
+      this.reshaped.add(inner);
+
+    } else if ( outer ) {
+      if ( Array.isArray(knife) )
+        outer.shape = element.shape.cutByPlane(knife[0]);
+      else
+        outer.shape = element.shape.subtract(knife);
+      this.reshaped.add(outer);
+
+    }
+
+    return [inner, outer];
+  }
+  slice(center, radius, knife) {
+    if ( !knife ) {
+      var plane = new CSG.Plane(new CSG.Vector3D(center).unit(), Math.cos(radius*Q));
+      var plane_ = plane.flipped();
+      knife = [plane, plane_];
+    }
+
+    this.network.setStatus("broken");
+
+    var circle = new SphCircle({radius, orientation:q_align(center)});
+    for ( let element of this.elements.slice() )
+      this.sliceElement(element, circle, knife);
+
+    for ( let track of this.tracks.slice().reverse() ) {
+      let circle = track.circle;
+
+      if ( this.analyzer.cmp(radius, circle.radius) == 0
+           && this.analyzer.cmp(center, circle.center) == 0 )
+        return track;
+
+      if ( this.analyzer.cmp(radius, 2-circle.radius) == 0
+           && this.analyzer.cmp(center, circle.center.map(x => -x)) == 0 )
+        return track;
+    }
+  }
+  slice(center, radius, knife) {
     this.network.setStatus("broken");
 
     var circle = new SphCircle({radius, orientation:q_align(center)});
@@ -95,7 +153,7 @@ class ModeledSphPuzzle extends SphPuzzle
     }
     var new_bd = [];
 
-    for ( let element of elements ) {
+    for ( let element of this.elements.slice() ) {
       let [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
       if ( in_segs.length && out_segs.length ) {
         for ( let seg of element.boundaries )
