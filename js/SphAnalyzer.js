@@ -3691,10 +3691,19 @@ class SphPuzzle extends Observable
     this.statuschanged = true;
   }
 
+  prepare() {
+    // decipher all tracks
+    for ( let track of this.tracks )
+      this.decipher(track);
+
+    this.setStatus("ready");
+    this.statuschanged = true;
+  }
+
   rotate(q) {
     for ( let elem of target.elements )
       for ( let seg of elem.boundaries )
-        target.rotate(q);
+        seg.rotate(q);
     this.changed = true;
   }
   twist(track, theta, hold) {

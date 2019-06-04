@@ -8,6 +8,7 @@
   <script src="js/SphAnalyzer.js"></script>
   <script src="js/SphPuzzle.js"></script>
   <script src="js/Geometer.js"></script>
+  <script src="js/csg.js"></script>
   <script src="js/ModeledSphPuzzle.js"></script>
 </head>
 <body>
@@ -16,50 +17,35 @@
 
 <script>
 
-// var texture = new THREE.TextureLoader().load("crate.gif");
-// var geometry = new THREE.BoxGeometry(2,2,2);
-// geometry.translate(1/17, 3/17, 5/17);
-// for ( let face of geometry.faces )
-//   face.materialIndex = 0;
-// var material = new THREE.MeshLambertMaterial({map:texture});
-// var shape = new THREE.Mesh(geometry, [material]);
-var puzzle = new ModeledSphPuzzle(cube());
-
-// puzzle.slice([ 1, 0, 0], Math.atan(3)/Q);
-// puzzle.slice([ 0, 1, 0], Math.atan(3)/Q);
-// puzzle.slice([ 0, 0, 1], Math.atan(3)/Q);
-// puzzle.slice([-1, 0, 0], Math.atan(3)/Q);
-// puzzle.slice([ 0,-1, 0], Math.atan(3)/Q);
-// puzzle.slice([ 0, 0,-1], Math.atan(3)/Q);
+cube = CSG.cube({center: [0, 0, 0], radius: [1.1, 1.1, 1.1]})
+  .intersect(CSG.cube({center: [ 0,-1, 0], radius: [2, 2, 2]}).setColor(1,1,1))
+  .intersect(CSG.cube({center: [ 0, 1, 0], radius: [2, 2, 2]}).setColor(1,1,0))
+  .intersect(CSG.cube({center: [-1, 0, 0], radius: [2, 2, 2]}).setColor(0,0,1))
+  .intersect(CSG.cube({center: [ 1, 0, 0], radius: [2, 2, 2]}).setColor(0,1,0))
+  .intersect(CSG.cube({center: [ 0, 0,-1], radius: [2, 2, 2]}).setColor(1,0,0))
+  .intersect(CSG.cube({center: [ 0, 0, 1], radius: [2, 2, 2]}).setColor(1,0.6,0.2));
+var puzzle = new ModeledSphPuzzle(cube);
 
 var s2 = 1/Math.sqrt(2);
-puzzle.slice([  0, s2, s2], 1/2);
-puzzle.slice([  0,-s2, s2], 1/2);
-puzzle.slice([  0, s2,-s2], 1/2);
-puzzle.slice([  0,-s2,-s2], 1/2);
-puzzle.slice([ s2,  0, s2], 1/2);
-puzzle.slice([-s2,  0, s2], 1/2);
-puzzle.slice([ s2,  0,-s2], 1/2);
-puzzle.slice([-s2,  0,-s2], 1/2);
-puzzle.slice([ s2, s2,  0], 1/2);
-puzzle.slice([-s2, s2,  0], 1/2);
-puzzle.slice([ s2,-s2,  0], 1/2);
-puzzle.slice([-s2,-s2,  0], 1/2);
+var g = 5/3;
+var radius = Math.sqrt(29)/3;
+var sphere = CSG.sphere({radius, resolution:32});
+puzzle.slice([  0, s2, s2], 0.5, undefined, sphere.translate([ 0, g, g]));
+puzzle.slice([  0,-s2, s2], 0.5, undefined, sphere.translate([ 0,-g, g]));
+puzzle.slice([  0, s2,-s2], 0.5, undefined, sphere.translate([ 0, g,-g]));
+puzzle.slice([  0,-s2,-s2], 0.5, undefined, sphere.translate([ 0,-g,-g]));
+puzzle.slice([ s2,  0, s2], 0.5, undefined, sphere.translate([ g, 0, g]));
+puzzle.slice([-s2,  0, s2], 0.5, undefined, sphere.translate([-g, 0, g]));
+puzzle.slice([ s2,  0,-s2], 0.5, undefined, sphere.translate([ g, 0,-g]));
+puzzle.slice([-s2,  0,-s2], 0.5, undefined, sphere.translate([-g, 0,-g]));
+puzzle.slice([ s2, s2,  0], 0.5, undefined, sphere.translate([ g, g, 0]));
+puzzle.slice([-s2, s2,  0], 0.5, undefined, sphere.translate([-g, g, 0]));
+puzzle.slice([ s2,-s2,  0], 0.5, undefined, sphere.translate([ g,-g, 0]));
+puzzle.slice([-s2,-s2,  0], 0.5, undefined, sphere.translate([-g,-g, 0]));
 
 puzzle.clean();
 
 var world = new ModeledSphPuzzleWorld(puzzle, "display");
-
-// setTimeout(() => {
-//   for ( let elem of puzzle.elements ) {
-//     if ( elem.shape.geometry.vertices.length ) {
-//       let number = elem.shape.geometry.vertices.length;
-//       let center = elem.shape.geometry.vertices.reduce((a, v) => a.add(v), new THREE.Vector3()).divideScalar(number);
-//       let dis = center.length();
-//       elem.shape.translateOnAxis(center.normalize(), dis/20);
-//     }
-//   }
-// }, 3000);
 
 </script>
 </body>

@@ -24,19 +24,18 @@ function animate(routine) {
 
 class Display
 {
-  constructor(container, width, height) {
-    this.width = width;
-    this.height = height;
-
+  constructor(container) {
     // renderer
     this.renderer = new THREE.WebGLRenderer({antialias:true});
-    this.renderer.setSize(width, height);
+    this.width = container.clientWidth;
+    this.height = container.clientHeight;
+    this.renderer.setSize(this.width, this.height);
     this.dom = this.renderer.domElement;
     container.appendChild(this.dom);
 
     this.scene = new THREE.Scene();
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.3));
-    this.scene.add(new THREE.AxesHelper(20));
+    // this.scene.add(new THREE.AxesHelper(20));
     this.scene.add(this.buildBackground());
 
     // navigation control
@@ -46,7 +45,7 @@ class Display
     this.trackball_lock = new Set();
 
     this.trackball = new THREE.Group();
-    this.camera = new THREE.PerspectiveCamera(40, width/height, 1, 1000);
+    this.camera = new THREE.PerspectiveCamera(40, this.width/this.height, 1, 1000);
     this.camera.add(new THREE.PointLight(0xffffff, 0.7));
     this.trackball.add(this.camera);
     this.scene.add(this.trackball);
@@ -2408,7 +2407,7 @@ class SphPuzzleWorld
     // 3D view
     var dom_3D = document.getElementById(id_display);
     if ( dom_3D ) {
-      var display = new Display(dom_3D, dom_3D.clientWidth, dom_3D.clientHeight);
+      var display = new Display(dom_3D);
       var puzzle_view = new SphPuzzleView(display, this.puzzle, this.selector);
     }
 
