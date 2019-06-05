@@ -44,6 +44,7 @@ puzzle.slice([ s2,-s2,  0], 0.5, sphere.translate([ g,-g, 0]));
 puzzle.slice([-s2,-s2,  0], 0.5, sphere.translate([-g,-g, 0]));
 
 puzzle.clean();
+puzzle.prepare();
 
 var world = new ModeledSphPuzzleWorld(puzzle, "display");
 

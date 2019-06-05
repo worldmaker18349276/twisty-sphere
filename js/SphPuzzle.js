@@ -805,11 +805,11 @@ class SphPuzzlePropBuilder
     this.puzzle = puzzle;
     this.selector = selector;
 
-    puzzle.initialize(() => this.initPuzzle(puzzle));
+    puzzle.brep.initialize(() => this.initBREP(puzzle.brep));
     puzzle.network.initialize(() => this.initNetwork(puzzle.network));
   }
 
-  initPuzzle(puzzle) {
+  initBREP(brep) {
     var colors = (function *colors() {
       while ( true ) {
         // ref: https://sashat.me/2017/01/11/list-of-20-simple-distinct-colors/
@@ -873,20 +873,20 @@ class SphPuzzlePropBuilder
       });
     }
 
-    puzzle.name = puzzle.name || "SphPuzzle";
+    brep.name = brep.name || "SphBREP";
 
-    for ( let seg of puzzle.segments )
+    for ( let seg of brep.segments )
       initSegNameProp(seg);
-    for ( let elem of puzzle.elements ) {
+    for ( let elem of brep.elements ) {
       initElemNameProp(elem);
       initColorProp(elem);
     }
-    for ( let track of puzzle.tracks )
+    for ( let track of brep.tracks )
       initTrackNameProp(track);
 
-    puzzle.on("added", SphSeg, event => initSegNameProp(event.target));
-    puzzle.on("added", SphElem, event => { initElemNameProp(event.target); initColorProp(event.target); });
-    puzzle.on("added", SphTrack, event => initTrackNameProp(event.target));
+    brep.on("added", SphSeg, event => initSegNameProp(event.target));
+    brep.on("added", SphElem, event => { initElemNameProp(event.target); initColorProp(event.target); });
+    brep.on("added", SphTrack, event => initTrackNameProp(event.target));
   }
   initNetwork(network) {
     var knot_id = (function *numbers() {
@@ -999,9 +999,9 @@ class SphPuzzlePropBuilder
     detail.push(this.link(seg.next, sel_mode, "next"));
 
     detail.push({type: "text", name: "index", get: () => {
-      if ( seg.host.network.status != "up-to-date" )
+      if ( seg.host.host.network.status != "up-to-date" )
         return "undefined";
-      var [knot, [i,j,k,l]] = seg.host.network.indicesOf(seg).next().value;
+      var [knot, [i,j,k,l]] = seg.host.host.network.indicesOf(seg).next().value;
       return `${knot.name}[${i},${j};${k},${l}]`;
     }});
 
@@ -1093,11 +1093,13 @@ class SphPuzzlePropBuilder
   }
 }
 
-class SphPuzzleView
+class SphBREPView
 {
-  constructor(display, puzzle, selector) {
+  constructor(display, brep, selector) {
     this.display = display;
     this.selector = selector;
+    this.origin = brep;
+    brep.view = this;
 
     this.root = new THREE.Object3D();
     this.display.add(this.root);
@@ -1110,11 +1112,13 @@ class SphPuzzleView
 
       this.ball.userData.hoverable = true;
       this.ball.addEventListener("click", event => {
-        if ( this.origin.network.status != "broken" ) {
+        var puzzle = this.origin.host;
+
+        if ( puzzle.network.status != "broken" ) {
           var point = event.point.toArray();
-          var sel = this.origin.grab(point);
+          var sel = puzzle.grab(point);
           if ( sel instanceof SphJoint )
-            sel = this.origin.network.fly(sel).next().value.affiliation;
+            sel = puzzle.network.fly(sel).next().value.affiliation;
           if ( event.originalEvent.ctrlKey )
             this.selector.toggle(sel);
           else
@@ -1133,22 +1137,21 @@ class SphPuzzleView
       this.display.add(this.ball, this.root);
     }
 
-    puzzle.view = this;
-    this.origin = puzzle;
-    puzzle.initialize(() => this.initView(puzzle));
+    brep.initialize(() => this.initView(brep));
     this.display.animate(this.hoverRoutine());
   }
 
   // 3D view
-  initView(puzzle) {
-    for ( let segment of puzzle.segments )
+  initView(brep) {
+    for ( let segment of brep.segments )
       this.drawSegment(segment);
-    for ( let track of puzzle.tracks )
+    for ( let track of brep.tracks )
       this.addTwister(track);
+    this.updateTwisters();
 
-    puzzle.on("added", SphSeg, event => this.drawSegment(event.target));
-    puzzle.on("removed", SphSeg, event => this.eraseSegment(event.target));
-    puzzle.on("modified", SphSeg, event => {
+    brep.on("added", SphSeg, event => this.drawSegment(event.target));
+    brep.on("removed", SphSeg, event => this.eraseSegment(event.target));
+    brep.on("modified", SphSeg, event => {
       if ( "arc" in event.record || "radius" in event.record || "angle" in event.record ) {
         this.eraseSegment(event.target);
         this.drawSegment(event.target);
@@ -1163,33 +1166,21 @@ class SphPuzzleView
           for ( let sub of seg.view.children )
             sub.material.color.set(event.target.color);
     };
-    puzzle.on("added", SphElem, recolor);
-    puzzle.on("modified", SphElem, recolor);
-    puzzle.on("recolored", SphElem, recolor);
+    brep.on("added", SphElem, recolor);
+    brep.on("modified", SphElem, recolor);
+    brep.on("recolored", SphElem, recolor);
 
-    puzzle.on("added", SphTrack, event => this.addTwister(event.target));
-    puzzle.on("removed", SphTrack, event => this.removeTwister(event.target));
-    puzzle.on("modified", SphTrack, event => {
+    brep.on("added", SphTrack, event => this.addTwister(event.target));
+    brep.on("removed", SphTrack, event => this.removeTwister(event.target));
+    brep.on("modified", SphTrack, event => {
       if ( "inner" in event.record || "outer" in event.record ) {
         this.removeTwister(event.target);
         this.addTwister(event.target);
       }
     });
 
-    puzzle.on("statuschanged", puzzle, event => {
-      if ( puzzle.status == "ready" ) {
-        for ( let track of puzzle.tracks )
-          if ( track.twister && track.secret && track.secret.regions )
-            for ( let target of track.twister.targets )
-              target.userData.draggable = true;
-
-      } else {
-        for ( let track of puzzle.tracks )
-          if ( track.twister && track.secret && track.secret.regions )
-            for ( let target of track.twister.targets )
-              target.userData.draggable = false;
-      }
-    });
+    brep.on("statuschanged", brep, event => this.updateTwisters());
+    brep.on("changed", brep, event => this.updateTwisters());
   }
   drawSegment(seg) {
     var color = seg.affiliation.color || "black";
@@ -1281,17 +1272,12 @@ class SphPuzzleView
     delete seg.view;
   }
   addTwister(track) {
-    var circle, plane, angle, moving, shifts, shifts0;
+    var circle, plane, angle, moving;
 
     var dragstart = event => {
       [circle, moving] = track.inner.includes(event.target.parent.userData.origin)
                       ? [track.inner[0].circle, track.secret.regions.inner]
                       : [track.outer[0].circle, track.secret.regions.outer];
-
-      shifts = Array.from(track.secret.pseudokeys.keys())
-          .map(kee => this.origin.analyzer.mod4(track.shift-kee)).sort();
-      shifts0 = Array.from(track.secret.passwords.keys())
-          .map(key => this.origin.analyzer.mod4(track.shift-key)).sort();
 
       var p = event.point.toArray();
       circle.shift(circle.thetaOf(p));
@@ -1312,8 +1298,8 @@ class SphPuzzleView
         return angle;
 
       angle = angle_;
-      angle = fzy_mod(angle, 4, shifts, 0.01);
-      angle = fzy_mod(angle, 4, shifts0, 0.05);
+      angle = fzy_mod(angle, 4, track.twister.shifts, 0.01);
+      angle = fzy_mod(angle, 4, track.twister.shifts0, 0.05);
       angle = fzy_mod(angle, 4, [0], 0.05);
       var rot = new THREE.Quaternion().setFromAxisAngle(plane.normal, angle*Q);
 
@@ -1326,15 +1312,13 @@ class SphPuzzleView
       var angle = drag(event);
       if ( angle !== 0 ) {
         var hold = this.origin.elements.find(elem => !moving.has(elem));
-        this.origin.twist(track, angle, hold);
+        this.origin.host.twist(track, angle, hold);
       }
     };
 
     var targets = [...track.inner, ...track.outer].map(seg => seg.view.children[3]);
     track.twister = {dragstart, drag, dragend, targets, origin:track};
     for ( let holder of targets ) {
-      if ( track.host.status == "ready" )
-        holder.userData.draggable = true;
       holder.addEventListener("dragstart", dragstart);
       holder.addEventListener("drag", drag);
       holder.addEventListener("dragend", dragend);
@@ -1344,13 +1328,30 @@ class SphPuzzleView
     var {dragstart, drag, dragend, targets} = track.twister;
     this.display.scene.traverse(holder => {
       if ( targets.includes(holder) ) {
-        holder.userData.draggable = false;
         holder.removeEventListener("dragstart", dragstart);
         holder.removeEventListener("drag", drag);
         holder.removeEventListener("dragend", dragend);
       }
     });
     delete track.twister;
+  }
+  updateTwisters() {
+    for ( let seg of this.origin.segments )
+      if ( seg.view )
+        seg.view.userData.draggable = false;
+
+    if ( this.origin.status == "ready" ) {
+      for ( let track of this.origin.tracks )
+        if ( track.twister && track.secret && track.secret.regions ) {
+          track.twister.shifts = Array.from(track.secret.pseudokeys.keys())
+              .map(kee => this.origin.analyzer.mod4(track.shift-kee)).sort();
+          track.twister.shifts0 = Array.from(track.secret.passwords.keys())
+              .map(key => this.origin.analyzer.mod4(track.shift-key)).sort();
+
+          for ( let target of track.twister.targets )
+            target.userData.draggable = true;
+        }
+    }
   }
 
   // hover/select feedback
@@ -1430,9 +1431,11 @@ class SphNetworkView
   constructor(graph, network, selector) {
     this.graph = graph;
     this.selector = selector;
+    this.origin = network;
+    network.view = this;
 
     this.graph.view.on("click", event => {
-      if ( network.status == "broken" )
+      if ( this.origin.status == "broken" )
         return;
 
       var target = event.target && event.target.origin;
@@ -1447,7 +1450,7 @@ class SphNetworkView
       }
     });
     this.graph.view.on("hoverNode", event => {
-      if ( network.status == "broken" )
+      if ( this.origin.status == "broken" )
         return;
 
       var target = event.target && event.target.origin;
@@ -1457,13 +1460,11 @@ class SphNetworkView
         this.selector.preselection = undefined;
     });
     this.graph.view.on("blurNode", event => {
-      if ( network.status == "broken" )
+      if ( this.origin.status == "broken" )
         return;
       this.selector.preselection = undefined;
     });
 
-    network.view = this;
-    this.origin = network;
     network.initialize(() => this.initView(network));
     animate(this.hoverRoutine());
   }
@@ -1651,8 +1652,10 @@ class SphNetworkView
 class SphStateView
 {
   constructor(container, network, selector) {
-    this.network = network;
+    this.container = container;
     this.selector = selector;
+    this.origin = network;
+    network.state_view = this;
 
     document.body.appendChild(css`
       .state-container>div {
@@ -1696,12 +1699,9 @@ class SphStateView
         opacity: 0.3;
       }
     `);
-    this.container = container;
     this.container.classList.add("state-container");
     this.container.addEventListener("click", () => this.selector.reselect());
 
-    network.state_view = this;
-    this.origin = network;
     network.initialize(() => this.initView(network));
     animate(this.hoverRoutine());
   }
@@ -1738,7 +1738,7 @@ class SphStateView
   }
   makeParamTable(knot) {
     var res = [];
-    var network = this.network;
+    var origin = this.origin;
 
     for ( let i=0; i<knot.model.shapes.length; i++ ) {
       let list = document.createElement("div");
@@ -1752,7 +1752,7 @@ class SphStateView
         item.textContent = knot.segments[i][j].name;
 
         item.addEventListener("wheel", function(event) {
-          if ( network.status == "broken" )
+          if ( origin.status == "broken" )
             return;
           if ( event.deltaY == 0 )
             return;
@@ -1772,7 +1772,7 @@ class SphStateView
         });
 
         item.addEventListener("dragstart", function(event) {
-          if ( network.status == "broken" )
+          if ( origin.status == "broken" )
             return;
           event.dataTransfer.setData("Text", "");
           event.dataTransfer.dropEffect = "move";
@@ -1812,14 +1812,14 @@ class SphStateView
         });
 
         item.addEventListener("mouseenter", event => {
-          if ( this.network.status == "broken" )
+          if ( this.origin.status == "broken" )
             return;
           var j = Array.from(event.target.parentNode.children).indexOf(event.target);
           this.selector.preselection = knot.jointAt([i,j]) || knot.segmentAt([i,j]).affiliation;
         });
         item.addEventListener("mouseleave", () => this.selector.preselection=undefined);
         item.addEventListener("click", event => {
-          if ( this.network.status == "broken" )
+          if ( this.origin.status == "broken" )
             return;
           var j = Array.from(event.target.parentNode.children).indexOf(event.target);
           var target = knot.jointAt([i,j]) || knot.segmentAt([i,j]).affiliation;
@@ -1875,24 +1875,24 @@ class SphStateView
     return knot.tab.querySelector(`div.list:nth-of-type(${i+1})>div.item:nth-of-type(${j+1})`);
   }
   itemsOf(target) {
-    if ( this.network.status == "broken" )
+    if ( this.origin.status == "broken" )
       return [];
 
     if ( target instanceof SphSeg ) {
-      for ( let [knot, index] of this.network.indicesOf(target) )
+      for ( let [knot, index] of this.origin.indicesOf(target) )
         return [this.getItem(knot, index)];
       console.assert(false);
 
     } else if ( target instanceof SphElem ) {
       let res = [];
-      for ( let [knot, index] of this.network.indicesOf(target) )
+      for ( let [knot, index] of this.origin.indicesOf(target) )
         res.push(this.getItem(knot, index));
       console.assert(res.length);
       return res;
 
     } else if ( target instanceof SphJoint ) {
       let res = [];
-      for ( let [knot, index] of this.network.indicesOf(target) )
+      for ( let [knot, index] of this.origin.indicesOf(target) )
         res.push(this.getItem(knot, index));
       console.assert(res.length);
       return res;
@@ -1919,7 +1919,7 @@ class SphStateView
     while ( true ) {
       yield;
 
-      if ( this.network.status == "broken" )
+      if ( this.origin.status == "broken" )
         continue;
 
       // emphasize hovered object
@@ -1948,11 +1948,11 @@ class SphStateView
 }
 
 
-class SphPuzzleTreeViewPanel
+class SphBREPTreeViewPanel
 {
-  constructor(panel, puzzle, prop_builder) {
+  constructor(panel, brep, prop_builder) {
     this.panel = panel;
-    this.puzzle = puzzle;
+    this.brep = brep;
     this.prop_builder = prop_builder;
 
     this.segments = this.panel.ctrls[this.panel.addFolder("segments")];
@@ -1960,23 +1960,23 @@ class SphPuzzleTreeViewPanel
     this.tracks = this.panel.ctrls[this.panel.addFolder("tracks")];
 
     this.data = new Map();
-    puzzle.initialize(() => this.initTree(puzzle));
+    brep.initialize(() => this.initTree(brep));
   }
 
-  initTree(puzzle) {
-    for ( let seg of puzzle.segments )
+  initTree(brep) {
+    for ( let seg of brep.segments )
       this.addSeg(seg);
-    for ( let elem of puzzle.elements )
+    for ( let elem of brep.elements )
       this.addElem(elem);
-    for ( let track of puzzle.tracks )
+    for ( let track of brep.tracks )
       this.addTrack(track);
 
-    puzzle.on("added", SphSeg, event => this.addSeg(event.target));
-    puzzle.on("added", SphElem, event => this.addElem(event.target));
-    puzzle.on("added", SphTrack, event => this.addTrack(event.target));
-    puzzle.on("removed", SphSeg, event => this.removeSeg(event.target));
-    puzzle.on("removed", SphElem, event => this.removeElem(event.target));
-    puzzle.on("removed", SphTrack, event => this.removeTrack(event.target));
+    brep.on("added", SphSeg, event => this.addSeg(event.target));
+    brep.on("added", SphElem, event => this.addElem(event.target));
+    brep.on("added", SphTrack, event => this.addTrack(event.target));
+    brep.on("removed", SphSeg, event => this.removeSeg(event.target));
+    brep.on("removed", SphElem, event => this.removeElem(event.target));
+    brep.on("removed", SphTrack, event => this.removeTrack(event.target));
   }
 
   addSeg(seg) {
@@ -2119,6 +2119,7 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
     this.addCmd(this.interCmd.bind(this), "interpolate");
     this.addCmd(this.sliceCmd.bind(this), "slice (shift+S)", "shift+S");
     this.addCmd(this.cleanCmd.bind(this), "clean (shift+C)", "shift+C");
+    this.addCmd(this.prepareCmd.bind(this), "prepare (shift+V)", "shift+V");
     this.addCmd(this.checkCmd.bind(this), "check");
 
     this.addCmd(this.structCmd.bind(this), "structurize (shift+X)", "shift+X");
@@ -2248,6 +2249,10 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
   cleanCmd(selector) {
     selector.reselect();
     this.puzzle.clean();
+    window.alert("finish!");
+  }
+  prepareCmd(selector) {
+    this.puzzle.prepare();
     window.alert("finish!");
   }
   checkCmd(selector) {
@@ -2394,8 +2399,8 @@ class SphPuzzleWorld
     var explorer = new SphPuzzleViewExplorer(this.selector, this.puzzle);
 
     // tree view
-    var pzl_panel = this.panel.ctrls[this.panel.addFolder("puzzle")];
-    this.pzl_tree = new SphPuzzleTreeViewPanel(pzl_panel, this.puzzle, prop);
+    var brep_panel = this.panel.ctrls[this.panel.addFolder("brep")];
+    this.brep_tree = new SphBREPTreeViewPanel(brep_panel, this.puzzle.brep, prop);
     var net_panel = this.panel.ctrls[this.panel.addFolder("network")];
     this.net_tree = new SphNetworkTreeViewPanel(net_panel, this.puzzle.network, prop);
 
@@ -2408,7 +2413,7 @@ class SphPuzzleWorld
     var dom_3D = document.getElementById(id_display);
     if ( dom_3D ) {
       var display = new Display(dom_3D);
-      var puzzle_view = new SphPuzzleView(display, this.puzzle, this.selector);
+      var brep_view = new SphBREPView(display, this.puzzle.brep, this.selector);
     }
 
     // network view

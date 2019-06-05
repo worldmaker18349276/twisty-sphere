@@ -1185,8 +1185,8 @@ class SphAnalyzer
    */
   interpolate(seg, theta) {
     theta = this.mod4(theta, [4, seg.arc]);
-    if ( theta >= seg.arc )
-      throw new Error("out of range of interpolation");
+    // if ( theta >= seg.arc )
+    //   throw new Error("out of range of interpolation");
 
     // make next segment started from point of interpolation
     var next_seg = new SphSeg({
@@ -1240,8 +1240,8 @@ class SphAnalyzer
    * @returns {SphSeg} The removed segment.
    */
   mergePrev(seg) {
-    if ( seg === seg.prev || !this.isTrivialVertex(seg) )
-      throw new Error("unable to merge segments");
+    // if ( seg === seg.prev || !this.isTrivialVertex(seg) )
+    //   throw new Error("unable to merge segments");
 
     // merge segment
     var merged = seg.prev;
@@ -3286,11 +3286,426 @@ class Observable extends Listenable
 
 /**
  * Fully functional spherical twisty puzzle.
- * It provide easy-to-use methods to edit, play and analyze this puzzle, but all
- * crucial algorithms should be implemented by analyzer.
- * It also equips with event system, which is useful for making GUI:
- * `{ type:"statuschanged", target:SphNetwork }`, triggered when network structure
- * is broken, up-to-date or outdated.
+ * It provide easy-to-use methods to edit, play and analyze this puzzle.  All
+ * crucial algorithms should be implemented by analyzer, and management of objects
+ * should be implemented by this class.  It is composed by three parts: BREP,
+ * network and rule.  Each part equips with event/observer system for maintaining
+ * objects, which is useful for making GUI.
+ *
+ * "BREP" is implemented by `SphSeg`, `SphElem` and `SphTrack`, maintained by
+ * `SphBREP`.  They represent the shape of elements using boundaries, which is
+ * easy to manipulate, reshape and control calculation error.  `SphTrack` describe
+ * where is able to twist, which can be finded by algorithms.  With BREP and
+ * tracks, you should be able to edit and twist this puzzle.
+ *
+ * "Network" is implemented by `SphKnot` and `SphJoint`, maintained by `SphNetwork`.
+ * It represent the symmetries and network structure of this puzzle, and parameterize
+ * this puzzle.  With aid of network structure, more algorithms is available to
+ * manipulate puzzle.  Parameterization let it be able to record the state and
+ * twisting operations of puzzle efficiently and analyzable.
+ *
+ * "Rule" is implemented by `SphConfig` and `SphTransition`, maintained by
+ * `SphRule`.  It records possible states and transitions of this puzzle.
+ *
+ * @class
+ * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
+ * @property {SphBREP} brep - BREP of this puzzle.
+ * @property {SphNetwork} network - network structure of this puzzle.
+ * @property {SphRule} rule - rule of this puzzle.
+ */
+class SphPuzzle
+{
+  constructor(analyzer=new SphAnalyzer(), elements=[new SphElem()]) {
+    this.status = "unprepared";
+    this.analyzer = analyzer;
+    this.elements = [];
+    this.segments = [];
+    this.tracks = [];
+
+    this.brep = new SphBREP(analyzer);
+    this.network = new SphNetwork(analyzer);
+    // this.rule = new SphRule(analyzer);
+    // this.brep.host = this.network.host = this.rule.host = this;
+    this.brep.host = this.network.host = this;
+
+    this.brep.init(elements);
+  }
+
+  // adjust
+  mergeVertex(seg) {
+    if ( seg === seg.prev || !this.analyzer.isTrivialVertex(seg) )
+      throw new Error("unable to merge segments");
+
+    this.analyzer.mergePrev(seg);
+    this.brep.remove(seg);
+
+    this.brep.changed = true;
+    this.brep.setStatus("unprepared");
+    this.network.setStatus("broken");
+  }
+  interpolate(seg, theta) {
+    if ( this.analyzer.mod4(theta, [4, seg.arc]) >= seg.arc )
+      throw new Error("out of range of interpolation");
+
+    this.analyzer.interpolate(seg, theta);
+    this.brep.add(seg.next);
+
+    this.brep.changed = true;
+    this.brep.setStatus("unprepared");
+    this.network.setStatus("broken");
+  }
+  mergeEdge(seg1, seg2) {
+    if ( seg1.affiliation !== seg2.affiliation || !seg1.adj.has(seg2) )
+      throw new Error("Unable to merge non-trivial edges!");
+
+    var elem = seg1.affiliation;
+    if ( seg1.track )
+      this.brep.remove(seg1.track);
+    var cover = this.analyzer.cover(seg1, seg2);
+    console.assert(cover.length > 0);
+
+    var old_boundaries = new Set(elem.boundaries);
+    this.analyzer.glueAdj(cover);
+    for ( let seg of old_boundaries ) if ( !elem.boundaries.has(seg) )
+      this.brep.remove(seg);
+    for ( let seg of elem.boundaries ) if ( !old_boundaries.has(seg) )
+      this.brep.add(seg);
+
+    this.brep.changed = true;
+    this.brep.setStatus("unprepared");
+    this.network.setStatus("broken");
+  }
+  clean() {
+    this.network.setStatus("broken");
+
+    // merge untwistable, unlockable track
+    for ( let track of this.brep.tracks ) {
+      let shields = {};
+      shields.inner = this.analyzer.raiseShield(track.inner);
+      shields.outer = this.analyzer.raiseShield(track.outer);
+      let elements1 = Array.from(new Set(shields.inner.map(seg => seg.affiliation)));
+      let elements2 = Array.from(new Set(shields.outer.map(seg => seg.affiliation)));
+
+      if ( elements1.some(elem => elements2.includes(elem)) ) {
+        let elements = Array.from(new Set([...elements1, ...elements2]));
+        this.mergeElements(...elements);
+        continue;
+      }
+
+      let passwords = this.analyzer.decipher(track, shields);
+      if ( passwords.size != 0 )
+        continue;
+
+      this.mergeElements(...elements1);
+      this.mergeElements(...elements2);
+
+      let [segments, tracks] = this.analyzer.sealTrack(track);
+      for ( let track of tracks )
+        this.remove(track);
+    }
+
+    // merge untwistable edges
+    for ( let group of this.analyzer.twistablePartOf(this.brep.elements) )
+      if ( group.length > 1 )
+        this.mergeElements(...group);
+
+    // merge sandglass tips
+    for ( let elem of this.brep.elements ) {
+      let tips = this.analyzer.findSandglassTips(elem.boundaries);
+      for ( let [seg1, seg2] of tips )
+        this.analyzer.swap(seg1, seg2, 2, 2);
+    }
+
+    // merge trivial edges
+    for ( let element of this.brep.elements ) {
+      let zippers = [];
+      let nontrivial = new Set(element.boundaries);
+      for ( let seg of nontrivial ) {
+        let subzippers = this.analyzer.findZippers(seg);
+        for ( let [seg1,,,seg2,,] of subzippers ) {
+          nontrivial.delete(seg1);
+          nontrivial.delete(seg2);
+          if ( seg1.track )
+            this.brep.remove(seg1.track);
+        }
+        zippers.push(...subzippers);
+      }
+
+      if ( zippers.length ) {
+        var old_boundaries = new Set(element.boundaries);
+        this.analyzer.glueAdj(zippers);
+        for ( let seg of old_boundaries ) if ( !element.boundaries.has(seg) )
+          this.brep.remove(seg);
+        for ( let seg of element.boundaries ) if ( !old_boundaries.has(seg) )
+          this.brep.add(seg);
+      }
+    }
+
+    // merge trivial vertices
+    for ( let element of this.brep.elements )
+      for ( let seg of element.boundaries )
+        if ( seg !== seg.prev && this.analyzer.isTrivialVertex(seg) )
+          this.mergeVertex(seg);
+
+    this.brep.changed = true;
+    this.brep.setStatus("unprepared");
+  }
+
+  // edit
+  mergeElements(element0, ...elements) {
+    if ( this.network.status != "broken" ) {
+      let joint0 = this.network.jointsOf(element0, true).next().value;
+      let joints = elements.map(elem => this.network.jointsOf(elem, true).next().value);
+      this.network.bind(joint0, ...joints);
+    }
+
+    element0.merge(...elements);
+    for ( let element of elements )
+      this.brep.remove(element);
+
+    this.brep.changed = true;
+    this.brep.setStatus("unprepared");
+
+    return element0;
+  }
+  unbandage(joint) {
+    if ( this.network.status == "broken" )
+      throw new Error("Unable to unbandage without network structure!");
+
+    if ( joint.bandage.size == 1 )
+      return;
+    this.network.unbind(joint);
+
+    var segs = Array.from(this.network.fly(joint))
+                    .flatMap(seg => Array.from(seg.walk()));
+    var elem = segs[0].affiliation;
+    var [elem0] = elem.split(segs);
+    this.brep.add(elem0);
+
+    this.brep.changed = true;
+    this.brep.setStatus("unprepared");
+
+    return elem0;
+  }
+  trim(knot) {
+    if ( this.network.status == "broken" )
+      throw new Error("Unable to trim knot without network structure!");
+
+    var joints = knot.joints.flat(2);
+    if ( joints.length > 1 ) {
+      this.network.bind(...joints);
+      joints = joints.map(joint => this.network.unfuse(joint, knot)).filter(joint => joint);
+      this.network.fuse(...joints);
+    }
+    this.network.remove(knot);
+
+    var elems = knot.segments.flat().map(seg => seg.affiliation);
+    var segs = knot.segments.flat().flatMap(seg => Array.from(seg.walk()));
+    var tracks = segs.map(seg => seg.track).filter(track => track);
+
+    for ( let track of new Set(tracks) )
+      this.brep.remove(track);
+    var elem0 = this.mergeElements(...elems);
+    elem0.withdraw(...segs);
+    for ( let seg of segs )
+      this.brep.remove(seg);
+
+    this.brep.changed = true;
+  }
+  sliceElement(element, circle) {
+    var [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
+    if ( in_segs.length && out_segs.length ) {
+      this.network.setStatus("broken");
+
+      for ( let seg of element.boundaries )
+        this.brep.add(seg);
+
+      let [splitted] = element.split(out_segs);
+      this.brep.add(splitted);
+
+      let track;
+      if ( in_bd[0] && !in_bd[0].track )
+        if ( track = this.analyzer.buildTrack(in_bd[0]) )
+          this.brep.add(track);
+
+      this.brep.changed = true;
+      this.brep.setStatus("unprepared");
+
+      return [element, splitted];
+
+    } else if ( in_segs.length ) {
+      return [element, undefined];
+
+    } else if ( out_segs.length ) {
+      return [undefined, element];
+
+    } else {
+      throw new Error("unknown case");
+    }
+  }
+  slice(center, radius) {
+    var circle = new SphCircle({radius, orientation:q_align(center)});
+    for ( let element of this.brep.elements.slice() )
+      this.sliceElement(element, circle);
+
+    for ( let track of this.brep.tracks.slice().reverse() ) {
+      let circle = track.circle;
+
+      if ( this.analyzer.cmp(radius, circle.radius) == 0
+           && this.analyzer.cmp(center, circle.center) == 0 )
+        return track;
+
+      if ( this.analyzer.cmp(radius, 2-circle.radius) == 0
+           && this.analyzer.cmp(center, circle.center.map(x => -x)) == 0 )
+        return track;
+    }
+  }
+  grab(point) {
+    if ( this.network.status == "broken" )
+      throw new Error("Unable to grab element of puzzle without network structure!");
+
+    return this.analyzer.grab(this.network.knots[0], point);
+  }
+
+  // twist
+  rotate(q) {
+    for ( let elem of this.brep.elements )
+      for ( let seg of elem.boundaries )
+        seg.rotate(q);
+    this.brep.changed = true;
+  }
+  twist(track, theta, hold) {
+    theta = this.analyzer.mod4(theta);
+    var partition = this.analyzer.rotationsOfTwist([[track, theta]], hold);
+    if ( !partition )
+      throw new Error("Untwistable!");
+
+    if ( this.network.status == "up-to-date" )
+      this.network.setStatus("outdated");
+
+    for ( let track_ of track.latches.keys() )
+      this.brep.remove(track_);
+    this.analyzer.twist([[track, theta]]);
+    for ( let track_ of track.latches.keys() )
+      this.brep.add(track_);
+
+    for ( let region of partition ) if ( region.rotation[3] != 1 )
+      for ( let elem of region.elements )
+        for ( let seg of elem.boundaries )
+          seg.rotate(region.rotation);
+
+    for ( let track_ of track.latches.keys() )
+      this.decipher(track_);
+
+    this.brep.changed = true;
+
+    return track;
+  }
+  decipher(track) {
+    track.secret = {};
+
+    var shields = {};
+    shields.inner = this.analyzer.raiseShield(track.inner);
+    shields.outer = this.analyzer.raiseShield(track.outer);
+    track.secret.passwords = this.analyzer.decipher(track, shields);
+    track.secret.passwords = new Map(Array.from(track.secret.passwords).sort((a,b) => a[0]-b[0]));
+    track.secret.pseudokeys = this.analyzer.guessKeys(track);
+    track.secret.pseudokeys = new Map(Array.from(track.secret.pseudokeys).sort((a,b) => a[0]-b[0]));
+
+    track.secret.partition = {};
+    track.secret.partition.inner = new Set(track.inner);
+    for ( let seg0 of track.secret.partition.inner ) {
+      for ( let seg of seg0.walk() )
+        track.secret.partition.inner.add(seg);
+      if ( !track.inner.includes(seg0) )
+        for ( let seg of seg0.adj.keys() )
+          track.secret.partition.inner.add(seg);
+    }
+    track.secret.partition.outer = new Set(track.outer);
+    for ( let seg0 of track.secret.partition.outer ) {
+      for ( let seg of seg0.walk() )
+        track.secret.partition.outer.add(seg);
+      if ( !track.outer.includes(seg0) )
+        for ( let seg of seg0.adj.keys() )
+          track.secret.partition.outer.add(seg);
+    }
+
+    var partition = this.analyzer.partitionBy(track.inner, track.outer);
+    if ( partition.length == 2 ) {
+      track.secret.regions = {};
+      track.secret.regions.inner = partition.find(region => region.fences.has(track.inner)).elements;
+      track.secret.regions.outer = partition.find(region => region.fences.has(track.outer)).elements;
+    }
+
+    return track.secret;
+  }
+  prepare() {
+    for ( let track of this.brep.tracks )
+      this.decipher(track);
+
+    this.brep.setStatus("ready");
+    this.brep.statuschanged = true;
+  }
+
+  // network
+  structurize() {
+    var knots = this.analyzer.structurize(this.brep.elements);
+
+    this.network.setStatus("outdated");
+    this.network.init(knots);
+  }
+  recognize() {
+    if ( this.network.status == "broken" )
+      throw new Error("Unable to recognize configuration without network structure!");
+
+    this.network.setStatus("up-to-date");
+    for ( let knot of this.network.knots ) {
+      let [config, perms] = this.analyzer.recognize(knot.model, knot.segments, []);
+      this.network.transit(knot, perms[0], config);
+    }
+  }
+  assemble(seg0) {
+    if ( this.network.status == "broken" )
+      throw new Error("Unable to assemble puzzle without network structure!");
+
+    seg0 = seg0 || this.network.knots[0].segments[0][0];
+    var [knot0, index0] = this.network.indicesOf(seg0).next().value;
+    var orientation0 = seg0.orientation.slice();
+
+    for ( let track of this.brep.tracks.slice().reverse() )
+      this.brep.remove(track);
+
+    this.network.setStatus("up-to-date");
+    this.analyzer.assemble(this.network.knots);
+    this.analyzer.orient(knot0, index0, orientation0);
+
+    for ( let seg of this.brep.segments )
+      if ( seg.track )
+        this.add(seg.track);
+    if ( this.brep.status == "ready" ) {
+      for ( let track of this.brep.tracks )
+        this.decipher(track);
+    }
+
+    this.brep.changed = true;
+  }
+  check() {
+    console.assert(this.network.status == "up-to-date");
+
+    var seg0 = this.network.knots[0].segments[0][0];
+    var [knot0, index0] = this.network.indicesOf(seg0).next().value;
+    var orientation0 = seg0.orientation.slice();
+
+    this.analyzer.assemble(this.network.knots, false);
+    this.analyzer.orient(knot0, index0, orientation0, false);
+  }
+}
+
+/**
+ * BREP of spherical twisty puzzle.
+ * It equips with event system, which is useful for making GUI:
+ * `{ type:"statuschanged", target:this }`, triggered when puzzle is ready or
+ * unprepared.
  * `{ type:"added"|"removed", target:SphSeg|SphElem|SphTrack }`, triggered after
  * adding/removing segment/element/track.
  * `{ type:"modified", target:SphSeg|SphElem|SphTrack, record:object }`,
@@ -3309,11 +3724,10 @@ class Observable extends Listenable
  * @property {SphSeg[]} segments - All segments of this puzzle.
  * @property {SphElem[]} elements - All elements of this puzzle.
  * @property {SphTrack[]} tracks - All tracks of this puzzle.
- * @property {SphNetwork} network - network structure of this puzzle.
  */
-class SphPuzzle extends Observable
+class SphBREP extends Observable
 {
-  constructor(analyzer=new SphAnalyzer(), elements=[new SphElem()]) {
+  constructor(analyzer) {
     super();
 
     this.status = "unprepared";
@@ -3321,12 +3735,9 @@ class SphPuzzle extends Observable
     this.elements = [];
     this.segments = [];
     this.tracks = [];
-    this.network = new SphNetwork();
 
     this.statuschanged = false;
     this.changed = false;
-
-    this.init(elements);
   }
 
   setStatus(status) {
@@ -3482,371 +3893,6 @@ class SphPuzzle extends Observable
 
     this.trigger("changed", this);
   }
-
-  mergeVertex(seg) {
-    this.analyzer.mergePrev(seg);
-    this.remove(seg);
-
-    this.setStatus("unprepared");
-    this.network.setStatus("broken");
-    this.changed = true;
-  }
-  interpolate(seg, theta) {
-    this.analyzer.interpolate(seg, theta);
-    this.add(seg.next);
-
-    this.setStatus("unprepared");
-    this.network.setStatus("broken");
-    this.changed = true;
-  }
-  mergeEdge(seg1, seg2) {
-    if ( seg1.affiliation !== seg2.affiliation || !seg1.adj.has(seg2) )
-      throw new Error("Unable to merge non-trivial edges!");
-
-    var elem = seg1.affiliation;
-    if ( seg1.track )
-      this.remove(seg1.track);
-    var cover = this.analyzer.cover(seg1, seg2);
-    console.assert(cover.length > 0);
-
-    var old_boundaries = new Set(elem.boundaries);
-    this.analyzer.glueAdj(cover);
-    for ( let seg of old_boundaries ) if ( !elem.boundaries.has(seg) )
-      this.remove(seg);
-    for ( let seg of elem.boundaries ) if ( !old_boundaries.has(seg) )
-      this.add(seg);
-
-    this.setStatus("unprepared");
-    this.network.setStatus("broken");
-    this.changed = true;
-  }
-
-  mergeElements(element0, ...elements) {
-    if ( this.network.status != "broken" ) {
-      let joint0 = this.network.jointsOf(element0, true).next().value;
-      let joints = elements.map(elem => this.network.jointsOf(elem, true).next().value);
-      this.network.bind(joint0, ...joints);
-    }
-
-    element0.merge(...elements);
-    for ( let element of elements )
-      this.remove(element);
-
-    this.setStatus("unprepared");
-    this.changed = true;
-
-    return element0;
-  }
-  unbandage(joint) {
-    if ( this.network.status == "broken" )
-      throw new Error("Unable to unbandage without network structure!");
-
-    if ( joint.bandage.size == 1 )
-      return;
-    this.network.unbind(joint);
-
-    var segs = Array.from(this.network.fly(joint))
-                    .flatMap(seg => Array.from(seg.walk()));
-    var elem = segs[0].affiliation;
-    var [elem0] = elem.split(segs);
-    this.add(elem0);
-
-    this.setStatus("unprepared");
-    this.changed = true;
-
-    return elem0;
-  }
-  trim(knot) {
-    if ( this.network.status == "broken" )
-      throw new Error("Unable to trim knot without network structure!");
-
-    var joints = knot.joints.flat(2);
-    if ( joints.length > 1 ) {
-      this.network.bind(...joints);
-      joints = joints.map(joint => this.network.unfuse(joint, knot)).filter(joint => joint);
-      this.network.fuse(...joints);
-    }
-    this.network.remove(knot);
-
-    var elems = knot.segments.flat().map(seg => seg.affiliation);
-    var segs = knot.segments.flat().flatMap(seg => Array.from(seg.walk()));
-    var tracks = segs.map(seg => seg.track).filter(track => track);
-
-    for ( let track of new Set(tracks) )
-      this.remove(track);
-    var elem0 = this.mergeElements(...elems);
-    elem0.withdraw(...segs);
-    for ( let seg of segs )
-      this.remove(seg);
-
-    this.changed = true;
-  }
-  sliceElement(element, circle) {
-    var [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
-    if ( in_segs.length && out_segs.length ) {
-      this.network.setStatus("broken");
-
-      for ( let seg of element.boundaries )
-        this.add(seg);
-
-      let [splitted] = element.split(out_segs);
-      this.add(splitted);
-
-      let track;
-      if ( in_bd[0] && !in_bd[0].track )
-        if ( track = this.analyzer.buildTrack(in_bd[0]) )
-          this.add(track);
-
-      this.setStatus("unprepared");
-      this.changed = true;
-
-      return [element, splitted];
-
-    } else if ( in_segs.length ) {
-      return [element, undefined];
-
-    } else if ( out_segs.length ) {
-      return [undefined, element];
-
-    } else {
-      throw new Error("unknown case");
-    }
-  }
-  slice(center, radius) {
-    var circle = new SphCircle({radius, orientation:q_align(center)});
-    for ( let element of this.elements.slice() )
-      this.sliceElement(element, circle);
-
-    for ( let track of this.tracks.slice().reverse() ) {
-      let circle = track.circle;
-
-      if ( this.analyzer.cmp(radius, circle.radius) == 0
-           && this.analyzer.cmp(center, circle.center) == 0 )
-        return track;
-
-      if ( this.analyzer.cmp(radius, 2-circle.radius) == 0
-           && this.analyzer.cmp(center, circle.center.map(x => -x)) == 0 )
-        return track;
-    }
-  }
-  clean() {
-    this.network.setStatus("broken");
-
-    // merge untwistable, unlockable track
-    for ( let track of this.tracks ) {
-      let shields = {};
-      shields.inner = this.analyzer.raiseShield(track.inner);
-      shields.outer = this.analyzer.raiseShield(track.outer);
-      let elements1 = Array.from(new Set(shields.inner.map(seg => seg.affiliation)));
-      let elements2 = Array.from(new Set(shields.outer.map(seg => seg.affiliation)));
-
-      if ( elements1.some(elem => elements2.includes(elem)) ) {
-        let elements = Array.from(new Set([...elements1, ...elements2]));
-        this.mergeElements(...elements);
-        continue;
-      }
-
-      let passwords = this.analyzer.decipher(track, shields);
-      if ( passwords.size != 0 )
-        continue;
-
-      this.mergeElements(...elements1);
-      this.mergeElements(...elements2);
-
-      let [segments, tracks] = this.analyzer.sealTrack(track);
-      for ( let track of tracks )
-        this.remove(track);
-    }
-
-    // merge untwistable edges
-    for ( let group of this.analyzer.twistablePartOf(this.elements) )
-      if ( group.length > 1 )
-        this.mergeElements(...group);
-
-    // merge sandglass tips
-    for ( let elem of this.elements ) {
-      let tips = this.analyzer.findSandglassTips(elem.boundaries);
-      for ( let [seg1, seg2] of tips )
-        this.analyzer.swap(seg1, seg2, 2, 2);
-    }
-
-    // merge trivial edges
-    for ( let element of this.elements ) {
-      let zippers = [];
-      let nontrivial = new Set(element.boundaries);
-      for ( let seg of nontrivial ) {
-        let subzippers = this.analyzer.findZippers(seg);
-        for ( let [seg1,,,seg2,,] of subzippers ) {
-          nontrivial.delete(seg1);
-          nontrivial.delete(seg2);
-          if ( seg1.track )
-            this.remove(seg1.track);
-        }
-        zippers.push(...subzippers);
-      }
-
-      if ( zippers.length ) {
-        var old_boundaries = new Set(element.boundaries);
-        this.analyzer.glueAdj(zippers);
-        for ( let seg of old_boundaries ) if ( !element.boundaries.has(seg) )
-          this.remove(seg);
-        for ( let seg of element.boundaries ) if ( !old_boundaries.has(seg) )
-          this.add(seg);
-      }
-    }
-
-    // merge trivial vertices
-    for ( let element of this.elements )
-      for ( let seg of element.boundaries )
-        if ( seg !== seg.prev && this.analyzer.isTrivialVertex(seg) )
-          this.mergeVertex(seg);
-
-    // decipher all tracks
-    for ( let track of this.tracks )
-      this.decipher(track);
-
-    this.setStatus("ready");
-    this.statuschanged = true;
-  }
-
-  rotate(q) {
-    for ( let elem of target.elements )
-      for ( let seg of elem.boundaries )
-        seg.rotate(q);
-    this.changed = true;
-  }
-  twist(track, theta, hold) {
-    theta = this.analyzer.mod4(theta);
-    var partition = this.analyzer.rotationsOfTwist([[track, theta]], hold);
-    if ( !partition )
-      throw new Error("Untwistable!");
-
-    if ( this.network.status == "up-to-date" )
-      this.network.setStatus("outdated");
-
-    for ( let track_ of track.latches.keys() )
-      this.remove(track_);
-    this.analyzer.twist([[track, theta]]);
-    for ( let track_ of track.latches.keys() )
-      this.add(track_);
-
-    for ( let region of partition ) if ( region.rotation[3] != 1 )
-      for ( let elem of region.elements )
-        for ( let seg of elem.boundaries )
-          seg.rotate(region.rotation);
-
-    for ( let track_ of track.latches.keys() )
-      this.decipher(track_);
-
-    this.changed = true;
-
-    return track;
-  }
-  decipher(track) {
-    track.secret = {};
-
-    var shields = {};
-    shields.inner = this.analyzer.raiseShield(track.inner);
-    shields.outer = this.analyzer.raiseShield(track.outer);
-    track.secret.passwords = this.analyzer.decipher(track, shields);
-    track.secret.passwords = new Map(Array.from(track.secret.passwords).sort((a,b) => a[0]-b[0]));
-    track.secret.pseudokeys = this.analyzer.guessKeys(track);
-    track.secret.pseudokeys = new Map(Array.from(track.secret.pseudokeys).sort((a,b) => a[0]-b[0]));
-
-    track.secret.partition = {};
-    track.secret.partition.inner = new Set(track.inner);
-    for ( let seg0 of track.secret.partition.inner ) {
-      for ( let seg of seg0.walk() )
-        track.secret.partition.inner.add(seg);
-      if ( !track.inner.includes(seg0) )
-        for ( let seg of seg0.adj.keys() )
-          track.secret.partition.inner.add(seg);
-    }
-    track.secret.partition.outer = new Set(track.outer);
-    for ( let seg0 of track.secret.partition.outer ) {
-      for ( let seg of seg0.walk() )
-        track.secret.partition.outer.add(seg);
-      if ( !track.outer.includes(seg0) )
-        for ( let seg of seg0.adj.keys() )
-          track.secret.partition.outer.add(seg);
-    }
-
-    var partition = this.analyzer.partitionBy(track.inner, track.outer);
-    if ( partition.length == 2 ) {
-      track.secret.regions = {};
-      track.secret.regions.inner = partition.find(region => region.fences.has(track.inner)).elements;
-      track.secret.regions.outer = partition.find(region => region.fences.has(track.outer)).elements;
-    }
-
-    return track.secret;
-  }
-  prepare() {
-    for ( let track of this.tracks )
-      this.decipher(track);
-
-    this.setStatus("ready");
-    this.statuschanged = true;
-  }
-
-  // network
-  structurize() {
-    var knots = this.analyzer.structurize(this.elements);
-
-    this.network.setStatus("outdated");
-    this.network.init(knots);
-  }
-  recognize() {
-    if ( this.network.status == "broken" )
-      throw new Error("Unable to recognize configuration without network structure!");
-
-    this.network.setStatus("up-to-date");
-    for ( let knot of this.network.knots ) {
-      let [config, perms] = this.analyzer.recognize(knot.model, knot.segments, []);
-      this.network.transit(knot, perms[0], config);
-    }
-  }
-  assemble(seg0) {
-    if ( this.network.status == "broken" )
-      throw new Error("Unable to assemble puzzle without network structure!");
-
-    seg0 = seg0 || this.network.knots[0].segments[0][0];
-    var [knot0, index0] = this.network.indicesOf(seg0).next().value;
-    var orientation0 = seg0.orientation.slice();
-
-    for ( let track of this.tracks.slice().reverse() )
-      this.remove(track);
-
-    this.network.setStatus("up-to-date");
-    this.analyzer.assemble(this.network.knots);
-    this.analyzer.orient(knot0, index0, orientation0);
-
-    for ( let seg of this.segments )
-      if ( seg.track )
-        this.add(seg.track);
-    if ( this.status == "ready" ) {
-      for ( let track of this.tracks )
-        this.decipher(track);
-    }
-
-    this.changed = true;
-  }
-  check() {
-    console.assert(this.network.status == "up-to-date");
-
-    var seg0 = this.network.knots[0].segments[0][0];
-    var [knot0, index0] = this.network.indicesOf(seg0).next().value;
-    var orientation0 = seg0.orientation.slice();
-
-    this.analyzer.assemble(this.network.knots, false);
-    this.analyzer.orient(knot0, index0, orientation0, false);
-  }
-
-  grab(point) {
-    if ( this.network.status == "broken" )
-      throw new Error("Unable to grab element of puzzle without network structure!");
-
-    return this.analyzer.grab(this.network.knots[0], point);
-  }
 }
 
 /**
@@ -3875,15 +3921,17 @@ class SphPuzzle extends Observable
  *   "up-to-date" means network structure and configuration are up-to-date;
  *   "outdated" means configuration is outdated, but network structure is still
  *   valid; "broken" means network structure is outdated.
+ * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
  * @property {SphKnot[]} knots - All knots of this network.
  * @property {SphJoint[]} joints - All joints of this network.
  */
 class SphNetwork extends Observable
 {
-  constructor() {
+  constructor(analyzer) {
     super();
 
     this.status = "broken";
+    this.analyzer = analyzer;
     this.knots = [];
     this.joints = [];
 
