@@ -33,24 +33,7 @@ class ModeledSphPuzzle extends SphPuzzle
     element.shape = shape;
 
     super(new SphAnalyzer(), [element]);
-
-    this.rotated = new Set();
-    this.reshaped = new Set();
-  }
-
-  onchange(modified) {
-    super.onchange(modified);
-
-    if ( this.rotated.size > 0 ) {
-      for ( let target of this.rotated )
-        this.trigger("rotated", target);
-      this.rotated.clear();
-    }
-    if ( this.reshaped.size > 0 ) {
-      for ( let target of this.reshaped )
-        this.trigger("reshaped", target);
-      this.reshaped.clear();
-    }
+    this.brep.ELEM_PROP.shape = elem => elem.shape;
   }
 
   rotate(q) {
@@ -60,9 +43,8 @@ class ModeledSphPuzzle extends SphPuzzle
       for ( let seg of elem.boundaries )
         seg.rotate(q);
       elem.shape = elem.shape.transform(mat);
-      this.rotated.add(elem);
     }
-    this.changed = true;
+    this.brep.changed = true;
   }
   twist(track, theta, hold) {
     var partition = this.analyzer.rotationsOfTwist([[track, theta]], hold);
@@ -74,9 +56,9 @@ class ModeledSphPuzzle extends SphPuzzle
       mat = new CSG.Matrix4x4(mat.toArray());
       for ( let elem of region.elements ) {
         elem.shape = elem.shape.transform(mat);
-        this.rotated.add(elem);
       }
     }
+    this.brep.changed = true;
   }
 
   mergeElements(element0, ...elements) {
@@ -85,7 +67,7 @@ class ModeledSphPuzzle extends SphPuzzle
       return;
     super.mergeElements(element0, ...elements);
     element0.shape = element0.shape.union(...elements.map(elem => elem.shape));
-    this.reshaped.add(element0);
+    this.brep.changed = true;
   }
   sliceElement(element, circle, knife) {
     var [inner, outer] = super.sliceElement(element, circle);
@@ -98,21 +80,21 @@ class ModeledSphPuzzle extends SphPuzzle
         outer.shape = element.shape.subtract(knife);
         inner.shape = element.shape.intersect(knife);
       }
-      this.reshaped.add(outer);
+      this.brep.changed = true;
 
     } else if ( inner ) {
       if ( Array.isArray(knife) )
         inner.shape = element.shape.cutByPlane(knife[1]);
       else
         inner.shape = element.shape.intersect(knife);
-      this.reshaped.add(inner);
+      this.brep.changed = true;
 
     } else if ( outer ) {
       if ( Array.isArray(knife) )
         outer.shape = element.shape.cutByPlane(knife[0]);
       else
         outer.shape = element.shape.subtract(knife);
-      this.reshaped.add(outer);
+      this.brep.changed = true;
 
     }
 
@@ -125,13 +107,11 @@ class ModeledSphPuzzle extends SphPuzzle
       knife = [plane, plane_];
     }
 
-    this.network.setStatus("broken");
-
     var circle = new SphCircle({radius, orientation:q_align(center)});
-    for ( let element of this.elements.slice() )
+    for ( let element of this.brep.elements.slice() )
       this.sliceElement(element, circle, knife);
 
-    for ( let track of this.tracks.slice().reverse() ) {
+    for ( let track of this.brep.tracks.slice().reverse() ) {
       let circle = track.circle;
 
       if ( this.analyzer.cmp(radius, circle.radius) == 0
@@ -143,75 +123,21 @@ class ModeledSphPuzzle extends SphPuzzle
         return track;
     }
   }
-  slice(center, radius, knife) {
-    this.network.setStatus("broken");
-
-    var circle = new SphCircle({radius, orientation:q_align(center)});
-    if ( !knife ) {
-      var plane = new CSG.Plane(new CSG.Vector3D(center).unit(), Math.cos(radius*Q));
-      var plane_ = plane.flipped();
-    }
-    var new_bd = [];
-
-    for ( let element of this.elements.slice() ) {
-      let [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
-      if ( in_segs.length && out_segs.length ) {
-        for ( let seg of element.boundaries )
-          this.add(seg);
-        let [splitted] = element.split(out_segs);
-        if ( !knife ) {
-          splitted.shape = element.shape.cutByPlane(plane);
-          element.shape = element.shape.cutByPlane(plane_);
-        } else {
-          splitted.shape = element.shape.subtract(knife);
-          element.shape = element.shape.intersect(knife);
-        }
-      
-        this.add(splitted);
-        this.reshaped.add(element);
-      
-      } else if ( in_segs.length ) {
-        if ( !knife )
-          element.shape = element.shape.cutByPlane(plane_);
-        else
-          element.shape = element.shape.intersect(knife);
-        this.reshaped.add(element);
-      
-      } else if ( out_segs.length ) {
-        if ( !knife )
-          element.shape = element.shape.cutByPlane(plane);
-        else
-          element.shape = element.shape.subtract(knife);
-        this.reshaped.add(element);
-      }
-
-      new_bd.push(...in_bd, ...out_bd);
-    }
-
-    var track;
-    if ( new_bd.length )
-      if ( !new_bd[0].track )
-        if ( track = this.analyzer.buildTrack(new_bd[0]) )
-          this.add(track);
-
-    this.setStatus("unprepared");
-    this.changed = true;
-
-    return track;
-  }
-  cut(knife, elements=this.elements.slice()) {
-    for ( let element of elements ) {
+  cut(knife) {
+    for ( let element of this.brep.elements ) {
       element.shape = element.shape.intersect(knife);
-      this.reshaped.add(element);
     }
+    this.brep.changed = true;
   }
 }
 
 class ModeledSphPuzzleView
 {
-  constructor(display, puzzle, selector) {
+  constructor(display, brep, selector) {
     this.display = display;
     this.selector = selector;
+    this.raw = brep;
+    brep.model_view = this;
 
     this.root = new THREE.Object3D();
     this.display.add(this.root);
@@ -252,7 +178,7 @@ class ModeledSphPuzzleView
       }
 
       var target = drag_spot.object.userData.raw;
-      if ( puzzle.status != "ready" || event.ctrlKey ) {
+      if ( brep.status != "ready" || event.ctrlKey ) {
         this.selector.preselection = target;
         this.current_twister = undefined;
         this.moving = undefined;
@@ -278,28 +204,30 @@ class ModeledSphPuzzleView
         }
     });
 
-    puzzle.model_view = this;
-    this.raw = puzzle;
-    puzzle.initialize(() => this.initView(puzzle));
+    brep.initialize(() => this.initView(brep));
     this.display.animate(this.hoverRoutine());
   }
 
   // 3D view
-  initView(puzzle) {
-    for ( let element of puzzle.elements )
+  initView(brep) {
+    for ( let element of brep.elements )
       this.drawElement(element);
-    for ( let track of puzzle.tracks )
+    for ( let track of brep.tracks )
       this.addTwister(track);
     this.updateTwisters();
 
-    puzzle.on("added", SphElem, event => this.drawElement(event.target));
-    puzzle.on("removed", SphElem, event => this.eraseElement(event.target));
-    puzzle.on("reshaped", SphElem, event => (this.eraseElement(event.target), this.drawElement(event.target)));
-    puzzle.on("rotated", SphElem, event => (this.eraseElement(event.target), this.drawElement(event.target)));
-    puzzle.on("added", SphTrack, event => this.addTwister(event.target));
-    puzzle.on("removed", SphTrack, event => this.removeTwister(event.target));
-    puzzle.on("statuschanged", puzzle, event => this.updateTwisters());
-    puzzle.on("changed", puzzle, event => this.updateTwisters());
+    brep.on("added", SphElem, event => this.drawElement(event.target));
+    brep.on("removed", SphElem, event => this.eraseElement(event.target));
+    brep.on("modified", SphElem, event => {
+      if ( "shape" in event.record ) {
+        this.eraseElement(event.target);
+        this.drawElement(event.target);
+      }
+    });
+    brep.on("added", SphTrack, event => this.addTwister(event.target));
+    brep.on("removed", SphTrack, event => this.removeTwister(event.target));
+    brep.on("statuschanged", brep, event => this.updateTwisters());
+    brep.on("changed", brep, event => this.updateTwisters());
   }
   drawElement(element) {
     var geo = toGeometry(element.shape);
@@ -367,7 +295,7 @@ class ModeledSphPuzzleView
 
       if ( angle !== 0 ) {
         var hold = this.raw.elements.find(elem => !this.moving.has(elem));
-        this.raw.twist(track, angle, hold);
+        this.raw.host.twist(track, angle, hold);
       }
     };
 
@@ -486,6 +414,6 @@ class ModeledSphPuzzleWorld
 
     var dom = document.getElementById(id_display);
     var display = new Display(dom);
-    new ModeledSphPuzzleView(display, this.puzzle, this.selector);
+    var model_view = new ModeledSphPuzzleView(display, this.puzzle.brep, this.selector);
   }
 }

@@ -3782,6 +3782,28 @@ class SphBREP extends Observable
 
     this.statuschanged = false;
     this.changed = false;
+
+    this.SEG_PROP = {
+      arc: seg => seg.arc,
+      radius: seg => seg.radius,
+      angle: seg => seg.angle,
+      prev: seg => seg.prev,
+      next: seg => seg.next,
+      adj: seg => Array.from(seg.adj),
+      track: seg => seg.track,
+      affiliation: seg => seg.affiliation,
+      orientation: seg => seg.orientation.slice()
+    };
+    this.ELEM_PROP = {
+      boundaries: elem => Array.from(elem.boundaries)
+    };
+    this.TRACK_PROP = {
+      shift: track => track.shift,
+      inner: track => track.inner.slice(),
+      outer: track => track.outer.slice(),
+      latches: track => Array.from(track.latches)
+        .map(([track_, latch]) => [track_, latch.center, latch.arc, latch.angle])
+    };
   }
 
   setStatus(status) {
@@ -3866,35 +3888,13 @@ class SphBREP extends Observable
   }
 
   get observed() {
-    const seg_prop = {
-      arc: seg => seg.arc,
-      radius: seg => seg.radius,
-      angle: seg => seg.angle,
-      prev: seg => seg.prev,
-      next: seg => seg.next,
-      adj: seg => Array.from(seg.adj),
-      track: seg => seg.track,
-      affiliation: seg => seg.affiliation,
-      orientation: seg => seg.orientation.slice()
-    };
-    const elem_prop = {
-      boundaries: elem => Array.from(elem.boundaries)
-    };
-    const track_prop = {
-      shift: track => track.shift,
-      inner: track => track.inner.slice(),
-      outer: track => track.outer.slice(),
-      latches: track => Array.from(track.latches)
-        .map(([track_, latch]) => [track_, latch.center, latch.arc, latch.angle])
-    };
-
     var observed = new Map();
     for ( let target of this.segments )
-      observed.set(target, seg_prop);
+      observed.set(target, this.SEG_PROP);
     for ( let target of this.elements )
-      observed.set(target, elem_prop);
+      observed.set(target, this.ELEM_PROP);
     for ( let target of this.tracks )
-      observed.set(target, track_prop);
+      observed.set(target, this.TRACK_PROP);
     return observed;
   }
   onchange(modified) {
@@ -3981,6 +3981,16 @@ class SphNetwork extends Observable
 
     this.statuschanged = false;
     this.changed = false;
+
+    this.KNOT_PROP = {
+      segments: knot => knot.segments.map(a => a.slice()),
+      joints: knot => knot.joints.map(a => a.map(b => b.slice())),
+      configuration: knot => knot.configuration
+    };
+    this.JOINT_PROP = {
+      ports: joint => Array.from(joint.ports).map(([knot, q]) => [knot, q.slice()]),
+      bandage: joint => Array.from(joint.bandage)
+    };
   }
 
   setStatus(status) {
@@ -4047,21 +4057,11 @@ class SphNetwork extends Observable
   }
 
   get observed() {
-    const knot_prop = {
-      segments: knot => knot.segments.map(a => a.slice()),
-      joints: knot => knot.joints.map(a => a.map(b => b.slice())),
-      configuration: knot => knot.configuration
-    };
-    const joint_prop = {
-      ports: joint => Array.from(joint.ports).map(([knot, q]) => [knot, q.slice()]),
-      bandage: joint => Array.from(joint.bandage)
-    };
-
     var observed = new Map();
     for ( let target of this.knots )
-      observed.set(target, knot_prop);
+      observed.set(target, this.KNOT_PROP);
     for ( let target of this.joints )
-      observed.set(target, joint_prop);
+      observed.set(target, this.JOINT_PROP);
     return observed;
   }
   onchange(modified) {
