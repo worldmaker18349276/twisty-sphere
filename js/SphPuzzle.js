@@ -1155,9 +1155,9 @@ class SphBREPView
       if ( "arc" in event.record || "radius" in event.record || "angle" in event.record ) {
         this.eraseSegment(event.target);
         this.drawSegment(event.target);
-      } else if ( "orientation" in event.record ) {
-        event.target.view.quaternion.set(...event.target.orientation);
       }
+      if ( "orientation" in event.record )
+        event.target.view.quaternion.set(...event.target.orientation);
     });
 
     var recolor = event => {
@@ -1504,7 +1504,7 @@ class SphNetworkView
     network.on("modified", SphJoint, event => {
       if ( "ports" in event.record )
         this.updateJoint(event.target);
-      else if ( "bandage" in event.record )
+      if ( "bandage" in event.record )
         this.updateBandage(event.target);
     });
   }
@@ -1566,6 +1566,8 @@ class SphNetworkView
     delete knot.node_id;
   }
   eraseJoint(joint) {
+    if ( this.graph.getNode(joint.node_id).bandage_id )
+      this.ungroupJoint(joint);
     this.graph.removeNode(joint.node_id);
     delete joint.node_id;
   }

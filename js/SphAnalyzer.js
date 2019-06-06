@@ -3456,7 +3456,13 @@ class SphPuzzle
     if ( this.network.status != "broken" ) {
       let joint0 = this.network.jointsOf(element0, true).next().value;
       let joints = elements.map(elem => this.network.jointsOf(elem, true).next().value);
-      this.network.bind(joint0, ...joints);
+
+      this.alignJoint(joint0);
+      for ( let joint of joints ) {
+        this.alignJoint(joint);
+        joint0.bind(joint);
+      }
+      this.network.changed = true;
     }
 
     element0.merge(...elements);
@@ -3474,7 +3480,7 @@ class SphPuzzle
 
     if ( joint.bandage.size == 1 )
       return;
-    this.network.unbind(joint);
+    joint.unbind();
 
     var segs = Array.from(this.network.fly(joint))
                     .flatMap(seg => Array.from(seg.walk()));
@@ -3482,6 +3488,7 @@ class SphPuzzle
     var [elem0] = elem.split(segs);
     this.brep.add(elem0);
 
+    this.network.changed = true;
     this.brep.changed = true;
     this.brep.setStatus("unprepared");
 
@@ -3493,9 +3500,32 @@ class SphPuzzle
 
     var joints = knot.joints.flat(2);
     if ( joints.length > 1 ) {
-      this.network.bind(...joints);
-      joints = joints.map(joint => this.network.unfuse(joint, knot)).filter(joint => joint);
-      this.network.fuse(...joints);
+      // bind
+      knot.align(knot.indexOf(joints[0]));
+      for ( let joint of joints.slice(1) ) {
+        knot.align(knot.indexOf(joint));
+        joints[0].bind(joint);
+      }
+
+      // unfuse
+      let fusible = [];
+      for ( let joint of joints ) {
+        joint.unfuse(knot);
+        if ( joint.ports.size == 0 ) {
+          joint.unbind();
+          this.network.remove(joint);
+        } else {
+          fusible.push(joint);
+        }
+      }
+
+      // fuse
+      if ( fusible.length > 1 ) {
+        for ( let joint of fusible.slice(1) ) {
+          fusible[0].fuse(joint);
+          this.network.remove(joint);
+        }
+      }
     }
     this.network.remove(knot);
 
@@ -3505,12 +3535,20 @@ class SphPuzzle
 
     for ( let track of new Set(tracks) )
       this.brep.remove(track);
-    var elem0 = this.mergeElements(...elems);
-    elem0.withdraw(...segs);
+
+    // merge
+    elems[0].merge(...elems.slice(1));
+    for ( let elem of elems.slice(1) )
+      this.brep.remove(elem);
+
+    // withdraw
+    elems[0].withdraw(...segs);
     for ( let seg of segs )
       this.brep.remove(seg);
 
+    this.network.changed = true;
     this.brep.changed = true;
+    this.brep.setStatus("unprepared");
   }
   sliceElement(element, circle) {
     var [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
@@ -3648,6 +3686,12 @@ class SphPuzzle
   }
 
   // network
+  alignJoint(joint) {
+    var knot = joint.ports.keys().next().value;
+    knot.align(knot.indexOf(joint));
+    this.network.changed = true;
+  }
+
   structurize() {
     var knots = this.analyzer.structurize(this.brep.elements);
 
@@ -4049,72 +4093,6 @@ class SphNetwork extends Observable
         this.trigger("modified", target, {record});
 
     this.trigger("changed", this);
-  }
-
-  makeJoint(knot, index) {
-    console.assert(this.knots.includes(knot));
-    var joint = knot.jointAt(index, false);
-    if ( !joint ) {
-      joint = knot.jointAt(index, true);
-      this.add(joint);
-    }
-    return joint;
-  }
-  alignJoint(joint) {
-    var knot = joint.ports.keys().next().value;
-    knot.align(knot.indexOf(joint));
-    this.changed = true;
-  }
-
-  fuse(...joints) {
-    joints = Array.from(new Set(joints));
-    if ( joints.length <= 1 )
-      return;
-
-    this.bind(...joints);
-    for ( let joint of joints.slice(1) )
-      joints[0].fuse(joint);
-
-    for ( let joint of joints.slice(1) )
-      this.remove(joint);
-    this.changed = true;
-
-    return joints[0];
-  }
-  unfuse(joint, knot) {
-    if ( !joint.ports.has(knot) )
-      return;
-    joint.unfuse(knot);
-    this.changed = true;
-    if ( joint.ports.size == 0 ) {
-      this.unbind(joint);
-      this.remove(joint);
-      return;
-    } else {
-      return joint;
-    }
-  }
-  bind(...joints) {
-    var bandages = Array.from(new Set(joints.map(joint => joint.bandage)));
-    if ( bandages.length <= 1 )
-      return;
-    joints = bandages.map(bandage => bandage.values().next().value);
-
-    for ( let joint of joints )
-      this.alignJoint(joint);
-
-    for ( let joint of joints.slice(1) )
-      joints[0].bind(joint);
-
-    this.changed = true;
-
-    return joints[0].bandage;
-  }
-  unbind(joint) {
-    if ( joint.bandage.size == 1 )
-      return;
-    joint.unbind();
-    this.changed = true;
   }
 
   *indicesOf(target) {
