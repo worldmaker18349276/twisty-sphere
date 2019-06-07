@@ -3613,7 +3613,6 @@ class SphPuzzle
     this.brep.changed = true;
   }
   twist(track, theta, hold) {
-    theta = this.analyzer.mod4(theta);
     var partition = this.analyzer.rotationsOfTwist([[track, theta]], hold);
     if ( !partition )
       throw new Error("Untwistable!");

@@ -295,10 +295,10 @@ class ModeledSphPuzzleView
       if ( Number.isNaN(angle_) )
         return angle;
 
-      angle = angle_;
-      angle = fzy_mod(angle, 4, this.current_twister.shifts, 0.01);
-      angle = fzy_mod(angle, 4, this.current_twister.shifts0, 0.05);
-      angle = fzy_mod(angle, 4, [0], 0.05);
+      angle = angle + fzy_mod(angle_-angle+2, 4) - 2;
+      angle = fzy_mod(angle, 8, this.current_twister.shifts, 0.01);
+      angle = fzy_mod(angle, 8, this.current_twister.shifts0, 0.05);
+      angle = fzy_mod(angle, 8, [0, 4], 0.05);
       var rot = new THREE.Quaternion().setFromAxisAngle(plane.normal, angle*Q);
 
       for ( let elem of this.moving )
@@ -326,8 +326,10 @@ class ModeledSphPuzzleView
       for ( let track of this.raw.tracks ) if ( track.secret.regions ) {
         track.twister.shifts = Array.from(track.secret.pseudokeys.keys())
             .map(kee => this.raw.analyzer.mod4(track.shift-kee)).sort();
+        track.twister.shifts.push(...track.twister.shifts.map(kee => kee+4));
         track.twister.shifts0 = Array.from(track.secret.passwords.keys())
             .map(key => this.raw.analyzer.mod4(track.shift-key)).sort();
+        track.twister.shifts0.push(...track.twister.shifts0.map(kee => kee+4));
         track.twister.circle = track.circle;
 
         this.twisters.push([track.twister, track.circle.center, track.secret.regions.inner]);
@@ -430,6 +432,6 @@ class ModeledSphPuzzleWorld
 
     var dom = document.getElementById(id_display);
     var display = new Display(dom);
-    var model_view = new ModeledSphPuzzleView(display, this.puzzle.brep, this.selector);
+    this.model_view = new ModeledSphPuzzleView(display, this.puzzle.brep, this.selector);
   }
 }

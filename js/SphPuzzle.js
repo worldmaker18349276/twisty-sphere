@@ -259,7 +259,7 @@ class Display
     var background_material = new THREE.MeshBasicMaterial({color:0xffffff});
     background_material.side = THREE.DoubleSide;
     // broken noise, made by http://bg.siteorigin.com/
-    var background_texture = new THREE.TextureLoader().load("background.png");
+    var background_texture = new THREE.TextureLoader().load("/background.png");
     background_texture.wrapS = THREE.RepeatWrapping;
     background_texture.wrapT = THREE.RepeatWrapping;
     background_texture.repeat = new THREE.Vector2(2.5, 2.5);
@@ -2390,7 +2390,7 @@ class SphPuzzleWorld
     this.selector = new Selector();
 
     // prop builder
-    var prop = new SphPuzzlePropBuilder(this.puzzle, this.selector);
+    this.prop = new SphPuzzlePropBuilder(this.puzzle, this.selector);
 
     // panel
     this.panel = new Panel();
@@ -2398,37 +2398,37 @@ class SphPuzzleWorld
     var cmd_panel = this.panel.ctrls[this.panel.addFolder("commands")];
     this.cmd = new SphPuzzleWorldCmdMenu(cmd_panel, this.selector, this.puzzle);
 
-    var explorer = new SphPuzzleViewExplorer(this.selector, this.puzzle);
+    this.explorer = new SphPuzzleViewExplorer(this.selector, this.puzzle);
 
     // tree view
     var brep_panel = this.panel.ctrls[this.panel.addFolder("brep")];
-    this.brep_tree = new SphBREPTreeViewPanel(brep_panel, this.puzzle.brep, prop);
+    this.brep_tree = new SphBREPTreeViewPanel(brep_panel, this.puzzle.brep, this.prop);
     var net_panel = this.panel.ctrls[this.panel.addFolder("network")];
-    this.net_tree = new SphNetworkTreeViewPanel(net_panel, this.puzzle.network, prop);
+    this.net_tree = new SphNetworkTreeViewPanel(net_panel, this.puzzle.network, this.prop);
 
     var sel_panel = this.panel.ctrls[this.panel.addFolder("selections", false)];
-    this.sel = new SelectPanel(sel_panel, this.selector, prop);
+    this.sel = new SelectPanel(sel_panel, this.selector, this.prop);
     var detail_panel = this.panel.ctrls[this.panel.addFolder("detail", true)];
-    this.detail = new DetailPanel(detail_panel, this.selector, prop);
+    this.detail = new DetailPanel(detail_panel, this.selector, this.prop);
 
     // 3D view
     var dom_3D = document.getElementById(id_display);
     if ( dom_3D ) {
-      var display = new Display(dom_3D);
-      var brep_view = new SphBREPView(display, this.puzzle.brep, this.selector);
+      this.display = new Display(dom_3D);
+      this.brep_view = new SphBREPView(this.display, this.puzzle.brep, this.selector);
     }
 
     // network view
     var dom_net = document.getElementById(id_network);
     if ( dom_net ) {
-      var graph = new Graph(dom_net);
-      var network_view = new SphNetworkView(graph, this.puzzle.network, this.selector);
+      this.graph = new Graph(dom_net);
+      this.network_view = new SphNetworkView(this.graph, this.puzzle.network, this.selector);
     }
 
     // state view
     var dom_state = document.getElementById(id_state);
     if ( dom_state ) {
-      var state_view = new SphStateView(dom_state, this.puzzle.network, this.selector);
+      this.state_view = new SphStateView(dom_state, this.puzzle.network, this.selector);
     }
   }
 }

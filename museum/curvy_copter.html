@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>twisty sphere - curvy copter</title>
+  <meta charset="utf-8">
+  <script src="../js/three.min.js"></script>
+  <script src="../js/dat.gui.min.js"></script>
+  <script src="../js/SphAnalyzer.js"></script>
+  <script src="../js/SphPuzzle.js"></script>
+  <script src="../js/Geometer.js"></script>
+  <script src="../js/csg.js"></script>
+  <script src="../js/ModeledSphPuzzle.js"></script>
+</head>
+<body>
+
+<div id="display" style="width:600px;height:600px;"></div>
+
+<script>
+
+cube = CSG.cube({center: [0, 0, 0], radius: [1.1, 1.1, 1.1]})
+  .intersect(CSG.cube({center: [ 0,-1, 0], radius: [2, 2, 2]}).setColor(1,1,1))
+  .intersect(CSG.cube({center: [ 0, 1, 0], radius: [2, 2, 2]}).setColor(1,1,0))
+  .intersect(CSG.cube({center: [-1, 0, 0], radius: [2, 2, 2]}).setColor(0,0,1))
+  .intersect(CSG.cube({center: [ 1, 0, 0], radius: [2, 2, 2]}).setColor(0,1,0))
+  .intersect(CSG.cube({center: [ 0, 0,-1], radius: [2, 2, 2]}).setColor(1,0,0))
+  .intersect(CSG.cube({center: [ 0, 0, 1], radius: [2, 2, 2]}).setColor(1,0.6,0.2));
+var puzzle = new ModeledSphPuzzle(cube);
+
+var s2 = 1/Math.sqrt(2);
+var g = 5/3;
+var radius = Math.sqrt(29)/3;
+var sphere = CSG.sphere({radius, resolution:32});
+puzzle.slice([  0, s2, s2], 0.5, sphere.translate([ 0, g, g]));
+puzzle.slice([  0,-s2, s2], 0.5, sphere.translate([ 0,-g, g]));
+puzzle.slice([  0, s2,-s2], 0.5, sphere.translate([ 0, g,-g]));
+puzzle.slice([  0,-s2,-s2], 0.5, sphere.translate([ 0,-g,-g]));
+puzzle.slice([ s2,  0, s2], 0.5, sphere.translate([ g, 0, g]));
+puzzle.slice([-s2,  0, s2], 0.5, sphere.translate([-g, 0, g]));
+puzzle.slice([ s2,  0,-s2], 0.5, sphere.translate([ g, 0,-g]));
+puzzle.slice([-s2,  0,-s2], 0.5, sphere.translate([-g, 0,-g]));
+puzzle.slice([ s2, s2,  0], 0.5, sphere.translate([ g, g, 0]));
+puzzle.slice([-s2, s2,  0], 0.5, sphere.translate([-g, g, 0]));
+puzzle.slice([ s2,-s2,  0], 0.5, sphere.translate([ g,-g, 0]));
+puzzle.slice([-s2,-s2,  0], 0.5, sphere.translate([-g,-g, 0]));
+
+puzzle.clean();
+puzzle.prepare();
+
+var world = new ModeledSphPuzzleWorld(puzzle, "display");
+
+</script>
+</body>
+</html>

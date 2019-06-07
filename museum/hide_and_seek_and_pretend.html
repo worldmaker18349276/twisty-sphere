@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>twisty sphere - hide & seek & pretend</title>
+  <meta charset="utf-8">
+  <script src="../js/three.min.js"></script>
+  <script src="../js/dat.gui.min.js"></script>
+  <script src="../js/SphAnalyzer.js"></script>
+  <script src="../js/SphPuzzle.js"></script>
+  <script src="../js/Geometer.js"></script>
+  <script src="../js/csg.js"></script>
+  <script src="../js/ModeledSphPuzzle.js"></script>
+</head>
+<body>
+
+<div id="display" style="width:600px;height:600px;"></div>
+
+<script>
+
+cube = CSG.cube({center: [0, 0, 0], radius: [1.1, 1.1, 1.1]})
+  .intersect(CSG.cube({center: [ 0,-1, 0], radius: [2, 2, 2]}).setColor(1,1,1))
+  .intersect(CSG.cube({center: [ 0, 1, 0], radius: [2, 2, 2]}).setColor(1,1,0))
+  .intersect(CSG.cube({center: [-1, 0, 0], radius: [2, 2, 2]}).setColor(0,0,1))
+  .intersect(CSG.cube({center: [ 1, 0, 0], radius: [2, 2, 2]}).setColor(0,1,0))
+  .intersect(CSG.cube({center: [ 0, 0,-1], radius: [2, 2, 2]}).setColor(1,0,0))
+  .intersect(CSG.cube({center: [ 0, 0, 1], radius: [2, 2, 2]}).setColor(1,0.6,0.2));
+var puzzle = new ModeledSphPuzzle(cube);
+
+var x = Math.atan(3)/Q;
+puzzle.slice([ 1, 0, 0], x);
+puzzle.slice([-1, 0, 0], x);
+puzzle.slice([ 0, 1, 0], x);
+puzzle.slice([ 0,-1, 0], x);
+puzzle.slice([ 0, 0, 1], x);
+puzzle.slice([ 0, 0,-1], x);
+
+puzzle.clean();
+puzzle.prepare();
+
+var world = new ModeledSphPuzzleWorld(puzzle, "display");
+
+function hideNseekNpretend(elem) {
+  var q0 = q_inv(world.model_view.display.trackball.quaternion.toArray());
+
+  for ( let face of elem.model_view.geometry.faces ) {
+    let q1 = elem.model_view.quaternion.toArray();
+    if ( !face.original_color ) {
+      face.original_color = face.color.getHSL();
+      if ( face.normal.x == 0 && face.normal.y == 0 && face.normal.z == 0 )
+        elem.model_view.geometry.computeFaceNormals();
+      face.quaternion = q_align(face.normal.toArray());
+    }
+
+    let q = q_mul(q1, q_mul(face.quaternion, q0));
+    let t = Math.abs(Math.atan2(norm(q), q[3])/(2*Math.PI));
+    let c = (Math.cos(4*Math.PI*t) + 1.1)/2.1;
+    let {h, s, l} = face.original_color;
+    face.color.setHSL((h+t)%1, s, l*c);
+  }
+  elem.model_view.geometry.colorsNeedUpdate = true;
+}
+world.model_view.display.trackball.quaternion.onChange(() => {
+  for ( let elem of puzzle.brep.elements )
+    hideNseekNpretend(elem);
+});
+puzzle.brep.initialize(() => {
+  for ( let elem of puzzle.brep.elements ) {
+    hideNseekNpretend(elem);
+    elem.model_view.quaternion.onChange(() => hideNseekNpretend(elem));
+  }
+
+  puzzle.brep.on("added", SphElem, event => {
+    var elem = event.target;
+    hideNseekNpretend([elem]);
+    elem.model_view.quaternion.onChange(() => hideNseekNpretend(elem));
+  });
+});
+
+</script>
+</body>
+</html>
