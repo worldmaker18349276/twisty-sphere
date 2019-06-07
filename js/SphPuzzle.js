@@ -259,7 +259,7 @@ class Display
     var background_material = new THREE.MeshBasicMaterial({color:0xffffff});
     background_material.side = THREE.DoubleSide;
     // broken noise, made by http://bg.siteorigin.com/
-    var background_texture = new THREE.TextureLoader().load("/background.png");
+    var background_texture = new THREE.TextureLoader().load("/twisty-sphere/background.png");
     background_texture.wrapS = THREE.RepeatWrapping;
     background_texture.wrapT = THREE.RepeatWrapping;
     background_texture.repeat = new THREE.Vector2(2.5, 2.5);
