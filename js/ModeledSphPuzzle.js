@@ -24,6 +24,11 @@ function toGeometry(csg) {
   }
   return geometry;
 }
+function rotateCSG(csg, q) {
+  var mat = new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion(...q));
+  mat = new CSG.Matrix4x4(mat.toArray());
+  return csg.transform(mat);
+}
 
 
 class ModeledSphPuzzle extends SphPuzzle
@@ -31,18 +36,18 @@ class ModeledSphPuzzle extends SphPuzzle
   constructor(shape=CSG.sphere({resolution:32})) {
     var element = new SphElem();
     element.shape = shape;
+    element.orientation = [0,0,0,1];
 
     super(new SphAnalyzer(), [element]);
     this.brep.ELEM_PROP.shape = elem => elem.shape;
+    this.brep.ELEM_PROP.orientation = elem => Array.from(elem.orientation);
   }
 
   rotate(q) {
-    var mat = new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion(...q));
-    mat = new CSG.Matrix4x4(mat.toArray());
     for ( let elem of target.elements ) {
       for ( let seg of elem.boundaries )
         seg.rotate(q);
-      elem.shape = elem.shape.transform(mat);
+      q_mul(quaternion, elem.orientation, elem.orientation);
     }
     this.brep.changed = true;
   }
@@ -50,35 +55,38 @@ class ModeledSphPuzzle extends SphPuzzle
     var partition = this.analyzer.rotationsOfTwist([[track, theta]], hold);
 
     super.twist(track, theta, hold);
-
-    for ( let region of partition ) if ( region.rotation[3] != 1 ) {
-      let mat = new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion(...region.rotation));
-      mat = new CSG.Matrix4x4(mat.toArray());
-      for ( let elem of region.elements ) {
-        elem.shape = elem.shape.transform(mat);
-      }
-    }
+    for ( let region of partition ) if ( region.rotation[3] != 1 )
+      for ( let elem of region.elements )
+        q_mul(region.rotation, elem.orientation, elem.orientation);
     this.brep.changed = true;
   }
 
-  mergeElements(element0, ...elements) {
-    elements = Array.from(new Set(elements)).filter(elem => elem !== element0);
-    if ( elements.length == 0 )
+  mergeElements(...elements) {
+    elements = Array.from(new Set(elements));
+    if ( elements.length <= 1 )
       return;
-    super.mergeElements(element0, ...elements);
-    element0.shape = element0.shape.union(...elements.map(elem => elem.shape));
+    super.mergeElements(...elements);
+    var q0 = q_inv(elements[0].orientation);
+    var shapes = elements.slice(1).map(elem => rotateCSG(elem.shape, q_mul(q0, elem.orientation)));
+    elements[0].shape = elements[0].shape.union(...shapes);
     this.brep.changed = true;
   }
   sliceElement(element, circle, knife) {
     var [inner, outer] = super.sliceElement(element, circle);
 
+    if ( Array.isArray(knife) )
+      knife = knife.map(plane => rotateCSG(plane, q_inv(element.orientation)));
+    else
+      knife = rotateCSG(knife, q_inv(element.orientation));
     if ( inner && outer ) {
       if ( Array.isArray(knife) ) {
         outer.shape = element.shape.cutByPlane(knife[0]);
         inner.shape = element.shape.cutByPlane(knife[1]);
+        outer.orientation = element.orientation.slice();
       } else {
         outer.shape = element.shape.subtract(knife);
         inner.shape = element.shape.intersect(knife);
+        outer.orientation = element.orientation.slice();
       }
       this.brep.changed = true;
 
@@ -125,7 +133,8 @@ class ModeledSphPuzzle extends SphPuzzle
   }
   cut(knife) {
     for ( let element of this.brep.elements ) {
-      element.shape = element.shape.intersect(knife);
+      let knife_ = rotateCSG(knife, q_inv(element.orientation));
+      element.shape = element.shape.intersect(knife_);
     }
     this.brep.changed = true;
   }
@@ -223,6 +232,9 @@ class ModeledSphPuzzleView
         this.eraseElement(event.target);
         this.drawElement(event.target);
       }
+      if ( "orientation" in event.record ) {
+        this.rotateElement(event.target);
+      }
     });
     brep.on("added", SphTrack, event => this.addTwister(event.target));
     brep.on("removed", SphTrack, event => this.removeTwister(event.target));
@@ -237,6 +249,7 @@ class ModeledSphPuzzleView
     element.model_view.material.emissive.set("hsl(60, 100%, 0%)");
     element.model_view.material.emissiveIntensity = 0;
 
+    element.model_view.quaternion.set(...element.orientation);
     element.model_view.userData.hoverable = true;
     element.model_view.userData.draggable = true;
     element.model_view.addEventListener("click", this.click_handler);
@@ -245,6 +258,9 @@ class ModeledSphPuzzleView
     element.model_view.addEventListener("dragend", this.dragend_handler);
 
     this.display.add(element.model_view, this.root);
+  }
+  rotateElement(element) {
+    element.model_view.quaternion.set(...element.orientation);
   }
   eraseElement(element) {
     this.display.remove(element.model_view, this.root);
