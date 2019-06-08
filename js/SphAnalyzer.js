@@ -940,6 +940,23 @@ class SphConfig
     this.model = model;
     this.adjacencies = adjacencies;
     this.symmetries = undefined;
+
+    // this.tracks = ...
+  }
+}
+
+class SphTransition
+{
+  constructor({from, to, permutation=[]}={}) {
+    this.from = from;
+    this.to = to;
+    this.permutation = permutation;
+    this.symmetries = [];
+    // symmetries = [sym_from, sym_to]
+
+    // this.tracks = [];
+    // // tracks = [tracks_from, tracks_to]
+    // this.angles = [];
   }
 }
 
@@ -3288,24 +3305,30 @@ class Observable extends Listenable
  * Fully functional spherical twisty puzzle.
  * It provide easy-to-use methods to edit, play and analyze this puzzle.  All
  * crucial algorithms should be implemented by analyzer, and management of objects
- * should be implemented by this class.  It is composed by three parts: BREP,
- * network and rule.  Each part equips with event/observer system for maintaining
- * objects, which is useful for making GUI.
+ * should be implemented by this class.
+ * The management is composed by three parts: BREP, network and rule.  Each part
+ * equips with event/observer system for maintaining objects, which is useful
+ * for making GUI.
  *
  * "BREP" is implemented by `SphSeg`, `SphElem` and `SphTrack`, maintained by
- * `SphBREP`.  They represent the shape of elements using boundaries, which is
- * easy to manipulate, reshape and control calculation error.  `SphTrack` describe
- * where is able to twist, which can be finded by algorithms.  With BREP and
- * tracks, you should be able to edit and twist this puzzle.
+ * `SphBREP`.  `SphElem` and `SphSeg` represent the shape of elements based on
+ * boundaries, and it contains the information about adjacent relations.
+ * `SphTrack` describes where is able to twist, and what angle is non-trivial.
+ * This kind of representation is easy to manipulate, reshape and control
+ * calculation error.
  *
  * "Network" is implemented by `SphKnot` and `SphJoint`, maintained by `SphNetwork`.
- * It represent the symmetries and network structure of this puzzle, and parameterize
- * this puzzle.  With aid of network structure, more algorithms is available to
- * manipulate puzzle.  Parameterization let it be able to record the state and
- * twisting operations of puzzle efficiently and analyzable.
+ * `SphKnot` describes a group of adjacent elements, and they are connected by
+ * `SphJoint`, which describes a connected region.  They represent network structure
+ * of this puzzle, and the properties `segments`, `joints` are parameters of
+ * this puzzle, which depend on property `configuration`.  With aid of network
+ * structure, more algorithms are available to manipulate this puzzle.
  *
  * "Rule" is implemented by `SphConfig` and `SphTransition`, maintained by
- * `SphRule`.  It records possible states and transitions of this puzzle.
+ * `SphRule`.  `SphConfig` records possible configuration of network with a
+ * standard, unambiguous form, and `SphTransition` describes transitions between
+ * those configurations.  They also contains the information about symmetries of
+ * configurations and transitions, and provide a way to parameterize state of puzzle.
  *
  * @class
  * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
@@ -3324,9 +3347,8 @@ class SphPuzzle
 
     this.brep = new SphBREP(analyzer);
     this.network = new SphNetwork(analyzer);
-    // this.rule = new SphRule(analyzer);
-    // this.brep.host = this.network.host = this.rule.host = this;
-    this.brep.host = this.network.host = this;
+    this.rule = new SphRule(analyzer);
+    this.brep.host = this.network.host = this.rule.host = this;
 
     this.brep.init(elements);
   }
@@ -3342,6 +3364,7 @@ class SphPuzzle
     this.brep.changed = true;
     this.brep.setStatus("unprepared");
     this.network.setStatus("broken");
+    this.rule.setStatus("broken");
   }
   interpolate(seg, theta) {
     if ( this.analyzer.mod4(theta, [4, seg.arc]) >= seg.arc )
@@ -3353,6 +3376,7 @@ class SphPuzzle
     this.brep.changed = true;
     this.brep.setStatus("unprepared");
     this.network.setStatus("broken");
+    this.rule.setStatus("broken");
   }
   mergeEdge(seg1, seg2) {
     if ( seg1.affiliation !== seg2.affiliation || !seg1.adj.has(seg2) )
@@ -3374,9 +3398,11 @@ class SphPuzzle
     this.brep.changed = true;
     this.brep.setStatus("unprepared");
     this.network.setStatus("broken");
+    this.rule.setStatus("broken");
   }
   clean() {
     this.network.setStatus("broken");
+    this.rule.setStatus("broken");
 
     // merge untwistable, unlockable track
     for ( let track of this.brep.tracks ) {
@@ -3471,6 +3497,7 @@ class SphPuzzle
 
     this.brep.changed = true;
     this.brep.setStatus("unprepared");
+    this.rule.setStatus("broken");
 
     return element0;
   }
@@ -3491,6 +3518,7 @@ class SphPuzzle
     this.network.changed = true;
     this.brep.changed = true;
     this.brep.setStatus("unprepared");
+    this.rule.setStatus("broken");
 
     return elem0;
   }
@@ -3549,11 +3577,13 @@ class SphPuzzle
     this.network.changed = true;
     this.brep.changed = true;
     this.brep.setStatus("unprepared");
+    this.rule.setStatus("broken");
   }
   sliceElement(element, circle) {
     var [in_segs, out_segs, in_bd, out_bd] = this.analyzer.slice(element, circle);
     if ( in_segs.length && out_segs.length ) {
       this.network.setStatus("broken");
+      this.rule.setStatus("broken");
 
       for ( let seg of element.boundaries )
         this.brep.add(seg);
@@ -3692,20 +3722,29 @@ class SphPuzzle
   }
 
   structurize() {
+    if ( this.network.status != "broken" )
+      return;
     var knots = this.analyzer.structurize(this.brep.elements);
 
     this.network.setStatus("outdated");
     this.network.init(knots);
   }
-  recognize() {
+  recognize(make_trans=true) {
     if ( this.network.status == "broken" )
       throw new Error("Unable to recognize configuration without network structure!");
 
-    this.network.setStatus("up-to-date");
+    if ( this.rule.status == "broken" )
+      this.rule.clear();
     for ( let knot of this.network.knots ) {
-      let [config, perms] = this.analyzer.recognize(knot.model, knot.segments, []);
+      let configs = this.rule.configs.get(knot) || [];
+      let [config, perms] = this.analyzer.recognize(knot.model, knot.segments, configs);
+      if ( make_trans && config !== knot.configuration && configs.includes(knot.configuration) )
+        this.rule.add(knot, new SphTransition({from:knot.configuration, to:config, permutation:perms[0]}));
       this.network.transit(knot, perms[0], config);
+      this.rule.add(knot, config);
     }
+    this.network.setStatus("up-to-date");
+    this.rule.setStatus("tracking");
   }
   assemble(seg0) {
     if ( this.network.status == "broken" )
@@ -3746,7 +3785,20 @@ class SphPuzzle
 
 /**
  * BREP of spherical twisty puzzle.
- * It equips with event system, which is useful for making GUI:
+ * It contains information about elements in boundary representation, adjacent
+ * relations between elements, and possible twistable parts of this puzzle.  The
+ * adjacent relations help us to find possible twistable parts, which is used
+ * for simulating this puzzle; that is advantage of BREP.
+ *
+ * Initially, the status is "unprepared", means this puzzle isn't ready to simulate
+ * twist operations.  The status "ready" means the twist operations of this state
+ * is fully analyzed.  In this status of "unprepared", all elements of this puzzle
+ * should be contained in the property `elements`, and all boundaries of them
+ * should be contained in the property `segments`.  Also, all possible tracks of
+ * segments should be created and contained in the property `tracks`, and all
+ * tracks should be decrypted in status "ready".
+ *
+ * The available events are:
  * `{ type:"statuschanged", target:this }`, triggered when puzzle is ready or
  * unprepared.
  * `{ type:"added"|"removed", target:SphSeg|SphElem|SphTrack }`, triggered after
@@ -3756,8 +3808,7 @@ class SphPuzzle
  * object of copies of old properties before modifying; only modified properties
  * will be recorded.
  * `{ type:"changed", target:this }`, triggered when something changed (after
- * triggering all others events).  This event is useful to initialization;
- * it is hard to initialize listeners directly under unsync event system.
+ * triggering all others events).
  *
  * @class
  * @property {string} status - Status of puzzle:
@@ -3942,22 +3993,31 @@ class SphBREP extends Observable
  * Network structure of puzzle.
  * It contains information about network structure, configuration and parameters
  * of segments; they are strongly correlated and hard to separate.  Network
- * structure describe the division of puzzle, which wont changed after twisting;
- * configuration give a draft to construct sub-puzzle, but one still need to know
- * network to build whole puzzle; parameters of segments make bridge between
- * concrete objects and network structure, but it only makes sense under a given
- * configuration.
- * It equips with event system, which is useful for making GUI:
- * `{ type:"statuschanged", target:SphNetwork }`, triggered when network structure
- * is broken, up-to-date or outdated.
+ * structure describes the division of puzzle, which won't be changed after
+ * twisting; configuration give a draft to construct sub-puzzle, but one still
+ * need to know network to build whole puzzle; parameters of segments make bridge
+ * between concrete objects and network structure, but it only makes sense under
+ * a given configuration.
+ *
+ * Initially, the status is "broken", means network structure is different from
+ * the objects `segments`.  In the status of "outdated" and "up-to-date", the
+ * network structure of this puzzle should be analyzed and maintained in the
+ * properties `knots` and `joints`. `joints` may contains trivial joint.  In the
+ * status of "up-to-date", the configuration in all `knots` (described by
+ * properties `segments` and `configuration`) should be consistent with adjacent
+ * relations between objects `segments`, and `configuration` should in the
+ * standard form.
+ *
+ * The available events are:
+ * `{ type:"statuschanged", target:this }`, triggered when network structure is
+ * broken, up-to-date or outdated.
  * `{ type:"added"|"removed", target:SphKnot|SphJoint }`, triggered after
  * adding/removing knot/joint.
  * `{ type:"modified", target:SphKnot|SphJoint, record:object }`, triggered after
  * modifying properties of knot/joint.  `record` is object of copies of old
  * properties before modifying; only modified properties will be recorded.
  * `{ type:"changed", target:this }`, triggered when something changed (after
- * triggering all others events).  This event is useful to initialization;
- * it is hard to initialize listeners directly under unsync event system.
+ * triggering all others events).
  *
  * @class
  * @property {string} status - Status of network structure and configuration:
@@ -4168,3 +4228,179 @@ class SphNetwork extends Observable
   }
 }
 
+/**
+ * Rule of simple spherical twisty puzzle.
+ *
+ * @class
+ * @property {string} status - Status of rule of twisty puzzle:
+ *   "tracking" means it is tracking the configurations of puzzle;
+ *   "broken" means network structure is changed.
+ * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
+ * @property {Map<SphKnot,SphConfig[]>} configs - All configurations of this
+ *   network.
+ * @property {Map<SphKnot,SphTransition[]>} transitions - All transitions of
+ *   this network.
+ */
+class SphRule extends Observable
+{
+  constructor(analyzer) {
+    super();
+
+    this.status = "broken";
+    this.analyzer = analyzer;
+    this.configs = new Map();
+    this.transitions = new Map();
+
+    this.statuschanged = false;
+    this.changed = false;
+  }
+
+  setStatus(status) {
+    if ( !["tracking", "broken"].includes(status) )
+      throw new Error("Wrong status!");
+    if ( this.status != status ) {
+      this.statuschanged = true;
+      this.status = status;
+    }
+  }
+  add(knot, target) {
+    if ( target instanceof SphConfig ) {
+      if ( !this.configs.has(knot) )
+        this.configs.set(knot, []);
+      let configs = this.configs.get(knot);
+      if ( configs.includes(target) )
+        return;
+
+      for ( let i=0; i<configs.length; i++ ) {
+        let sgn = this.analyzer.cmp(configs[i].adjacencies, target.adjacencies);
+        if ( sgn > 0 ) {
+          target.host = this;
+          configs.splice(i, 0, target);
+          this.changed = true;
+          return;
+
+        } else if ( sgn == 0 ) {
+          throw new Error();
+        }
+      }
+
+      target.host = this;
+      configs.push(target);
+      this.changed = true;
+
+    } else if ( target instanceof SphTransition ) {
+      if ( !this.transitions.has(knot) )
+        this.transitions.set(knot, []);
+      let transitions = this.transitions.get(knot);
+      if ( transitions.includes(target) )
+        return;
+
+      target.host = this;
+      transitions.push(target);
+      this.changed = true;
+
+    } else {
+      throw new Error();
+    }
+  }
+  remove(target) {
+    if ( target instanceof SphConfig ) {
+      let knot, config, i;
+      for ( [knot, configs] of this.configs )
+        if ( (i = configs.indexOf(target)) != -1 )
+          break;
+      if ( i == -1 )
+        return;
+      configs.splice(i, 1);
+      if ( configs.length == 0 )
+        this.configs.delete(knot);
+      this.changed = true;
+
+    } else if ( target instanceof SphTransition ) {
+      let knot, transitions, i;
+      for ( [knot, transitions] of this.transitions )
+        if ( (i = transitions.indexOf(target)) != -1 )
+          break;
+      if ( i == -1 )
+        return;
+      transitions.splice(i, 1);
+      if ( transitions.length == 0 )
+        this.transitions.delete(knot);
+      this.changed = true;
+
+    } else {
+      throw new Error();
+    }
+  }
+  clear() {
+    for ( let transitions of this.transitions.values() )
+      for ( let transition of transitions.slice().reverse() )
+        this.remove(transition);
+
+    for ( let configs of this.configs.values() )
+      for ( let config of configs.slice().reverse() )
+        this.remove(config);
+  }
+  init(knot, configs, transitions) {
+    this.clear();
+    for ( let config of configs )
+      this.add(knot, config);
+    for ( let transition of transitions )
+      this.add(knot, transition);
+  }
+
+  get observed() {
+    var observed = new Map();
+    for ( let targets of this.configs.values() )
+      for ( let target of targets )
+        observed.set(target, {});
+    for ( let targets of this.transitions.values() )
+      for ( let target of targets )
+        observed.set(target, {});
+    return observed;
+  }
+  onchange(modified) {
+    if ( this.statuschanged ) {
+      this.trigger("statuschanged", this);
+      this.statuschanged = false;
+    }
+
+    if ( modified.size == 0 )
+      return;
+    for ( let [target, record] of modified )
+      if ( target instanceof SphConfig && record == "removed" )
+        this.trigger("removed", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphConfig && record == "added" )
+        this.trigger("added", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphConfig && typeof record == "object" )
+        this.trigger("modified", target, {record});
+
+    for ( let [target, record] of modified )
+      if ( target instanceof SphTransition && record == "removed" )
+        this.trigger("removed", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphTransition && record == "added" )
+        this.trigger("added", target);
+    for ( let [target, record] of modified )
+      if ( target instanceof SphTransition && typeof record == "object" )
+        this.trigger("modified", target, {record});
+
+    this.trigger("changed", this);
+  }
+
+  knotOf(target) {
+    if ( target instanceof SphConfig ) {
+      for ( let [knot, configs] of this.configs )
+        if ( configs.includes(target) )
+          return knot;
+
+    } else if ( target instanceof SphTransition ) {
+      for ( let [knot, transitions] of this.transitions )
+        if ( transitions.includes(target) )
+          return knot;
+
+    }
+  }
+}

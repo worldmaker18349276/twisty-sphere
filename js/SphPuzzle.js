@@ -582,7 +582,9 @@ class Graph
 
 class Tabs
 {
-  constructor(id) {
+  constructor(container) {
+    this.container = container;
+
     document.body.appendChild(css`
       .tab-title-container {
         white-space: nowrap;
@@ -613,13 +615,14 @@ class Tabs
       }
 
       .tab-content {
+        width: 100%;
+        height: 100%;
         display: none;
       }
       .tab-content.active {
         display: block;
       }
     `);
-    this.container = document.getElementById(id);
     this.container.classList.add("tab-container");
 
     this.titles = document.createElement("div");
@@ -1949,6 +1952,205 @@ class SphStateView
   }
 }
 
+class SphRuleView
+{
+  constructor(container, rule, selector) {
+    this.tabs = new Tabs(container);
+    this.graphs = new Map();
+    this.selector = selector;
+    this.origin = rule;
+    rule.view = this;
+
+    rule.initialize(() => this.initView(rule));
+    animate(this.hoverRoutine());
+  }
+
+  // network view
+  initView(rule) {
+    for ( let [knot, configs] of rule.configs ) {
+      for ( let config of configs )
+        this.drawKnot(knot, config);
+      for ( let transition of rule.transitions.get(knot) )
+        this.drawTransition(knot, transition);
+    }
+
+    rule.on("statuschanged", rule, event => {
+      if ( this.origin.status == "broken" ) {
+        for ( let graph of this.graphs.values() )
+          graph.disable();
+      } else {
+        for ( let graph of this.graphs.values() )
+          graph.enable();
+      }
+    });
+    rule.on("added", Object, event => {
+      if ( event.target instanceof SphConfig ) {
+        this.drawConfig(event.target);
+
+      } else if ( event.target instanceof SphTransition ) {
+        this.drawTransition(event.target);
+      }
+    });
+    rule.on("removed", Object, event => {
+      if ( event.target instanceof SphConfig ) {
+        this.eraseConfig(event.target);
+
+      } else if ( event.target instanceof SphTransition ) {
+        this.eraseTransition(event.target);
+      }
+    });
+  }
+  drawTab(knot) {
+    var content = this.tabs.add(knot.name);
+    var graph = new Graph(content);
+    this.graphs.set(knot, graph);
+
+    graph.view.on("click", event => {
+      if ( this.origin.status == "broken" )
+        return;
+
+      var target = event.target && event.target.origin;
+      if ( event.event.srcEvent.ctrlKey ) {
+        if ( target instanceof SphConfig || target instanceof SphTransition )
+          this.selector.toggle(target);
+      } else {
+        if ( target instanceof SphConfig || target instanceof SphTransition )
+          this.selector.select(target);
+        else
+          this.selector.reselect();
+      }
+    });
+    graph.view.on("hoverNode", event => {
+      if ( this.origin.status == "broken" )
+        return;
+
+      var target = event.target && event.target.origin;
+      if ( target instanceof SphConfig || target instanceof SphTransition )
+        this.selector.preselection = target;
+      else
+        this.selector.preselection = undefined;
+    });
+    graph.view.on("blurNode", event => {
+      if ( this.origin.status == "broken" )
+        return;
+      this.selector.preselection = undefined;
+    });
+
+    return graph;
+  }
+  drawConfig(config) {
+    var knot = this.origin.knotOf(config);
+    if ( !this.graphs.has(knot) )
+      this.drawTab(knot);
+    var graph = this.graphs.get(knot);
+
+    config.node_id = graph.addNode({size:20, shape:"square", origin:config});
+  }
+  drawTransition(transition) {
+    var knot = this.origin.knotOf(transition);
+    var graph = this.graphs.get(knot);
+
+    transition.edge_id = graph.addEdge(transition.from.node_id, transition.to.node_id,
+                                       {arrows:"to", origin:transition});
+  }
+  eraseConfig(config) {
+    var knot = this.origin.knotOf(config);
+    var graph = this.graphs.get(knot);
+    graph.removeNode(config.node_id);
+    delete config.node_id;
+
+    if ( graph.nodes.length == 0 ) {
+      this.tabs.remove(graph.dom);
+      this.graphs.delete(knot);
+    }
+  }
+  eraseTransition(transition) {
+    var knot = this.origin.knotOf(transition);
+    var graph = this.graphs.get(knot);
+    graph.removeEdge(transition.edge_id);
+    delete transition.edge_id;
+  }
+
+  // hover/select feedback
+  idOf(target) {
+    if ( target instanceof SphConfig ) {
+      return target.node_id;
+
+    } else if ( target instanceof SphTransition ) {
+      return target.edge_id;
+
+    }
+  }
+  emphasize(id) {
+    for ( let graph of this.graphs.values() ) {
+      if ( graph.getNode(id) )
+        graph.updateNode(id, {color:{background:"#D2E5FF"}});
+      else if ( graph.getEdge(id) )
+        graph.updateEdge(id, {color:"#D2E5FF"});
+    }
+  }
+  unemphasize(id) {
+    for ( let graph of this.graphs.values() ) {
+      if ( graph.getNode(id) )
+        graph.updateNode(id, {color:{background:"#97C2FC"}});
+      else if ( graph.getEdge(id) )
+        graph.updateEdge(id, {color:"#848484"});
+    }
+  }
+  highlight(id) {
+    for ( let graph of this.graphs.values() ) {
+      if ( graph.getNode(id) )
+        graph.updateNode(id, {borderWidth:2});
+      else if ( graph.getEdge(id) )
+        graph.updateEdge(id, {width:2});
+    }
+  }
+  unhighlight(id) {
+    for ( let graph of this.graphs.values() ) {
+      if ( graph.getNode(id) )
+        graph.updateNode(id, {borderWidth:1});
+      else if ( graph.getEdge(id) )
+        graph.updateEdge(id, {width:1});
+    }
+  }
+  *hoverRoutine() {
+    var preselection = undefined;
+    var selected_ids = [];
+    while ( true ) {
+      yield;
+
+      if ( this.origin.status == "broken" ) {
+        preselection = undefined;
+        selected_ids = [];
+        continue;
+      }
+
+      // emphasize hovered object
+      if ( this.selector.preselection !== preselection ) {
+        let id;
+        if ( id = this.idOf(preselection) )
+          this.unemphasize(id);
+        if ( id = this.idOf(this.selector.preselection) )
+          this.emphasize(id);
+        preselection = this.selector.preselection;
+      }
+
+      // highlight selected objects
+      var new_selected_ids = this.selector.selections
+        .map(sel => this.idOf(sel)).filter(id => id !== undefined);
+
+      for ( let id of selected_ids )
+        if ( !new_selected_ids.includes(id) )
+          this.unhighlight(id);
+      for ( let id of new_selected_ids )
+        if ( !selected_ids.includes(id) )
+          this.highlight(id);
+
+      selected_ids = new_selected_ids;
+    }
+  }
+}
+
 
 class SphBREPTreeViewPanel
 {
@@ -2251,11 +2453,11 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
   cleanCmd(selector) {
     selector.reselect();
     this.puzzle.clean();
-    window.alert("finish!");
+    window.alert("it is clear now!");
   }
   prepareCmd(selector) {
     this.puzzle.prepare();
-    window.alert("finish!");
+    window.alert("ready to twist!");
   }
   checkCmd(selector) {
     this.puzzle.check();
@@ -2385,7 +2587,7 @@ class SphPuzzleViewExplorer
 
 class SphPuzzleWorld
 {
-  constructor(puzzle, id_display, id_network, id_state) {
+  constructor(puzzle, id_display, id_network, id_state, id_rule) {
     this.puzzle = puzzle;
     this.selector = new Selector();
 
@@ -2429,6 +2631,12 @@ class SphPuzzleWorld
     var dom_state = document.getElementById(id_state);
     if ( dom_state ) {
       this.state_view = new SphStateView(dom_state, this.puzzle.network, this.selector);
+    }
+
+    // rule view
+    var dom_rule = document.getElementById(id_rule);
+    if ( dom_rule ) {
+      this.rule_view = new SphRuleView(dom_rule, this.puzzle.rule, this.selector);
     }
   }
 }
