@@ -1104,7 +1104,7 @@ class SphBREPView
     this.origin = brep;
     brep.view = this;
 
-    this.root = new THREE.Object3D();
+    this.root = new THREE.Group();
     this.display.add(this.root);
 
     // draw ball

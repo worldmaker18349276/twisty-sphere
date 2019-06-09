@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>twisty sphere - Eitan's tricube</title>
+  <meta charset="utf-8">
+  <script src="../js/three.min.js"></script>
+  <script src="../js/dat.gui.min.js"></script>
+  <script src="../js/SphAnalyzer.js"></script>
+  <script src="../js/SphPuzzle.js"></script>
+  <script src="../js/Geometer.js"></script>
+  <script src="../js/csg.js"></script>
+  <script src="../js/ModeledSphPuzzle.js"></script>
+</head>
+<body>
+
+<div id="display" style="width:600px;height:600px;"></div>
+
+<script>
+
+var a = Math.sqrt(2/3);
+var cube = CSG.cube({center: [0, 0, 0], radius: [a, a, a]});
+var tricube = cube.rotateZ(45).setColor(1,0,0)
+        .union(cube.rotateZ(45).rotateX(90).setColor(0,1,0))
+        .union(cube.rotateZ(45).rotateY(90).setColor(0,0,1));
+var puzzle = new ModeledSphPuzzle(tricube);
+
+var s2 = 1/Math.sqrt(2);
+var c = Math.acos(a)/Q;
+puzzle.slice([ 1, 0, 0], c);
+puzzle.slice([-1, 0, 0], c);
+puzzle.slice([ 0, 1, 0], c);
+puzzle.slice([ 0,-1, 0], c);
+puzzle.slice([ 0, 0, 1], c);
+puzzle.slice([ 0, 0,-1], c);
+puzzle.slice([  0, s2, s2], c);
+puzzle.slice([  0,-s2, s2], c);
+puzzle.slice([  0, s2,-s2], c);
+puzzle.slice([  0,-s2,-s2], c);
+puzzle.slice([ s2,  0, s2], c);
+puzzle.slice([-s2,  0, s2], c);
+puzzle.slice([ s2,  0,-s2], c);
+puzzle.slice([-s2,  0,-s2], c);
+puzzle.slice([ s2, s2,  0], c);
+puzzle.slice([-s2, s2,  0], c);
+puzzle.slice([ s2,-s2,  0], c);
+puzzle.slice([-s2,-s2,  0], c);
+
+puzzle.clean();
+puzzle.prepare();
+
+var world = new ModeledSphPuzzleWorld(puzzle, "display");
+
+</script>
+</body>
+</html>

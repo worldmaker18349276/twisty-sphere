@@ -431,7 +431,7 @@ class ModeledSphPuzzleWorld
     this.selector = new Selector();
 
     var dom = document.getElementById(id_display);
-    var display = new Display(dom);
-    this.model_view = new ModeledSphPuzzleView(display, this.puzzle.brep, this.selector);
+    this.display = new Display(dom);
+    this.model_view = new ModeledSphPuzzleView(this.display, this.puzzle.brep, this.selector);
   }
 }
