@@ -511,7 +511,8 @@ class Graph
 
     var make_target = event => {
       var id = this.view.getNodeAt(event.pointer.DOM);
-      event.target = id && this.nodes.get(id);
+      var id_ = this.view.getEdgeAt(event.pointer.DOM);
+      event.target = (id && this.nodes.get(id)) || (id_ && this.edges.get(id_));
     };
     this.view.on("click", make_target);
     this.view.on("hoverNode", make_target);
@@ -810,6 +811,7 @@ class SphPuzzlePropBuilder
 
     puzzle.brep.initialize(() => this.initBREP(puzzle.brep));
     puzzle.network.initialize(() => this.initNetwork(puzzle.network));
+    puzzle.rule.initialize(() => this.initRule(puzzle.rule));
   }
 
   initBREP(brep) {
@@ -928,13 +930,54 @@ class SphPuzzlePropBuilder
     network.on("added", SphKnot, event => initKnotNameProp(event.target));
     network.on("added", SphJoint, event => initJointNameProp(event.target));
   }
+  initRule(rule) {
+    var config_id = (function *numbers() {
+      var i = 0; while ( true ) yield `SphConfig${i++}`;
+    })();
+    var transition_id = (function *numbers() {
+      var i = 0; while ( true ) yield `SphTransition${i++}`;
+    })();
+
+    function initConfigNameProp(config) {
+      config._name = config._name || config_id.next().value;
+      Object.defineProperty(config, "name", {
+        enumerable: true,
+        configurable: true,
+        get: function() { return this._name; },
+        set: function(val) { this._name = val; this.host.trigger("renamed", this); }
+      });
+    }
+    function initTransitionNameProp(transition) {
+      transition._name = transition._name || transition_id.next().value;
+      Object.defineProperty(transition, "name", {
+        enumerable: true,
+        configurable: true,
+        get: function() { return this._name; },
+        set: function(val) { this._name = val; this.host.trigger("renamed", this); }
+      });
+    }
+
+    rule.name = rule.name || "SphRule";
+
+    for ( let [knot, configs] of rule.configurations )
+      for ( let config of configs )
+        initConfigNameProp(config);
+    for ( let [knot, transitions] of rule.transitions )
+      for ( let transition of transitions )
+        initTransitionNameProp(transition);
+
+    rule.on("added", SphConfig, event => initConfigNameProp(event.target));
+    rule.on("added", SphTransition, event => initTransitionNameProp(event.target));
+  }
 
   link(target, sel_mode, name=target.name) {
     if ( !(target instanceof SphElem)
          && !(target instanceof SphSeg)
          && !(target instanceof SphTrack)
          && !(target instanceof SphKnot)
-         && !(target instanceof SphJoint) )
+         && !(target instanceof SphJoint)
+         && !(target instanceof SphConfig)
+         && !(target instanceof SphTransition) )
       return;
 
     var property = {type: "button", name: name};
@@ -1967,12 +2010,12 @@ class SphRuleView
 
   // network view
   initView(rule) {
-    for ( let [knot, configs] of rule.configs ) {
+    for ( let [knot, configs] of rule.configurations )
       for ( let config of configs )
-        this.drawKnot(knot, config);
-      for ( let transition of rule.transitions.get(knot) )
-        this.drawTransition(knot, transition);
-    }
+        this.drawConfig(config);
+    for ( let [knot, transitions] of rule.transitions )
+      for ( let transition of transitions )
+        this.drawTransition(transition);
 
     rule.on("statuschanged", rule, event => {
       if ( this.origin.status == "broken" ) {
@@ -1997,6 +2040,13 @@ class SphRuleView
 
       } else if ( event.target instanceof SphTransition ) {
         this.eraseTransition(event.target);
+      }
+    });
+    rule.host.network.on("modified", SphKnot, event => {
+      if ( "configuration" in event.record ) {
+        var graph = this.graphs.get(event.target);
+        graph.updateNode(event.record.configuration.node_id, {size:20});
+        graph.updateNode(event.target.configuration.node_id, {size:25});
       }
     });
   }
@@ -2025,12 +2075,27 @@ class SphRuleView
         return;
 
       var target = event.target && event.target.origin;
-      if ( target instanceof SphConfig || target instanceof SphTransition )
+      if ( target instanceof SphConfig )
         this.selector.preselection = target;
       else
         this.selector.preselection = undefined;
     });
     graph.view.on("blurNode", event => {
+      if ( this.origin.status == "broken" )
+        return;
+      this.selector.preselection = undefined;
+    });
+    graph.view.on("hoverEdge", event => {
+      if ( this.origin.status == "broken" )
+        return;
+
+      var target = event.target && event.target.origin;
+      if ( target instanceof SphTransition )
+        this.selector.preselection = target;
+      else
+        this.selector.preselection = undefined;
+    });
+    graph.view.on("blurEdge", event => {
       if ( this.origin.status == "broken" )
         return;
       this.selector.preselection = undefined;
@@ -2045,6 +2110,13 @@ class SphRuleView
     var graph = this.graphs.get(knot);
 
     config.node_id = graph.addNode({size:20, shape:"square", origin:config});
+    // config.edge_ids = [];
+    // for ( let symmetry of config.symmetries.slice(1) )
+    //   config.edge_ids.push(graph.addEdge(config.node_id, config.node_id,
+    //                                      {arrows:"to", dashes:true, origin:config}));
+
+    if ( knot.configuration === config )
+      graph.updateNode(config.node_id, {size:25});
   }
   drawTransition(transition) {
     var knot = this.origin.knotOf(transition);
@@ -2152,22 +2224,33 @@ class SphRuleView
 }
 
 
-class SphBREPTreeViewPanel
+class SphPuzzleTreeViewPanel
 {
-  constructor(panel, brep, prop_builder) {
+  constructor(panel, puzzle, prop_builder) {
     this.panel = panel;
-    this.brep = brep;
+    this.puzzle = puzzle;
     this.prop_builder = prop_builder;
 
-    this.segments = this.panel.ctrls[this.panel.addFolder("segments")];
-    this.elements = this.panel.ctrls[this.panel.addFolder("elements")];
-    this.tracks = this.panel.ctrls[this.panel.addFolder("tracks")];
+    this.brep = this.panel.ctrls[this.panel.addFolder("BREP")];
+    this.segments = this.brep.ctrls[this.brep.addFolder("segments")];
+    this.elements = this.brep.ctrls[this.brep.addFolder("elements")];
+    this.tracks = this.brep.ctrls[this.brep.addFolder("tracks")];
+
+    this.network = this.panel.ctrls[this.panel.addFolder("Network")];
+    this.knots = this.network.ctrls[this.network.addFolder("knots")];
+    this.joints = this.network.ctrls[this.network.addFolder("joints")];
+
+    this.rule = this.panel.ctrls[this.panel.addFolder("Rule")];
+    this.configurations = this.rule.ctrls[this.rule.addFolder("configurations")];
+    this.transitions = this.rule.ctrls[this.rule.addFolder("transitions")];
 
     this.data = new Map();
-    brep.initialize(() => this.initTree(brep));
+    puzzle.brep.initialize(() => this.initBREP(puzzle.brep));
+    puzzle.network.initialize(() => this.initNetwork(puzzle.network));
+    puzzle.rule.initialize(() => this.initRule(puzzle.rule));
   }
 
-  initTree(brep) {
+  initBREP(brep) {
     for ( let seg of brep.segments )
       this.addSeg(seg);
     for ( let elem of brep.elements )
@@ -2210,23 +2293,8 @@ class SphBREPTreeViewPanel
     this.data.delete(track);
     this.tracks.remove(id);
   }
-}
 
-class SphNetworkTreeViewPanel
-{
-  constructor(panel, network, prop_builder) {
-    this.panel = panel;
-    this.network = network;
-    this.prop_builder = prop_builder;
-
-    this.knots = this.panel.ctrls[this.panel.addFolder("knots")];
-    this.joints = this.panel.ctrls[this.panel.addFolder("joints")];
-
-    this.data = new Map();
-    network.initialize(() => this.initTree(network));
-  }
-
-  initTree(network) {
+  initNetwork(network) {
     for ( let knot of network.knots )
       this.addKnot(knot);
     for ( let joint of network.joints )
@@ -2255,6 +2323,39 @@ class SphNetworkTreeViewPanel
     var id = this.data.get(joint);
     this.data.delete(joint);
     this.joints.remove(id);
+  }
+
+  initRule(rule) {
+    for ( let [knot, configs] of rule.configurations )
+      for ( let config of configs )
+        this.addConfig(config);
+    for ( let [knot, transitions] of rule.transitions )
+      for ( let transition of transitions )
+        this.addTransition(transition);
+
+    rule.on("added", SphConfig, event => this.addConfig(event.target));
+    rule.on("added", SphTransition, event => this.addTransition(event.target));
+    rule.on("removed", SphConfig, event => this.removeConfig(event.target));
+    rule.on("removed", SphTransition, event => this.removeTransition(event.target));
+  }
+
+  addConfig(configuration) {
+    var id = this.configurations.add(this.prop_builder.link(configuration, "select"));
+    this.data.set(configuration, id);
+  }
+  addTransition(transition) {
+    var id = this.transitions.add(this.prop_builder.link(transition, "select"));
+    this.data.set(transition, id);
+  }
+  removeConfig(configuration) {
+    var id = this.data.get(configuration);
+    this.data.delete(configuration);
+    this.configurations.remove(id);
+  }
+  removeTransition(transition) {
+    var id = this.data.get(transition);
+    this.data.delete(transition);
+    this.transitions.remove(id);
   }
 }
 
@@ -2322,13 +2423,15 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
     this.addCmd(this.mergeCmd.bind(this), "merge (shift+M)", "shift+M");
     this.addCmd(this.interCmd.bind(this), "interpolate");
     this.addCmd(this.sliceCmd.bind(this), "slice (shift+S)", "shift+S");
+    this.addCmd(this.unbandageCmd.bind(this), "unbandage");
+
     this.addCmd(this.cleanCmd.bind(this), "clean (shift+C)", "shift+C");
     this.addCmd(this.prepareCmd.bind(this), "prepare (shift+V)", "shift+V");
     this.addCmd(this.checkCmd.bind(this), "check");
 
     this.addCmd(this.structCmd.bind(this), "structurize (shift+X)", "shift+X");
     this.addCmd(this.assembleCmd.bind(this), "assemble (shift+Z)", "shift+Z");
-    this.addCmd(this.unbandageCmd.bind(this), "unbandage");
+    this.addCmd(this.transitCmd.bind(this), "transit (shift+T)", "shift+T");
   }
 
   mergeCmd(selector) {
@@ -2469,7 +2572,11 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
     this.puzzle.recognize();
   }
   assembleCmd(selector) {
-    this.puzzle.assemble(selector.selections[0]);
+    var sel = selector.selections[0];
+    if ( sel instanceof SphSeg )
+      this.puzzle.assemble(sel);
+    else
+      this.puzzle.assemble();
   }
   unbandageCmd(selector) {
     if ( selector.selections.length != 1 ) {
@@ -2488,6 +2595,24 @@ class SphPuzzleWorldCmdMenu extends CmdMenu
 
     var elem = this.puzzle.unbandage(joint);
     this.selector.select(elem);
+  }
+  transitCmd(selector) {
+    if ( selector.selections.length != 1 ) {
+      window.alert("Please select one configuration or transition!");
+      return;
+    }
+    var sel = selector.selections[0];
+    var knot = this.puzzle.rule.knotOf(sel);
+    if ( !(sel instanceof SphTransition) && !(sel instanceof SphConfig) ) {
+      window.alert("Not configuration or transition!");
+      return;
+    }
+
+    if ( sel instanceof SphTransition )
+      this.puzzle.transit(knot, sel);
+    else if ( sel instanceof SphConfig )
+      this.puzzle.transit(knot, new SphTransition({
+        from:knot.configuration, to:sel, permutation:knot.model.I()}));
   }
 }
 
@@ -2603,10 +2728,8 @@ class SphPuzzleWorld
     this.explorer = new SphPuzzleViewExplorer(this.selector, this.puzzle);
 
     // tree view
-    var brep_panel = this.panel.ctrls[this.panel.addFolder("brep")];
-    this.brep_tree = new SphBREPTreeViewPanel(brep_panel, this.puzzle.brep, this.prop);
-    var net_panel = this.panel.ctrls[this.panel.addFolder("network")];
-    this.net_tree = new SphNetworkTreeViewPanel(net_panel, this.puzzle.network, this.prop);
+    var tree_panel = this.panel.ctrls[this.panel.addFolder("puzzle")];
+    this.puzzle_tree = new SphPuzzleTreeViewPanel(tree_panel, this.puzzle, this.prop);
 
     var sel_panel = this.panel.ctrls[this.panel.addFolder("selections", false)];
     this.sel = new SelectPanel(sel_panel, this.selector, this.prop);

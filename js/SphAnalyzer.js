@@ -939,9 +939,7 @@ class SphConfig
   constructor({model, adjacencies=[]}={}) {
     this.model = model;
     this.adjacencies = adjacencies;
-    this.symmetries = undefined;
-
-    // this.tracks = ...
+    this.symmetries = [];
   }
 }
 
@@ -3734,9 +3732,9 @@ class SphPuzzle
     if ( this.rule.status == "broken" )
       this.rule.clear();
     for ( let knot of this.network.knots ) {
-      let configs = this.rule.configs.get(knot) || [];
+      let configs = this.rule.configurations.get(knot) || [];
       let [config, perms] = this.analyzer.recognize(knot.model, knot.segments, configs);
-      if ( make_trans && config !== knot.configuration && configs.includes(knot.configuration) )
+      if ( make_trans && configs.includes(knot.configuration) )
         this.rule.add(knot, new SphTransition({from:knot.configuration, to:config, permutation:perms[0]}));
       this.network.transit(knot, perms[0], config);
       this.rule.add(knot, config);
@@ -3761,7 +3759,7 @@ class SphPuzzle
 
     for ( let seg of this.brep.segments )
       if ( seg.track )
-        this.add(seg.track);
+        this.brep.add(seg.track);
     if ( this.brep.status == "ready" ) {
       for ( let track of this.brep.tracks )
         this.decipher(track);
@@ -3778,6 +3776,18 @@ class SphPuzzle
 
     this.analyzer.assemble(this.network.knots, false);
     this.analyzer.orient(knot0, index0, orientation0, false);
+  }
+  transit(knot, transition) {
+    if ( this.network.status == "broken" )
+      throw new Error("Unable to transit configuration without network structure!");
+    if ( this.rule.status == "broken" )
+      throw new Error("Unable to transit configuration without rule!");
+    if ( transition.from !== knot.configuration )
+      throw new Error("Wrong transition!");
+
+    this.network.transit(knot, transition.permutation, transition.to);
+    this.network.setStatus("up-to-date");
+    this.rule.setStatus("tracking");
   }
 }
 
@@ -4234,7 +4244,7 @@ class SphNetwork extends Observable
  *   "tracking" means it is tracking the configurations of puzzle;
  *   "broken" means network structure is changed.
  * @property {SphAnalyzer} analyzer - All algorithms of this puzzle.
- * @property {Map<SphKnot,SphConfig[]>} configs - All configurations of this
+ * @property {Map<SphKnot,SphConfig[]>} configurations - All configurations of this
  *   network.
  * @property {Map<SphKnot,SphTransition[]>} transitions - All transitions of
  *   this network.
@@ -4246,7 +4256,7 @@ class SphRule extends Observable
 
     this.status = "broken";
     this.analyzer = analyzer;
-    this.configs = new Map();
+    this.configurations = new Map();
     this.transitions = new Map();
 
     this.statuschanged = false;
@@ -4263,9 +4273,9 @@ class SphRule extends Observable
   }
   add(knot, target) {
     if ( target instanceof SphConfig ) {
-      if ( !this.configs.has(knot) )
-        this.configs.set(knot, []);
-      let configs = this.configs.get(knot);
+      if ( !this.configurations.has(knot) )
+        this.configurations.set(knot, []);
+      let configs = this.configurations.get(knot);
       if ( configs.includes(target) )
         return;
 
@@ -4304,14 +4314,14 @@ class SphRule extends Observable
   remove(target) {
     if ( target instanceof SphConfig ) {
       let knot, config, i;
-      for ( [knot, configs] of this.configs )
+      for ( [knot, configs] of this.configurations )
         if ( (i = configs.indexOf(target)) != -1 )
           break;
       if ( i == -1 )
         return;
       configs.splice(i, 1);
       if ( configs.length == 0 )
-        this.configs.delete(knot);
+        this.configurations.delete(knot);
       this.changed = true;
 
     } else if ( target instanceof SphTransition ) {
@@ -4335,7 +4345,7 @@ class SphRule extends Observable
       for ( let transition of transitions.slice().reverse() )
         this.remove(transition);
 
-    for ( let configs of this.configs.values() )
+    for ( let configs of this.configurations.values() )
       for ( let config of configs.slice().reverse() )
         this.remove(config);
   }
@@ -4349,7 +4359,7 @@ class SphRule extends Observable
 
   get observed() {
     var observed = new Map();
-    for ( let targets of this.configs.values() )
+    for ( let targets of this.configurations.values() )
       for ( let target of targets )
         observed.set(target, {});
     for ( let targets of this.transitions.values() )
@@ -4390,7 +4400,7 @@ class SphRule extends Observable
 
   knotOf(target) {
     if ( target instanceof SphConfig ) {
-      for ( let [knot, configs] of this.configs )
+      for ( let [knot, configs] of this.configurations )
         if ( configs.includes(target) )
           return knot;
 
