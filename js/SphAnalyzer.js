@@ -3612,20 +3612,18 @@ class SphPuzzle
     }
   }
   slice(center, radius) {
+    center = normalize(center);
     var circle = new SphCircle({radius, orientation:q_align(center)});
     for ( let element of this.brep.elements.slice() )
       this.sliceElement(element, circle);
 
-    for ( let track of this.brep.tracks.slice().reverse() ) {
-      let circle = track.circle;
-
-      if ( this.analyzer.cmp(radius, circle.radius) == 0
-           && this.analyzer.cmp(center, circle.center) == 0 )
-        return track;
-
-      if ( this.analyzer.cmp(radius, 2-circle.radius) == 0
-           && this.analyzer.cmp(center, circle.center.map(x => -x)) == 0 )
-        return track;
+    for ( let seg of this.brep.segments ) {
+      if ( this.analyzer.cmp(radius, seg.radius) == 0
+           && this.analyzer.cmp(center, seg.circle.center) == 0 ) {
+        if ( !seg.track )
+          this.brep.add(this.analyzer.buildTrack(seg));
+        return seg.track;
+      }
     }
   }
   grab(point) {
