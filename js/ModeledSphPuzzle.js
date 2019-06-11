@@ -146,7 +146,7 @@ class ModeledSphPuzzleView
     this.raw = brep;
     brep.model_view = this;
 
-    this.root = new THREE.Object3D();
+    this.root = new THREE.Group();
     this.display.add(this.root);
 
     // select
@@ -171,6 +171,7 @@ class ModeledSphPuzzleView
     this.current_twister = undefined;
     this.moving = undefined;
     this.twist_center = undefined;
+    this.twist_circle = undefined;
     this.display.dom.addEventListener("mousemove", event => {
       if ( event.buttons != 0 )
         return;
@@ -181,6 +182,7 @@ class ModeledSphPuzzleView
         this.current_twister = undefined;
         this.moving = undefined;
         this.twist_center = undefined;
+        this.twist_circle = undefined;
         return;
       }
 
@@ -190,6 +192,7 @@ class ModeledSphPuzzleView
         this.current_twister = undefined;
         this.moving = undefined;
         this.twist_center = undefined;
+        this.twist_circle = undefined;
         return;
       }
 
@@ -243,7 +246,8 @@ class ModeledSphPuzzleView
   }
   drawElement(element) {
     var geo = toGeometry(element.shape);
-    var mat = new THREE.MeshLambertMaterial({color:0xFFFFFF, vertexColors:THREE.FaceColors});
+    var mat = new THREE.MeshLambertMaterial({color:0xFFFFFF, vertexColors:THREE.FaceColors,
+                                             transparent:false, opacity:0.4});
     element.model_view = new THREE.Mesh(geo, mat);
     element.model_view.userData.raw = element;
     element.model_view.material.emissive.set("hsl(60, 100%, 0%)");
@@ -314,27 +318,27 @@ class ModeledSphPuzzleView
       }
     };
 
-    track.twister = {dragstart, drag, dragend, raw:track};
+    track.model_twister = {dragstart, drag, dragend, raw:track};
   }
   removeTwister(track) {
-    delete track.twister;
+    delete track.model_twister;
   }
   updateTwisters() {
     this.twisters = [];
     if ( this.raw.status == "ready" ) {
       for ( let track of this.raw.tracks ) if ( track.secret.regions ) {
-        track.twister.shifts = Array.from(track.secret.pseudokeys.keys())
+        track.model_twister.shifts = Array.from(track.secret.pseudokeys.keys())
             .map(kee => this.raw.analyzer.mod4(track.shift-kee)).sort();
-        track.twister.shifts.push(...track.twister.shifts.map(kee => kee+4));
-        track.twister.shifts0 = Array.from(track.secret.passwords.keys())
+        track.model_twister.shifts.push(...track.model_twister.shifts.map(kee => kee+4));
+        track.model_twister.shifts0 = Array.from(track.secret.passwords.keys())
             .map(key => this.raw.analyzer.mod4(track.shift-key)).sort();
-        track.twister.shifts0.push(...track.twister.shifts0.map(kee => kee+4));
-        track.twister.circle = track.circle;
+        track.model_twister.shifts0.push(...track.model_twister.shifts0.map(kee => kee+4));
+        track.model_twister.circle = track.circle;
 
-        this.twisters.push([track.twister, track.circle.center,
+        this.twisters.push([track.model_twister, track.circle.center,
                             track.secret.regions.inner, track.circle]);
         if ( track.circle.radius == 1 )
-          this.twisters.push([track.twister, track.circle.center.map(x => -x),
+          this.twisters.push([track.model_twister, track.circle.center.map(x => -x),
                               track.secret.regions.outer, track.circle.complement()]);
       }
     }
@@ -425,6 +429,175 @@ class ModeledSphPuzzleView
   }
 }
 
+class ModeledSphBREPView
+{
+  constructor(display, brep, selector) {
+    this.display = display;
+    this.selector = selector;
+    this.origin = brep;
+    brep.view = this;
+
+    // BREP view
+    this.root = new THREE.Group();
+    this.display.add(this.root);
+
+    {
+      let geo = new THREE.IcosahedronGeometry(0.999, 5);
+      let mat = new THREE.MeshLambertMaterial({color:0xffffff});
+      this.ball = new THREE.Mesh(geo, mat);
+      this.display.add(this.ball, this.root);
+    }
+
+    brep.initialize(() => this.initView(brep));
+    this.display.animate(this.hoverRoutine());
+  }
+
+  // 3D view
+  initView(brep) {
+    for ( let segment of brep.segments )
+      this.drawSegment(segment);
+
+    brep.on("added", SphSeg, event => this.drawSegment(event.target));
+    brep.on("removed", SphSeg, event => this.eraseSegment(event.target));
+    brep.on("modified", SphSeg, event => {
+      if ( "arc" in event.record || "radius" in event.record || "angle" in event.record ) {
+        this.eraseSegment(event.target);
+        this.drawSegment(event.target);
+      }
+      if ( "orientation" in event.record )
+        event.target.view.quaternion.set(...event.target.orientation);
+      if ( "track" in event.record )
+        for ( let sub of event.target.view.children )
+          sub.material.color.set(event.target.track ? "red" : "black");
+    });
+  }
+  drawSegment(seg) {
+    var color = seg.track ? "red" : "black";
+    var dq = 0.01;
+
+    // make arc
+    {
+      let geo = new THREE.Geometry();
+      let s = Math.sin(seg.radius*Q), c = Math.cos(seg.radius*Q);
+      let da = dq*s;
+      let v0 = new THREE.Vector3(s, 0, c);
+      let center = new THREE.Vector3(0,0,1);
+      let v1 = v0.clone().applyAxisAngle(center, seg.arc*Q);
+      geo.vertices = Array.from({length:Math.floor(seg.arc/da)+1},
+                                (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
+      geo.vertices.push(v1);
+
+      let mat = new THREE.LineBasicMaterial({color});
+      var arc = new THREE.Line(geo, mat);
+      arc.name = "arc";
+    }
+
+    // make dash
+    {
+      let geo = new THREE.Geometry();
+      let s = Math.sin((seg.radius-dq/2)*Q), c = Math.cos((seg.radius-dq/2)*Q);
+      let da = dq*s;
+      let v0_ = new THREE.Vector3(s, 0, c);
+      let center = new THREE.Vector3(0,0,1);
+      let v0 = v0_.clone().applyAxisAngle(center, da*Q);
+      let v1 = v0_.clone().applyAxisAngle(center, (seg.arc-da)*Q);
+      geo.vertices = Array.from({length:Math.floor(seg.arc/da)-1},
+                                (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
+      geo.vertices.push(v1);
+
+      let mat = new THREE.LineDashedMaterial({color, dashSize: dq*Q/2, gapSize: dq*Q/2});
+      var dash = new THREE.Line(geo, mat);
+      dash.computeLineDistances();
+      dash.name = "dash";
+    }
+
+    // make angle
+    {
+      let geo;
+      if ( fzy_cmp(seg.angle, 0) != 0 )
+        geo = new THREE.CircleGeometry(dq*Q, 10, Q, seg.angle*Q);
+      else
+        geo = new THREE.CircleGeometry(3*dq*Q, 3, (1-10*dq)*Q, 2*10*dq*Q);
+      geo.translate(0, 0, 1);
+      geo.rotateY(seg.radius*Q);
+
+      let mat = new THREE.MeshBasicMaterial({color});
+      var ang = new THREE.Mesh(geo, mat);
+      ang.name = "angle";
+    }
+
+    // make holder
+    {
+      let da = dq*Math.sin(seg.radius*Q);
+      let N = Math.floor(seg.arc/da)+1;
+      let geo = new THREE.SphereGeometry(1, N, 2, 2*Q, seg.arc*Q,
+                                         (seg.radius-2*dq)*Q, dq*2*Q);
+      geo.rotateX(Q);
+
+      let mat = new THREE.MeshBasicMaterial({color, transparent:true, opacity:0,
+                                             depthWrite:false});
+      var holder = new THREE.Mesh(geo, mat);
+      holder.name = "holder";
+
+      holder.userData.hoverable = true;
+      holder.addEventListener("mouseenter", event =>
+        this.selector.preselection = event.target.parent.userData.origin);
+      holder.addEventListener("mouseleave", event =>
+        this.selector.preselection = undefined);
+      holder.addEventListener("click", event =>
+        event.originalEvent.ctrlKey ? this.selector.toggle() : this.selector.select());
+    }
+
+    var obj = new THREE.Object3D();
+    obj.add(arc, dash, ang, holder);
+    obj.quaternion.set(...seg.orientation);
+
+    seg.view = obj;
+    obj.userData.origin = seg;
+    this.display.add(seg.view, this.root);
+  }
+  eraseSegment(seg) {
+    this.display.remove(seg.view, this.root);
+    delete seg.view;
+  }
+
+  // hover/select feedback
+  objsOf(target) {
+    if ( target instanceof SphElem ) {
+      return Array.from(target.boundaries)
+                  .map(seg => seg.view).filter(view => view);
+
+    } else {
+      return [];
+    }
+  }
+  highlight(obj) {
+    obj.children[3].material.opacity = 0.3;
+  }
+  unhighlight(obj) {
+    obj.children[3].material.opacity = 0;
+  }
+  *hoverRoutine() {
+    var selected_objs = [];
+    while ( true ) {
+      yield;
+
+      // highlight selected objects
+      let new_selected_objs = this.selector.selections
+        .flatMap(sel => this.objsOf(sel));
+
+      for ( let obj of selected_objs )
+        if ( !new_selected_objs.includes(obj) )
+          this.unhighlight(obj);
+      for ( let obj of new_selected_objs )
+        if ( !selected_objs.includes(obj) )
+          this.highlight(obj);
+
+      selected_objs = new_selected_objs;
+    }
+  }
+}
+
 class ModeledSphPuzzleWorld
 {
   constructor(puzzle, id_display) {
@@ -434,5 +607,22 @@ class ModeledSphPuzzleWorld
     var dom = document.getElementById(id_display);
     this.display = new Display(dom);
     this.model_view = new ModeledSphPuzzleView(this.display, this.puzzle.brep, this.selector);
+    this.brep_view = new ModeledSphBREPView(this.display, this.puzzle.brep, this.selector);
+    this.brep_view.root.visible = false;
+    window.addEventListener("keydown", event => {
+      if ( event.key == " " ) {
+        if ( this.brep_view.root.visible ) {
+          this.brep_view.root.visible = false;
+          for ( let elem of puzzle.brep.elements )
+            elem.model_view.material.transparent = false;
+
+        } else {
+          this.brep_view.root.visible = true;
+          for ( let elem of puzzle.brep.elements )
+            elem.model_view.material.transparent = true;
+
+        }
+      }
+    });
   }
 }
