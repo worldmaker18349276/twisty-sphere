@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>twisty sphere - fully functional Dave's diamand puzzle</title>
+  <meta charset="utf-8">
+  <script src="../js/three.min.js"></script>
+  <script src="../js/dat.gui.min.js"></script>
+  <script src="../js/SphAnalyzer.js"></script>
+  <script src="../js/SphPuzzle.js"></script>
+  <script src="../js/Geometer.js"></script>
+  <script src="../js/csg.js"></script>
+  <script src="../js/ModeledSphPuzzle.js"></script>
+</head>
+<body>
+
+<div id="display" style="width:600px;height:600px;"></div>
+
+<script>
+
+var polygon = new CSG.Polygon([
+  new CSG.Vertex(new CSG.Vector3D( Math.sqrt(3/8), 0, -3/Math.sqrt(8))),
+  new CSG.Vertex(new CSG.Vector3D(-Math.sqrt(3/8), 0, -3/Math.sqrt(8))),
+  new CSG.Vertex(new CSG.Vector3D( 0, Math.sqrt(3),  0))
+]);
+var polygons = [];
+polygons.push(polygon             .setColor(0,0.2,0));
+polygons.push(polygon.rotateY(60) .setColor(0,0.6,0.2));
+polygons.push(polygon.rotateY(120).setColor(0,1,0));
+polygons.push(polygon.rotateY(180).setColor(0,0,0.6));
+polygons.push(polygon.rotateY(240).setColor(0,0,1));
+polygons.push(polygon.rotateY(300).setColor(0,1,1));
+polygons.push(polygon             .mirroredY().setColor(1,0,0));
+polygons.push(polygon.rotateY(60) .mirroredY().setColor(1,0.4,0));
+polygons.push(polygon.rotateY(120).mirroredY().setColor(1,1,0));
+polygons.push(polygon.rotateY(180).mirroredY().setColor(0.5,0,0.5));
+polygons.push(polygon.rotateY(240).mirroredY().setColor(1,0.4,1));
+polygons.push(polygon.rotateY(300).mirroredY().setColor(1,0.75,0.8));
+var bipyramid = CSG.fromPolygons(polygons);
+
+var puzzle = new ModeledSphPuzzle(bipyramid);
+
+var c = 1/2;
+var s = Math.sqrt(3)/2;
+var h = 1/Math.sqrt(2);
+puzzle.slice([ 1, h, 0], 1);
+puzzle.slice([ c, h, s], 1);
+puzzle.slice([-c, h, s], 1);
+puzzle.slice([-1, h, 0], 1);
+puzzle.slice([ c, h,-s], 1);
+puzzle.slice([-c, h,-s], 1);
+
+puzzle.clean();
+puzzle.prepare();
+
+var world = new ModeledSphPuzzleWorld(puzzle, "display");
+
+</script>
+</body>
+</html>
