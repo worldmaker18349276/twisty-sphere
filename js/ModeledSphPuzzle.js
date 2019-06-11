@@ -198,8 +198,9 @@ class ModeledSphPuzzleView
       this.current_twister = undefined;
       this.moving = undefined;
       this.twist_center = undefined;
+      this.twist_circle = undefined;
 
-      for ( let [twister, center, region] of this.twisters )
+      for ( let [twister, center, region, circle] of this.twisters )
         if ( region.has(target) ) {
           var dis = angleTo(center, p);
           if ( dis < dis0 ) {
@@ -207,6 +208,7 @@ class ModeledSphPuzzleView
             this.current_twister = twister;
             this.moving = region;
             this.twist_center = center;
+            this.twist_circle = circle;
           }
         }
     });
@@ -270,12 +272,11 @@ class ModeledSphPuzzleView
   }
   addTwister(track) {
     // drag
-    var circle, plane, angle;
+    var plane, angle;
 
     var dragstart = event => {
       var p = event.point.toArray();
-      circle = this.current_twister.raw.circle;
-      circle.shift(circle.thetaOf(p));
+      this.twist_circle.shift(this.twist_circle.thetaOf(p));
       plane = new THREE.Plane(new THREE.Vector3(...this.twist_center),
                               -dot(this.twist_center, p));
 
@@ -289,7 +290,7 @@ class ModeledSphPuzzleView
       var {offsetX, offsetY} = event.originalEvent;
       var {point} = this.display.pointTo(offsetX, offsetY, plane);
       if ( !point ) return angle;
-      var angle_ = circle.thetaOf(point.toArray());
+      var angle_ = this.twist_circle.thetaOf(point.toArray());
       if ( Number.isNaN(angle_) )
         return angle;
 
@@ -330,9 +331,11 @@ class ModeledSphPuzzleView
         track.twister.shifts0.push(...track.twister.shifts0.map(kee => kee+4));
         track.twister.circle = track.circle;
 
-        this.twisters.push([track.twister, track.circle.center, track.secret.regions.inner]);
+        this.twisters.push([track.twister, track.circle.center,
+                            track.secret.regions.inner, track.circle]);
         if ( track.circle.radius == 1 )
-          this.twisters.push([track.twister, track.circle.center.map(x => -x), track.secret.regions.outer]);
+          this.twisters.push([track.twister, track.circle.center.map(x => -x),
+                              track.secret.regions.outer, track.circle.complement()]);
       }
     }
   }
