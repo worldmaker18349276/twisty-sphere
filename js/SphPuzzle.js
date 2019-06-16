@@ -118,8 +118,8 @@ class Display
     // event system on Object3D
     this.raycaster = new THREE.Raycaster();
     this.raycaster.linePrecision = 0;
-    function event3D(name, event, point) {
-      return Object.assign({}, point, {type:name, originalEvent:event});
+    function event3D(name, event, spot) {
+      return Object.assign({}, spot, {type:name, originalEvent:event});
     }
     this.hoverable = [];
 
@@ -194,7 +194,7 @@ class Display
           if ( click_spot.object )
             click_spot.object.dispatchEvent(event3D("click", event, click_spot));
           else
-            this.scene.dispatchEvent({type:"click", originalEvent:event});
+            this.scene.dispatchEvent(event3D("click", event, click_spot));
           click_spot = undefined;
         }
       }, false);
@@ -205,6 +205,18 @@ class Display
       let dragging = false, drag_spot = {};
       const DRAG_KEY = Symbol("drag");
 
+      let release = () => {
+        // dragend
+        if ( dragging ) {
+          let dragend_event = event3D("dragend", event, {});
+          dragend_event.drag = false;
+          drag_spot.object.dispatchEvent(dragend_event);
+        }
+
+        this.unlockTrackball(DRAG_KEY);
+        drag_spot = {};
+        dragging = false;
+      };
       this.dom.addEventListener("mousedown", event => {
         if ( event.buttons === 1 && !dragging ) {
           drag_spot = this.spotOn(event.offsetX, event.offsetY);
@@ -214,28 +226,30 @@ class Display
             this.lockTrackball(DRAG_KEY);
         }
       }, false);
+      this.dom.addEventListener("mouseup", release, false);
       this.dom.addEventListener("mousemove", event => {
-        if ( event.buttons === 1 ) {
+        if ( event.buttons === 1 && drag_spot.object ) {
           var target3D = drag_spot.object;
 
-          if ( !dragging && target3D ) {
-            let drag_event = event3D("dragstart", event, drag_spot, {drag:false});
-            target3D.dispatchEvent(drag_event);
-            dragging = drag_event.drag;
+          // dragstart
+          if ( !dragging ) {
+            let dragstart_event = event3D("dragstart", event, drag_spot);
+            dragstart_event.drag = false;
+            target3D.dispatchEvent(dragstart_event);
+            if ( !dragstart_event.drag )
+              release();
+            else
+              dragging = dragstart_event.drag;
           }
 
-          if ( dragging )
-            target3D.dispatchEvent(event3D("drag", event, {}));
-          else
-            this.unlockTrackball(DRAG_KEY);
-        }
-      }, false);
-      this.dom.addEventListener("mouseup", event => {
-        if ( dragging ) {
-          drag_spot.object.dispatchEvent(event3D("dragend", event, {}));
-          this.unlockTrackball(DRAG_KEY);
-          drag_spot = {};
-          dragging = false;
+          if ( dragging ) {
+            // drag
+            let drag_event = event3D("drag", event, {});
+            drag_event.drag = true;
+            target3D.dispatchEvent(drag_event);
+            if ( !drag_event.drag )
+              release();
+          }
         }
       }, false);
     }

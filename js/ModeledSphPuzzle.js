@@ -138,6 +138,123 @@ class ModeledSphPuzzle extends SphPuzzle
   }
 }
 
+class ModeledSimpleTwister
+{
+  constructor(display, track, side="inner") {
+    // drag
+    this.display = display;
+    this.raw = track;
+    this.side = side;
+
+    this.update();
+  }
+
+  update() {
+    if ( this.raw.host.status!="ready" || !this.raw.secret || !this.raw.secret.regions ) {
+      this.shifts = undefined;
+      this.shifts0 = undefined;
+      this.circle = undefined;
+      this.center = undefined;
+      this.region = undefined;
+
+      this.plane = undefined;
+      this.angle = undefined;
+      this.sticked = undefined;
+      this.twistable = false;
+
+      return;
+    }
+
+    this.shifts = Array.from(this.raw.secret.pseudokeys.keys())
+        .map(kee => this.raw.host.analyzer.mod4(this.raw.shift-kee, [0])).sort();
+
+    this.shifts0 = Array.from(this.raw.secret.passwords.keys())
+        .map(key => this.raw.host.analyzer.mod4(this.raw.shift-key, [0])).sort();
+
+    if ( this.side == "inner" ) {
+      this.circle = this.raw.circle;
+      this.center = this.circle.center;
+      this.region = this.raw.secret.regions.inner;
+    } else {
+      this.circle = this.raw.circle.complement();
+      this.center = this.circle.center;
+      this.region = this.raw.secret.regions.outer;
+    }
+
+    this.plane = undefined;
+    this.angle = undefined;
+    this.sticked = undefined;
+    this.twistable = true;
+  }
+  get targets() {
+    return Array.from(this.region).map(elem => elem.model_view);
+  }
+  snap(ang, angle0, sticked) {
+    if ( Number.isNaN(ang) )
+      return angle0;
+
+    ang = fzy_mod(ang, 4, this.shifts, 0.01);
+    ang = fzy_mod(ang, 4, this.shifts0, 0.05);
+    if ( sticked )
+      ang = fzy_mod(ang, 4, [angle0], 0.05);
+
+    return ang;
+  }
+  twist(angle) {
+    return new Promise((resolve, reject) => {
+      requestAnimationFrame(() => {
+        try {
+          var hold = this.raw.host.elements.find(elem => !this.region.has(elem));
+          this.raw.host.host.twist(this.raw, angle, hold);
+          this.raw.host.once("changed", this.raw.host, event => resolve());
+
+        } catch ( err ) {
+          reject(err);
+        }
+      });
+    });
+  }
+
+  dragstart(event) {
+    this.circle.shift(this.circle.thetaOf(event.point.toArray()));
+    this.plane = new THREE.Plane(new THREE.Vector3(...this.center),
+                                 -dot(this.center, event.point.toArray()));
+    for ( let obj of this.targets )
+      obj.userData.quaternion0 = obj.quaternion.clone();
+    event.drag = true;
+    this.angle = 0;
+    this.sticked = true;
+  }
+  drag(event) {
+    var {offsetX, offsetY} = event.originalEvent;
+    var {point} = this.display.pointTo(offsetX, offsetY, this.plane);
+    if ( !point ) return;
+    this.angle = this.snap(this.circle.thetaOf(point.toArray()), this.angle, this.sticked);
+    if ( this.angle != 0 )
+      this.sticked = false;
+
+    var rot = new THREE.Quaternion().setFromAxisAngle(this.plane.normal, this.angle*Q);
+
+    for ( let obj of this.targets )
+      obj.quaternion.multiplyQuaternions(rot, obj.userData.quaternion0);
+  }
+  async dragend(event) {
+    if ( this.angle !== 0 )
+      await this.twist(this.angle);
+  }
+  async click(event) {
+    if ( event.originalEvent.button == 0 )
+      this.angle = this.raw.host.analyzer.mod4(this.shifts0.find(ang => ang != 0));
+    else
+      this.angle = -this.raw.host.analyzer.mod4(-this.shifts0.slice().reverse().find(ang => ang != 0));
+
+    var axis = new THREE.Vector3(...this.center);
+    var routine = this.display.animatedRotateRoutine(this.targets, axis, this.angle*Q, 10);
+    await this.display.animate(routine);
+    await this.twist(this.angle);
+  }
+}
+
 class ModeledSphPuzzleView
 {
   constructor(display, brep, selector) {
@@ -149,85 +266,85 @@ class ModeledSphPuzzleView
     this.root = new THREE.Group();
     this.display.add(this.root);
 
+    this.status = "explore";
+    this.twisters = [];
+    this.current_twister = undefined;
+
+    // hover
+    this.mouseleave_handler = event => this.selector.preselection = undefined;
+    this.mouseover_handler = event => {
+      if ( event.originalEvent.buttons != 0 || this.status != "explore" )
+        return;
+
+      var target = event.target.userData.raw;
+      if ( event.originalEvent.ctrlKey ) {
+        this.selector.preselection = target;
+        return;
+      }
+
+      if ( this.raw.status != "ready" )
+        return;
+
+      var p = event.point.toArray();
+      var dis0 = Infinity;
+      for ( let twister of this.twisters ) if ( twister.region.has(target) ) {
+        var dis = angleTo(twister.center, p);
+        if ( dis < dis0 ) {
+          dis0 = dis;
+          this.selector.preselection = twister;
+        }
+      }
+    };
+
     // select
     this.display.scene.addEventListener("click",
-      event => event.originalEvent.ctrlKey && this.selector.reselect());
+      event => event.originalEvent.ctrlKey && this.status=="explore" && this.selector.reselect());
     this.click_handler = event => {
+      if ( this.status != "explore" )
+        return;
+
       if ( event.originalEvent.ctrlKey ) {
         this.selector.toggle();
 
-      } else if ( !this.twisting && this.current_twister ) {
-        if ( event.originalEvent.button == 0 )
-          this.current_twister.twist(+1);
-        else if ( event.originalEvent.button == 2 )
-          this.current_twister.twist(-1);
-        this.current_twister = undefined;
-        this.moving = undefined;
+      } else if ( this.selector.preselection instanceof ModeledSimpleTwister ) {
+        if ( ![0, 2].includes(event.originalEvent.button) )
+          return;
+
+        this.status = "twist";
+        this.current_twister = this.selector.preselection;
+        this.current_twister.click(event).then(() => {
+          this.status = "explore";
+          this.current_twister = undefined;
+        });
       }
     };
 
     // drag
     this.dragstart_handler = event => {
-      if ( this.current_twister )
+      if ( this.status != "explore" )
+        return;
+
+      if ( this.selector.preselection instanceof ModeledSimpleTwister ) {
+        this.status = "drag";
+        this.current_twister = this.selector.preselection;
         this.current_twister.dragstart(event);
+      }
     };
-    this.drag_handler = event => this.current_twister.drag(event);
+    this.drag_handler = event => {
+      if ( this.status != "drag" )
+        throw new Error();
+
+      this.current_twister.drag(event);
+    };
     this.dragend_handler = event => {
-      this.current_twister.dragend(event);
-      this.current_twister = undefined;
-      this.moving = undefined;
+      if ( this.status != "drag" )
+        throw new Error();
+
+      this.current_twister.dragend(event).then(() => {
+        this.status = "explore";
+        this.current_twister = undefined;
+      });
     };
-
-    // hover
-    this.twisters = [];
-    this.current_twister = undefined;
-    this.moving = undefined;
-    this.twist_center = undefined;
-    this.twist_circle = undefined;
-    this.twisting = false;
-    this.display.dom.addEventListener("mousemove", event => {
-      if ( event.buttons != 0 || this.twisting )
-        return;
-
-      var drag_spot = this.display.spotOn(event.offsetX, event.offsetY);
-      if ( !drag_spot.object || !(drag_spot.object.userData.raw instanceof SphElem) ) {
-        this.selector.preselection = undefined;
-        this.current_twister = undefined;
-        this.moving = undefined;
-        this.twist_center = undefined;
-        this.twist_circle = undefined;
-        return;
-      }
-
-      var target = drag_spot.object.userData.raw;
-      if ( brep.status != "ready" || event.ctrlKey ) {
-        this.selector.preselection = target;
-        this.current_twister = undefined;
-        this.moving = undefined;
-        this.twist_center = undefined;
-        this.twist_circle = undefined;
-        return;
-      }
-
-      var p = drag_spot.point.toArray();
-      var dis0 = Infinity;
-      this.current_twister = undefined;
-      this.moving = undefined;
-      this.twist_center = undefined;
-      this.twist_circle = undefined;
-
-      for ( let [twister, center, region, circle] of this.twisters )
-        if ( region.has(target) ) {
-          var dis = angleTo(center, p);
-          if ( dis < dis0 ) {
-            dis0 = dis;
-            this.current_twister = twister;
-            this.moving = region;
-            this.twist_center = center;
-            this.twist_circle = circle;
-          }
-        }
-    });
 
     brep.initialize(() => this.initView(brep));
     this.display.animate(this.hoverRoutine());
@@ -270,6 +387,8 @@ class ModeledSphPuzzleView
     element.model_view.userData.hoverable = true;
     element.model_view.userData.draggable = true;
     element.model_view.addEventListener("click", this.click_handler);
+    element.model_view.addEventListener("mouseover", this.mouseover_handler);
+    element.model_view.addEventListener("mouseleave", this.mouseleave_handler);
     element.model_view.addEventListener("dragstart", this.dragstart_handler);
     element.model_view.addEventListener("drag", this.drag_handler);
     element.model_view.addEventListener("dragend", this.dragend_handler);
@@ -288,105 +407,34 @@ class ModeledSphPuzzleView
     element.model_view.removeEventListener("dragend", this.dragend_handler);
   }
   addTwister(track) {
-    // drag
-    var plane, angle;
-
-    var dragstart = event => {
-      var p = event.point.toArray();
-      this.twist_circle.shift(this.twist_circle.thetaOf(p));
-      plane = new THREE.Plane(new THREE.Vector3(...this.twist_center),
-                              -dot(this.twist_center, p));
-
-      for ( let elem of this.moving )
-        elem.model_view.userData.quaternion0 = elem.model_view.quaternion.clone();
-
-      this.twisting = true;
-      event.drag = true;
-      angle = 0;
-    };
-    var drag = event => {
-      var {offsetX, offsetY} = event.originalEvent;
-      var {point} = this.display.pointTo(offsetX, offsetY, plane);
-      if ( !point ) return angle;
-      var angle_ = this.twist_circle.thetaOf(point.toArray());
-      if ( Number.isNaN(angle_) )
-        return angle;
-
-      angle = angle + fzy_mod(angle_-angle+2, 4) - 2;
-      angle = fzy_mod(angle, 8, this.current_twister.shifts, 0.01);
-      angle = fzy_mod(angle, 8, this.current_twister.shifts0, 0.05);
-      angle = fzy_mod(angle, 8, [0, 4], 0.05);
-      var rot = new THREE.Quaternion().setFromAxisAngle(plane.normal, angle*Q);
-
-      for ( let elem of this.moving )
-        elem.model_view.quaternion.multiplyQuaternions(rot, elem.model_view.userData.quaternion0);
-
-      return angle;
-    };
-    var dragend = event => {
-      var angle = drag(event);
-
-      if ( angle !== 0 ) {
-        var hold = this.raw.elements.find(elem => !this.moving.has(elem));
-        this.raw.host.twist(track, angle, hold);
-      }
-      this.twisting = false;
-    };
-    var twist = n => {
-      var shifts0 = this.current_twister.shifts0;
-      if ( !shifts0.includes(0) )
-        shifts0.unshift(0);
-      var angle;
-      if ( n > 0 )
-        angle = this.raw.analyzer.mod4(shifts0[n]);
-      else
-        angle = -this.raw.analyzer.mod4(-shifts0[shifts0.length+n]);
-
-      var axis = new THREE.Vector3(...this.twist_center);
-      var moving = Array.from(this.moving);
-      var targets = moving.map(elem => elem.model_view);
-
-      this.twisting = true;
-      var routine = this.display.animatedRotateRoutine(targets, axis, angle*Q, 10);
-      this.display.animate(routine).then(() => {
-        requestAnimationFrame(() => {
-          var hold = this.raw.elements.find(elem => !moving.includes(elem));
-          this.raw.host.twist(track, angle, hold);
-          this.raw.once("changed", this.raw, event => this.twisting=false);
-        });
-      });
-    };
-
-    track.model_twister = {dragstart, drag, dragend, twist, raw:track};
+    track.twisters = [];
+    track.twisters.push(new ModeledSimpleTwister(this.display, track, "inner"));
+    track.twisters[0].name = `${track.name || "<SphTrack>"}.twisters[0]`;
+    if ( track.circle.radius == 1 ) {
+      track.twisters.push(new ModeledSimpleTwister(this.display, track, "outer"));
+      track.twisters[1].name = `${track.name || "<SphTrack>"}.twisters[1]`;
+    }
   }
   removeTwister(track) {
-    delete track.model_twister;
+    delete track.twisters;
   }
   updateTwisters() {
     this.twisters = [];
-    if ( this.raw.status == "ready" ) {
-      for ( let track of this.raw.tracks ) if ( track.secret.regions ) {
-        track.model_twister.shifts = Array.from(track.secret.pseudokeys.keys())
-            .map(kee => this.raw.analyzer.mod4(track.shift-kee, [0])).sort();
-        track.model_twister.shifts.push(...track.model_twister.shifts.map(kee => kee+4));
-        track.model_twister.shifts0 = Array.from(track.secret.passwords.keys())
-            .map(key => this.raw.analyzer.mod4(track.shift-key, [0])).sort();
-        track.model_twister.shifts0.push(...track.model_twister.shifts0.map(kee => kee+4));
-        track.model_twister.circle = track.circle;
-
-        this.twisters.push([track.model_twister, track.circle.center,
-                            track.secret.regions.inner, track.circle]);
-        if ( track.circle.radius == 1 )
-          this.twisters.push([track.model_twister, track.circle.center.map(x => -x),
-                              track.secret.regions.outer, track.circle.complement()]);
+    for ( let track of this.raw.tracks )
+      for ( let twister of track.twisters ) {
+        twister.update();
+        if ( twister.twistable )
+          this.twisters.push(twister);
       }
-    }
   }
 
   // hover/select feedback
   viewsOf(target) {
     if ( target instanceof SphElem ) {
       return target.model_view ? [target.model_view] : [];
+
+    } else if ( target instanceof ModeledSimpleTwister ) {
+      return target.targets || [];
 
     } else {
       return [];
@@ -425,26 +473,12 @@ class ModeledSphPuzzleView
   }
   *hoverRoutine() {
     var preselection = undefined;
-    var moving = [];
     var selected_views = [];
     while ( true ) {
       yield;
 
-      // emphasize moving views
-      if ( this.moving !== moving ) {
-        for ( let view of this.viewsOf(preselection) )
-          this.unemphasize(view);
-        preselection = undefined;
-
-        if ( moving ) for ( let elem of moving ) if ( elem.model_view )
-          this.unemphasize(elem.model_view);
-        if ( this.moving ) for ( let elem of this.moving ) if ( elem.model_view )
-          this.emphasize(elem.model_view);
-        moving = this.moving;
-      }
-
       // emphasize hovered view
-      if ( this.moving === undefined && this.selector.preselection !== preselection ) {
+      if ( this.selector.preselection !== preselection ) {
         for ( let view of this.viewsOf(preselection) )
           this.unemphasize(view);
         for ( let view of this.viewsOf(this.selector.preselection) )

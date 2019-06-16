@@ -78,6 +78,27 @@ puzzle.brep.initialize(() => {
   });
 });
 
+const _update = ModeledSimpleTwister.prototype.update;
+ModeledSimpleTwister.prototype.update = function() {
+  _update.call(this);
+  if ( this.shifts )
+    this.shifts.push(...this.shifts.map(kee => kee+4));
+  if ( this.shifts0 )
+    this.shifts0.push(...this.shifts0.map(kee => kee+4));
+};
+ModeledSimpleTwister.prototype.snap = function(ang, angle0, sticked) {
+  if ( Number.isNaN(ang) )
+    return angle0;
+
+  ang = angle0 + fzy_mod(ang-angle0+2, 4) - 2;
+  ang = fzy_mod(ang, 8, this.shifts, 0.01);
+  ang = fzy_mod(ang, 8, this.shifts0, 0.05);
+  if ( sticked )
+    ang = fzy_mod(ang, 8, [angle0], 0.05);
+
+  return ang;
+};
+
 document.addEventListener("keydown", event => {
   if ( event.key == "=" ) {
     for ( let elem of puzzle.brep.elements ) {
