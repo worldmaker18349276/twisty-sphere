@@ -156,11 +156,13 @@ class ModeledSphPuzzleView
       if ( event.originalEvent.ctrlKey ) {
         this.selector.toggle();
 
-      } else if ( this.current_twister ) {
+      } else if ( !this.twisting && this.current_twister ) {
         if ( event.originalEvent.button == 0 )
           this.current_twister.twist(+1);
         else if ( event.originalEvent.button == 2 )
           this.current_twister.twist(-1);
+        this.current_twister = undefined;
+        this.moving = undefined;
       }
     };
 
@@ -182,8 +184,9 @@ class ModeledSphPuzzleView
     this.moving = undefined;
     this.twist_center = undefined;
     this.twist_circle = undefined;
+    this.twisting = false;
     this.display.dom.addEventListener("mousemove", event => {
-      if ( event.buttons != 0 )
+      if ( event.buttons != 0 || this.twisting )
         return;
 
       var drag_spot = this.display.spotOn(event.offsetX, event.offsetY);
@@ -297,6 +300,7 @@ class ModeledSphPuzzleView
       for ( let elem of this.moving )
         elem.model_view.userData.quaternion0 = elem.model_view.quaternion.clone();
 
+      this.twisting = true;
       event.drag = true;
       angle = 0;
     };
@@ -326,6 +330,7 @@ class ModeledSphPuzzleView
         var hold = this.raw.elements.find(elem => !this.moving.has(elem));
         this.raw.host.twist(track, angle, hold);
       }
+      this.twisting = false;
     };
     var twist = n => {
       var shifts0 = this.current_twister.shifts0;
@@ -341,11 +346,13 @@ class ModeledSphPuzzleView
       var moving = Array.from(this.moving);
       var targets = moving.map(elem => elem.model_view);
 
+      this.twisting = true;
       var routine = this.display.animatedRotateRoutine(targets, axis, angle*Q, 10);
       this.display.animate(routine).then(() => {
         requestAnimationFrame(() => {
           var hold = this.raw.elements.find(elem => !moving.includes(elem));
           this.raw.host.twist(track, angle, hold);
+          this.raw.once("changed", this.raw, event => this.twisting=false);
         });
       });
     };

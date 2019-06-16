@@ -18,12 +18,12 @@
 <script>
 
 cube = CSG.cube({center: [0, 0, 0], radius: [1.1, 1.1, 1.1]})
-  .intersect(CSG.cube({center: [ 0,-1, 0], radius: [2, 2, 2]}).setColor(1,1,1))
-  .intersect(CSG.cube({center: [ 0, 1, 0], radius: [2, 2, 2]}).setColor(1,1,0))
-  .intersect(CSG.cube({center: [-1, 0, 0], radius: [2, 2, 2]}).setColor(0,0,1))
-  .intersect(CSG.cube({center: [ 1, 0, 0], radius: [2, 2, 2]}).setColor(0,1,0))
-  .intersect(CSG.cube({center: [ 0, 0,-1], radius: [2, 2, 2]}).setColor(1,0,0))
-  .intersect(CSG.cube({center: [ 0, 0, 1], radius: [2, 2, 2]}).setColor(1,0.6,0.2));
+  .intersect(CSG.cube({center: [-1, 0, 0], radius: [2, 2, 2]}).setColor(1,0,0))
+  .intersect(CSG.cube({center: [ 1, 0, 0], radius: [2, 2, 2]}).setColor(0,1,1))
+  .intersect(CSG.cube({center: [ 0,-1, 0], radius: [2, 2, 2]}).setColor(0,1,0))
+  .intersect(CSG.cube({center: [ 0, 1, 0], radius: [2, 2, 2]}).setColor(1,0,1))
+  .intersect(CSG.cube({center: [ 0, 0,-1], radius: [2, 2, 2]}).setColor(0,0,1))
+  .intersect(CSG.cube({center: [ 0, 0, 1], radius: [2, 2, 2]}).setColor(1,1,0));
 var puzzle = new ModeledSphPuzzle(cube);
 
 var x = Math.atan(3)/Q;
@@ -44,13 +44,6 @@ function hideNseekNpretend(elem) {
 
   for ( let face of elem.model_view.geometry.faces ) {
     let q1 = elem.model_view.quaternion.toArray();
-    if ( !face.original_color ) {
-      face.original_color = face.color.getHSL();
-      if ( face.normal.x == 0 && face.normal.y == 0 && face.normal.z == 0 )
-        elem.model_view.geometry.computeFaceNormals();
-      face.quaternion = q_align(face.normal.toArray());
-    }
-
     let q = q_mul(q1, q_mul(face.quaternion, q0));
     let t = Math.abs(Math.atan2(norm(q), q[3])/(2*Math.PI));
     let c = (Math.cos(4*Math.PI*t) + 1.1)/2.1;
@@ -65,6 +58,15 @@ world.model_view.display.trackball.quaternion.onChange(() => {
 });
 puzzle.brep.initialize(() => {
   for ( let elem of puzzle.brep.elements ) {
+    for ( let face of elem.model_view.geometry.faces ) {
+      face.original_color = face.color.getHSL();
+      if ( face.normal.x == 0 && face.normal.y == 0 && face.normal.z == 0 )
+        elem.model_view.geometry.computeFaceNormals();
+      let v_z = face.normal.toArray();
+      let v_xz = cross([1,1,1], v_z);
+      face.quaternion = q_align(v_z, v_xz);
+    }
+
     hideNseekNpretend(elem);
     elem.model_view.quaternion.onChange(() => hideNseekNpretend(elem));
   }
@@ -74,6 +76,22 @@ puzzle.brep.initialize(() => {
     hideNseekNpretend([elem]);
     elem.model_view.quaternion.onChange(() => hideNseekNpretend(elem));
   });
+});
+
+document.addEventListener("keydown", event => {
+  if ( event.key == "=" ) {
+    for ( let elem of puzzle.brep.elements ) {
+      for ( let face of elem.model_view.geometry.faces ) {
+        let {h, s, l} = face.original_color;
+        face.color.setHSL(h, s, l);
+      }
+      elem.model_view.geometry.colorsNeedUpdate = true;
+    }
+  }
+});
+document.addEventListener("keyup", event => {
+  for ( let elem of puzzle.brep.elements )
+    hideNseekNpretend(elem);
 });
 
 </script>
