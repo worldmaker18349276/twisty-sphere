@@ -152,7 +152,17 @@ class ModeledSphPuzzleView
     // select
     this.display.scene.addEventListener("click",
       event => event.originalEvent.ctrlKey && this.selector.reselect());
-    this.click_handler = event => event.originalEvent.ctrlKey && this.selector.toggle();
+    this.click_handler = event => {
+      if ( event.originalEvent.ctrlKey ) {
+        this.selector.toggle();
+
+      } else if ( this.current_twister ) {
+        if ( event.originalEvent.button == 0 )
+          this.current_twister.twist(+1);
+        else if ( event.originalEvent.button == 2 )
+          this.current_twister.twist(-1);
+      }
+    };
 
     // drag
     this.dragstart_handler = event => {
@@ -317,8 +327,30 @@ class ModeledSphPuzzleView
         this.raw.host.twist(track, angle, hold);
       }
     };
+    var twist = n => {
+      var shifts0 = this.current_twister.shifts0;
+      if ( !shifts0.includes(0) )
+        shifts0.unshift(0);
+      var angle;
+      if ( n > 0 )
+        angle = this.raw.analyzer.mod4(shifts0[n]);
+      else
+        angle = -this.raw.analyzer.mod4(-shifts0[shifts0.length+n]);
 
-    track.model_twister = {dragstart, drag, dragend, raw:track};
+      var axis = new THREE.Vector3(...this.twist_center);
+      var moving = Array.from(this.moving);
+      var targets = moving.map(elem => elem.model_view);
+
+      var routine = this.display.animatedRotateRoutine(targets, axis, angle*Q, 10);
+      this.display.animate(routine).then(() => {
+        requestAnimationFrame(() => {
+          var hold = this.raw.elements.find(elem => !moving.includes(elem));
+          this.raw.host.twist(track, angle, hold);
+        });
+      });
+    };
+
+    track.model_twister = {dragstart, drag, dragend, twist, raw:track};
   }
   removeTwister(track) {
     delete track.model_twister;
@@ -328,10 +360,10 @@ class ModeledSphPuzzleView
     if ( this.raw.status == "ready" ) {
       for ( let track of this.raw.tracks ) if ( track.secret.regions ) {
         track.model_twister.shifts = Array.from(track.secret.pseudokeys.keys())
-            .map(kee => this.raw.analyzer.mod4(track.shift-kee)).sort();
+            .map(kee => this.raw.analyzer.mod4(track.shift-kee, [0])).sort();
         track.model_twister.shifts.push(...track.model_twister.shifts.map(kee => kee+4));
         track.model_twister.shifts0 = Array.from(track.secret.passwords.keys())
-            .map(key => this.raw.analyzer.mod4(track.shift-key)).sort();
+            .map(key => this.raw.analyzer.mod4(track.shift-key, [0])).sort();
         track.model_twister.shifts0.push(...track.model_twister.shifts0.map(kee => kee+4));
         track.model_twister.circle = track.circle;
 

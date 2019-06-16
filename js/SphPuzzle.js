@@ -317,6 +317,10 @@ class Display
     var start_quaternions = targets.map(target => target.quaternion.clone());
     var curr_angle = 0;
     var t0, t;
+    if ( angle < 0 ) {
+      angle = -angle;
+      axis = axis.clone().negate();
+    }
 
     t0 = yield;
     while ( curr_angle < angle ) {
