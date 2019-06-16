@@ -45,10 +45,9 @@ function hideNseekNpretend(elem) {
   for ( let face of elem.model_view.geometry.faces ) {
     let q1 = elem.model_view.quaternion.toArray();
     let q = q_mul(q1, q_mul(face.quaternion, q0));
-    let t = Math.abs(Math.atan2(norm(q), q[3])/(2*Math.PI));
-    let c = (Math.cos(4*Math.PI*t) + 1.1)/2.1;
+    let t = Math.abs(Math.atan2(norm(q), q[3])/Math.PI); // [-1, 1]
     let {h, s, l} = face.original_color;
-    face.color.setHSL((h+t)%1, s, l*c);
+    face.color.setHSL((h+Math.round(t)/2)%1, s, l*(Math.cos(2*Math.PI*t) + 1)/2);
   }
   elem.model_view.geometry.colorsNeedUpdate = true;
 }

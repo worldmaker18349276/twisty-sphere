@@ -7,4 +7,4 @@ https://worldmaker18349276.github.io/twisty-sphere/example3.html
 https://worldmaker18349276.github.io/twisty-sphere/museum/curvy_copter.html  
 https://worldmaker18349276.github.io/twisty-sphere/museum/hide_and_seek_and_pretend.html  
 https://worldmaker18349276.github.io/twisty-sphere/museum/Eitan_tricube.html  
-https://worldmaker18349276.github.io/twisty-sphere/museum/FF_Dave_diamand_puzzle.html  
+https://worldmaker18349276.github.io/twisty-sphere/museum/FF_Dave_diamond_puzzle.html  
