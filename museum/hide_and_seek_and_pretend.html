@@ -56,14 +56,14 @@ world.model_view.display.trackball.quaternion.onChange(() => {
     hideNseekNpretend(elem);
 });
 puzzle.brep.initialize(() => {
+  world.display.scene.add(new THREE.AmbientLight(0x404040));
   for ( let elem of puzzle.brep.elements ) {
     for ( let face of elem.model_view.geometry.faces ) {
       face.original_color = face.color.getHSL();
       if ( face.normal.x == 0 && face.normal.y == 0 && face.normal.z == 0 )
         elem.model_view.geometry.computeFaceNormals();
       let v_z = face.normal.toArray();
-      let v_xz = cross([1,1,1], v_z);
-      face.quaternion = q_align(v_z, v_xz);
+      face.quaternion = q_align(v_z, [1,1,1]);
     }
 
     hideNseekNpretend(elem);
@@ -98,8 +98,9 @@ ModeledSimpleTwister.prototype.snap = function(ang, angle0, sticked) {
   return ang;
 };
 
+var front = new THREE.Quaternion(0,0,0,1);
 document.addEventListener("keydown", event => {
-  if ( event.key == "=" ) {
+  if ( event.key == "=" ) { // cheat
     for ( let elem of puzzle.brep.elements ) {
       for ( let face of elem.model_view.geometry.faces ) {
         let {h, s, l} = face.original_color;
@@ -107,6 +108,23 @@ document.addEventListener("keydown", event => {
       }
       elem.model_view.geometry.colorsNeedUpdate = true;
     }
+
+  } else if ( event.key == "s" ) { // save direction
+    front.copy(world.display.trackball.quaternion);
+
+  } else if ( event.key == "a" ) { // align
+    var q = world.display.trackball.quaternion.clone()
+            .conjugate().premultiply(front).toArray();
+    var axis = new THREE.Vector3(...normalize(q));
+    var angle = Math.atan2(norm(q), q[3])*2;
+    var routine = world.display.animatedRotateRoutine([world.display.trackball], axis, angle, 8);
+    world.display.animate(routine);
+
+  } else if ( event.key == "r" ) {  // rotate
+    var axis = new THREE.Vector3(0, 0, 1).applyQuaternion(world.display.trackball.quaternion);
+    var routine = world.display.animatedRotateRoutine([world.display.trackball], axis, 2*Math.PI, 8);
+    world.display.animate(routine);
+
   }
 });
 document.addEventListener("keyup", event => {
