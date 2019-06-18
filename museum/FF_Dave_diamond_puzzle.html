@@ -42,12 +42,12 @@ var puzzle = new ModeledSphPuzzle(bipyramid);
 var c = 1/2;
 var s = Math.sqrt(3)/2;
 var h = 1/Math.sqrt(2);
-puzzle.slice([ 1, h, 0], 1);
-puzzle.slice([ c, h, s], 1);
-puzzle.slice([-c, h, s], 1);
-puzzle.slice([-1, h, 0], 1);
-puzzle.slice([ c, h,-s], 1);
-puzzle.slice([-c, h,-s], 1);
+puzzle.sliceByPlane([ 1, h, 0], 0);
+puzzle.sliceByPlane([ c, h, s], 0);
+puzzle.sliceByPlane([-c, h, s], 0);
+puzzle.sliceByPlane([-1, h, 0], 0);
+puzzle.sliceByPlane([ c, h,-s], 0);
+puzzle.sliceByPlane([-c, h,-s], 0);
 
 puzzle.clean();
 puzzle.prepare();

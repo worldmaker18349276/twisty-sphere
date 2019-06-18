@@ -26,13 +26,12 @@ cube = CSG.cube({center: [0, 0, 0], radius: [1.1, 1.1, 1.1]})
   .intersect(CSG.cube({center: [ 0, 0, 1], radius: [2, 2, 2]}).setColor(1,1,0));
 var puzzle = new ModeledSphPuzzle(cube);
 
-var x = Math.atan(3)/Q;
-puzzle.slice([ 1, 0, 0], x);
-puzzle.slice([-1, 0, 0], x);
-puzzle.slice([ 0, 1, 0], x);
-puzzle.slice([ 0,-1, 0], x);
-puzzle.slice([ 0, 0, 1], x);
-puzzle.slice([ 0, 0,-1], x);
+puzzle.sliceByPlane([ 1, 0, 0], 1/3);
+puzzle.sliceByPlane([-1, 0, 0], 1/3);
+puzzle.sliceByPlane([ 0, 1, 0], 1/3);
+puzzle.sliceByPlane([ 0,-1, 0], 1/3);
+puzzle.sliceByPlane([ 0, 0, 1], 1/3);
+puzzle.sliceByPlane([ 0, 0,-1], 1/3);
 
 puzzle.clean();
 puzzle.prepare();

@@ -33,12 +33,13 @@ function rotateCSG(csg, q) {
 
 class ModeledSphPuzzle extends SphPuzzle
 {
-  constructor(shape=CSG.sphere({resolution:32})) {
+  constructor(shape=CSG.sphere({resolution:32}), R=1) {
     var element = new SphElem();
     element.shape = shape;
     element.orientation = [0,0,0,1];
 
     super(new SphAnalyzer(), [element]);
+    this.R = R;
     this.brep.ELEM_PROP.shape = elem => elem.shape;
     this.brep.ELEM_PROP.orientation = elem => Array.from(elem.orientation);
   }
@@ -74,10 +75,16 @@ class ModeledSphPuzzle extends SphPuzzle
   sliceElement(element, circle, knife) {
     var [inner, outer] = super.sliceElement(element, circle);
 
+    if ( !knife ) {
+      var plane = new CSG.Plane(new CSG.Vector3D(circle.center).unit(), this.R*Math.cos(circle.radius*Q));
+      var plane_ = plane.flipped();
+      knife = [plane, plane_];
+    }
     if ( Array.isArray(knife) )
       knife = knife.map(plane => rotateCSG(plane, q_inv(element.orientation)));
     else
       knife = rotateCSG(knife, q_inv(element.orientation));
+
     if ( inner && outer ) {
       if ( Array.isArray(knife) ) {
         outer.shape = element.shape.cutByPlane(knife[0]);
@@ -110,7 +117,7 @@ class ModeledSphPuzzle extends SphPuzzle
   }
   slice(center, radius, knife) {
     if ( !knife ) {
-      var plane = new CSG.Plane(new CSG.Vector3D(center).unit(), Math.cos(radius*Q));
+      var plane = new CSG.Plane(new CSG.Vector3D(center).unit(), this.R*Math.cos(radius*Q));
       var plane_ = plane.flipped();
       knife = [plane, plane_];
     }
@@ -129,12 +136,64 @@ class ModeledSphPuzzle extends SphPuzzle
       }
     }
   }
-  cut(knife) {
+  cut(knife, side=+1) {
     for ( let element of this.brep.elements ) {
       let knife_ = rotateCSG(knife, q_inv(element.orientation));
-      element.shape = element.shape.intersect(knife_);
+      if ( side > 0 )
+        element.shape = element.shape.intersect(knife_);
+      else
+        element.shape = element.shape.subtract(knife_);
     }
     this.brep.changed = true;
+  }
+
+  bounds() {
+    return Math.max(...this.brep.elements
+                       .map(elem => elem.shape.getBounds())
+                       .map(([v1, v2]) => v1.abs().max(v2.abs())).length());
+  }
+  sliceByPlane(direction, distance) {
+    var center = normalize(direction);
+    var radius = Math.acos(distance/this.R)/Q;
+    if ( Number.isNaN(radius) )
+      return [];
+    return this.slice(center, radius);
+  }
+  sliceBySphere(center, radius, resolution=32) {
+    var center_ = normalize(center);
+    var dis = norm(center);
+    var radius_ = Math.acos((dis*dis + this.R*this.R - radius*radius)/(2*dis*this.R))/Q;
+    if ( Number.isNaN(radius_) )
+      return [];
+
+    var sphere = CSG.sphere({center, radius, resolution});
+    return this.slice(center_, radius_, sphere);
+  }
+  cutByPlane(direction, distance, color) {
+    var r = this.bounds();
+    if ( distance > r || distance < -r )
+      return;
+
+    var q = q_align(direction);
+    var axis = normalize(q);
+    var angle = Math.atan2(norm(q), q[3])*2/Q*90;
+    var knife = CSG.cube({center: [0, 0, distance-r-0.1], radius: [r+0.1, r+0.1, r+0.1]})
+                   .rotate([0,0,0], axis, angle);
+    if ( color )
+      knife.setColor(color);
+
+    this.cut(knife);
+  }
+  cutBySphere(center, radius, resolution=32, color) {
+    var knife;
+    if ( radius < 0 )
+      knife = CSG.sphere({center, radius:-radius, resolution});
+    else
+      knife = CSG.sphere({center, radius, resolution});
+    if ( color )
+      knife.setColor(color);
+
+    this.cut(knife, Math.sign(radius));
   }
 }
 
@@ -515,7 +574,7 @@ class ModeledSphBREPView
     this.display.add(this.root);
 
     {
-      let geo = new THREE.IcosahedronGeometry(0.999, 5);
+      let geo = new THREE.IcosahedronGeometry(this.origin.host.R*0.999, 5);
       let mat = new THREE.MeshLambertMaterial({color:0xffffff});
       this.ball = new THREE.Mesh(geo, mat);
       this.display.add(this.ball, this.root);
@@ -623,6 +682,7 @@ class ModeledSphBREPView
 
     var obj = new THREE.Object3D();
     obj.add(arc, dash, ang, holder);
+    obj.scale.set(this.origin.host.R, this.origin.host.R, this.origin.host.R);
     obj.quaternion.set(...seg.orientation);
 
     seg.view = obj;

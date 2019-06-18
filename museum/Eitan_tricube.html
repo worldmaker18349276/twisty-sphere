@@ -17,33 +17,29 @@
 
 <script>
 
-var a = Math.sqrt(2/3);
-var cube = CSG.cube({center: [0, 0, 0], radius: [a, a, a]});
-var tricube = cube.rotateZ(45).setColor(1,0,0)
-        .union(cube.rotateZ(45).rotateX(90).setColor(0,1,0))
-        .union(cube.rotateZ(45).rotateY(90).setColor(0,0,1));
-var puzzle = new ModeledSphPuzzle(tricube);
+var tricube = CSG.cube().rotateZ(45).setColor(1,0,0)
+        .union(CSG.cube().rotateZ(45).rotateX(90).setColor(0,1,0))
+        .union(CSG.cube().rotateZ(45).rotateY(90).setColor(0,0,1));
+var puzzle = new ModeledSphPuzzle(tricube, Math.sqrt(3/2));
 
-var s2 = 1/Math.sqrt(2);
-var c = Math.acos(a)/Q;
-puzzle.slice([ 1, 0, 0], c);
-puzzle.slice([-1, 0, 0], c);
-puzzle.slice([ 0, 1, 0], c);
-puzzle.slice([ 0,-1, 0], c);
-puzzle.slice([ 0, 0, 1], c);
-puzzle.slice([ 0, 0,-1], c);
-puzzle.slice([  0, s2, s2], c);
-puzzle.slice([  0,-s2, s2], c);
-puzzle.slice([  0, s2,-s2], c);
-puzzle.slice([  0,-s2,-s2], c);
-puzzle.slice([ s2,  0, s2], c);
-puzzle.slice([-s2,  0, s2], c);
-puzzle.slice([ s2,  0,-s2], c);
-puzzle.slice([-s2,  0,-s2], c);
-puzzle.slice([ s2, s2,  0], c);
-puzzle.slice([-s2, s2,  0], c);
-puzzle.slice([ s2,-s2,  0], c);
-puzzle.slice([-s2,-s2,  0], c);
+puzzle.sliceByPlane([ 1, 0, 0], 1);
+puzzle.sliceByPlane([-1, 0, 0], 1);
+puzzle.sliceByPlane([ 0, 1, 0], 1);
+puzzle.sliceByPlane([ 0,-1, 0], 1);
+puzzle.sliceByPlane([ 0, 0, 1], 1);
+puzzle.sliceByPlane([ 0, 0,-1], 1);
+puzzle.sliceByPlane([ 0, 1, 1], 1);
+puzzle.sliceByPlane([ 0,-1, 1], 1);
+puzzle.sliceByPlane([ 0, 1,-1], 1);
+puzzle.sliceByPlane([ 0,-1,-1], 1);
+puzzle.sliceByPlane([ 1, 0, 1], 1);
+puzzle.sliceByPlane([-1, 0, 1], 1);
+puzzle.sliceByPlane([ 1, 0,-1], 1);
+puzzle.sliceByPlane([-1, 0,-1], 1);
+puzzle.sliceByPlane([ 1, 1, 0], 1);
+puzzle.sliceByPlane([-1, 1, 0], 1);
+puzzle.sliceByPlane([ 1,-1, 0], 1);
+puzzle.sliceByPlane([-1,-1, 0], 1);
 
 puzzle.clean();
 puzzle.prepare();
