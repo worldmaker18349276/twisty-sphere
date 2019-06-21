@@ -1807,35 +1807,6 @@ class SphAnalyzer
         meet.offset = 0;
       }
 
-    // bipartite
-    var in_segs = new Set(), out_segs = new Set();
-    var lost = new Set(elem.boundaries);
-    for ( let path of paths ) for ( let i=0; i<path.length; i++ ) {
-      let meet1 = path[i];
-      let meet2 = path[i+1] || path[0];
-
-      let side = ["-0", "++", "+-"].includes(meet1.type);
-      console.assert(side == ["+0", "++", "+-"].includes(meet2.type));
-      let segs = side ? in_segs : out_segs;
-
-      for ( let seg of meet1.segment.walk() ) {
-        if ( seg === meet2.segment )
-          break;
-        segs.add(seg);
-        lost.delete(seg);
-      }
-    }
-
-    for ( let seg0 of lost ) {
-      let side = this.cmp(circle.radius, angleTo(circle.center, seg0.vertex)/Q) > 0;
-      let segs = side ? in_segs : out_segs;
-
-      for ( let seg of seg0.walk() ) {
-        segs.add(seg);
-        lost.delete(seg);
-      }
-    }
-
     // SLICE
     var in_bd = [], out_bd = [];
     var dash = meets.filter(meet => meet.type[1] == "0");
@@ -1876,24 +1847,20 @@ class SphAnalyzer
 
           in_bd.push(in_seg);
           out_bd.push(out_seg);
-          in_segs.add(in_seg);
-          out_segs.add(out_seg);
         }
       }
 
     } else {
       // no cross meet
       let inside;
-      if ( meets.find(({type}) => type[1] == "+") )
+      if ( meets.some(({type}) => type[1] == "+") )
         inside = false;
-      if ( inside === undefined && meets.find(({type}) => type[1] == "-") )
+      else if ( meets.some(({type}) => type[1] == "-") )
         inside = true;
-      if ( inside === undefined )
+      else
         inside = this.contains(elem.boundaries, circle.vectorAt(0));
-      console.assert(inside !== undefined);
 
       if ( inside ) {
-
         let in_seg  = new SphSeg({arc:4, angle:2, radius:circle.radius,
                                   orientation:circle.orientation});
         let out_seg = new SphSeg({arc:4, angle:2, radius:circle_.radius,
@@ -1906,13 +1873,25 @@ class SphAnalyzer
 
         in_bd.push(in_seg);
         out_bd.push(out_seg);
-        in_segs.add(in_seg);
-        out_segs.add(out_seg);
       }
     }
 
-    in_segs = Array.from(in_segs);
-    out_segs = Array.from(out_segs);
+    // bipartite
+    var in_segs = [], out_segs = [];
+    for ( let loop of this.loops(elem.boundaries) ) {
+      let side, meet;
+      if ( in_bd.some(seg => loop.includes(seg)) )
+        side = true;
+      else if ( out_bd.some(seg => loop.includes(seg)) )
+        side = false;
+      else if ( meet = paths.flat().find(meet => loop.includes(meet.segment)) )
+        side = ["-0", "++", "+-"].includes(meet.type);
+      else
+        side = this.cmp(circle.radius, angleTo(circle.center, loop[0].vertex)/Q) > 0;
+
+      (side ? in_segs : out_segs).push(...loop);
+    }
+
     return [in_segs, out_segs, in_bd, out_bd];
   }
 
@@ -3339,9 +3318,6 @@ class SphPuzzle
   constructor(analyzer=new SphAnalyzer(), elements=[new SphElem()]) {
     this.status = "unprepared";
     this.analyzer = analyzer;
-    this.elements = [];
-    this.segments = [];
-    this.tracks = [];
 
     this.brep = new SphBREP(analyzer);
     this.network = new SphNetwork(analyzer);
@@ -3402,19 +3378,13 @@ class SphPuzzle
     this.network.setStatus("broken");
     this.rule.setStatus("broken");
 
-    // merge untwistable, unlockable track
+    // merge unlockable tracks
     for ( let track of this.brep.tracks ) {
       let shields = {};
       shields.inner = this.analyzer.raiseShield(track.inner);
       shields.outer = this.analyzer.raiseShield(track.outer);
       let elements1 = Array.from(new Set(shields.inner.map(seg => seg.affiliation)));
       let elements2 = Array.from(new Set(shields.outer.map(seg => seg.affiliation)));
-
-      if ( elements1.some(elem => elements2.includes(elem)) ) {
-        let elements = Array.from(new Set([...elements1, ...elements2]));
-        this.mergeElements(...elements);
-        continue;
-      }
 
       let passwords = this.analyzer.decipher(track, shields);
       if ( passwords.size != 0 )

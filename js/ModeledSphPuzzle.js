@@ -45,7 +45,7 @@ class ModeledSphPuzzle extends SphPuzzle
   }
 
   rotate(q) {
-    for ( let elem of target.elements ) {
+    for ( let elem of this.brep.elements ) {
       for ( let seg of elem.boundaries )
         seg.rotate(q);
       q_mul(quaternion, elem.orientation, elem.orientation);
@@ -705,10 +705,10 @@ class ModeledSphBREPView
     }
   }
   highlight(obj) {
-    obj.children[3].material.opacity = 0.3;
+    obj.children[3].material.transparent = false;
   }
   unhighlight(obj) {
-    obj.children[3].material.opacity = 0;
+    obj.children[3].material.transparent = true;
   }
   *hoverRoutine() {
     var selected_objs = [];
