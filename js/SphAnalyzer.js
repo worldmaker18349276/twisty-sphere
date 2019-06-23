@@ -1939,6 +1939,7 @@ class SphAnalyzer
    * @returns {boolean} True if `seg0` is twistable.
    */
   isTwistable(seg0, boundaries=seg0.affiliation.boundaries) {
+    boundaries = Array.from(boundaries);
     if ( this.cmp(seg0.angle, 2) > 0 )
       return false;
     if ( this.cmp(seg0.next.angle, 2) > 0 )
@@ -1947,12 +1948,12 @@ class SphAnalyzer
       return false;
     if ( this.cmp(seg0.next.angle, 2) == 0 && this.cmp(seg0.radius, seg0.next.radius) < 0 )
       return false;
-    if ( Array.from(seg0.adj.keys()).some(seg => seg.affiliation === seg0.affiliation) )
+    if ( Array.from(seg0.adj.keys()).some(seg => boundaries.includes(seg)) )
       return false;
 
     var circle = seg0.circle;
     var side = undefined;
-    let meets = Array.from(this.loops(boundaries))
+    var meets = Array.from(this.loops(boundaries))
                      .map(loop => Array.from(this.meetWith(loop[0], circle)));
     meets = this.sortMeets(meets, circle);
 
@@ -1967,36 +1968,49 @@ class SphAnalyzer
    * Find twistable part of given elements.
    *
    * @param {SphElem[]} elements
+   * @param {boolean} [test_twistability=false]
    * @returns {SphElem[][]} Set of twistable Elements.
    */
-  twistablePartOf(elements) {
+  twistablePartOf(elements, test_twistability=false) {
     elements = Array.from(elements);
     var segments = elements.flatMap(elem => Array.from(elem.boundaries));
     var untwistable = new Set();
 
-    var i = 0;
+    var i;
     do {
-      for ( i=0; i<segments.length; i++ ) {
-        if ( untwistable.has(segments[i]) )
-          continue;
-
-        let fixed = new Set(segments[i].affiliation.boundaries);
+      for ( i=0; i<segments.length; i++ ) if ( !untwistable.has(segments[i]) ) {
+        let seg0 = segments[i];
+        let fixed = Array.from(seg0.affiliation.boundaries);
         for ( let seg of fixed )
           if ( untwistable.has(seg) )
             for ( let adj_seg of seg.adj.keys() )
-              if ( elements.includes(adj_seg.affiliation) )
-                for ( let seg_ of adj_seg.affiliation.boundaries )
-                  fixed.add(seg_);
+              if ( segments.includes(adj_seg) && !fixed.includes(adj_seg) )
+                fixed.push(...adj_seg.affiliation.boundaries);
 
-        if ( !this.isTwistable(segments[i], fixed) ) {
-          let new_untwistable = new Set([segments[i]]);
+        let test = true;
+        if ( this.cmp(seg0.angle, 2) > 0 )
+          test = false;
+        if ( this.cmp(seg0.next.angle, 2) > 0 )
+          test = false;
+        if ( this.cmp(seg0.angle, 2) == 0 && this.cmp(seg0.radius, seg0.prev.radius) < 0 )
+          test = false;
+        if ( this.cmp(seg0.next.angle, 2) == 0 && this.cmp(seg0.radius, seg0.next.radius) < 0 )
+          test = false;
+
+        if ( test_twistability )
+          test = this.isTwistable(seg0, fixed);
+
+        if ( !test ) {
+          let new_untwistable = new Set([seg0]);
           for ( let unseg of new_untwistable )
             for ( let adj_seg of unseg.adj.keys() )
-              if ( elements.includes(adj_seg.affiliation) )
+              if ( segments.includes(adj_seg) )
                 new_untwistable.add(adj_seg);
           for ( let unseg of new_untwistable )
             untwistable.add(unseg);
-          break;
+
+          if ( test_twistability )
+            break;
         }
       }
     } while ( i != segments.length );
@@ -2024,7 +2038,7 @@ class SphAnalyzer
    * Merge them by `this.swap(seg1, seg2, 2, 2)`.
    *
    * @param {SphSeg[]} boundaries
-   * @returns {SphSeg[][]} Array of Sandglass-shape tips.
+   * @returns {SphSeg[][]} Array of sandglass-shape tips.
    */
   findSandglassTips(boundaries) {
     var res = [];
@@ -2050,8 +2064,8 @@ class SphAnalyzer
     return res;
   }
   /**
-   * It will swap segments of the segments of the track for preventing to form
-   * sandglass tips.  You should merge elements at inner/outer side first.
+   * It will swap segments of the track for preventing to form sandglass tips.
+   * You should merge elements at inner/outer side first.
    *
    * @param {SphTrack} track
    * @return {Array} The swapped segments and intersected tracks.
@@ -2272,45 +2286,37 @@ class SphAnalyzer
   /**
    * Find untwistable part along given track if this track is untwistable.
    *
-   * @param {SphSeg[]} fence - the segments at one side of track.
+   * @param {SphSeg[]} fence - The segments at one side of track.
+   * @param {boolean} [test_twistability=false]
    * @returns {SphSeg[]} The segments of untwistable part.
    */
-  raiseShield(fence) {
+  raiseShield(fence, test_twistability=false) {
     var circle0 = fence[0].circle;
 
-    var segments = new Set(fence);
-    for ( let seg of segments ) {
-      segments.add(seg.next);
-      segments.add(seg.prev);
-      if ( !fence.includes(seg) )
-        for ( let adj_seg of seg.adj.keys() )
-          segments.add(adj_seg);
-    }
-    segments = Array.from(segments);
-
     var untwistable = new Set(fence);
-    var shield = [];
-    for ( let seg of untwistable )
-      shield.push(...seg.walk());
+    var shield = Array.from(untwistable).flatMap(seg => Array.from(seg.walk()));
 
-    var i = 0;
+    var i;
     do {
       for ( i=0; i<shield.length; i++ ) if ( !untwistable.has(shield[i]) ) {
-        let [,,,meeted] = this.relationTo(shield[i].circle, circle0);
+        let test = this.relationTo(shield[i].circle, circle0)[3] == 2;
+        if ( test_twistability )
+          test = test || !this.isTwistable(shield[i], shield);
 
-        if ( meeted > 1 || !this.isTwistable(shield[i], shield) ) {
+        if ( test ) {
           let new_untwistable = new Set([shield[i]]);
           for ( let unseg of new_untwistable )
             for ( let adj_seg of unseg.adj.keys() )
-              if ( segments.includes(adj_seg) )
-                new_untwistable.add(adj_seg);
+              new_untwistable.add(adj_seg);
 
           for ( let unseg of new_untwistable ) {
             untwistable.add(unseg);
             if ( !shield.includes(unseg) )
               shield.push(...unseg.walk());
           }
-          break;
+
+          if ( test_twistability )
+            break;
         }
       }
     } while ( i != shield.length );
@@ -3410,40 +3416,41 @@ class SphPuzzle
     this.network.setStatus("broken");
     this.rule.setStatus("broken");
   }
-  clean() {
+  clean(level=2) {
     this.network.setStatus("broken");
     this.rule.setStatus("broken");
 
-    // merge unlockable tracks
-    for ( let track of this.brep.tracks ) {
-      let shields = {};
-      shields.inner = this.analyzer.raiseShield(track.inner);
-      shields.outer = this.analyzer.raiseShield(track.outer);
-      let elements1 = Array.from(new Set(shields.inner.map(seg => seg.affiliation)));
-      let elements2 = Array.from(new Set(shields.outer.map(seg => seg.affiliation)));
+    if ( level >= 1 ) {
+      // merge always-locking tracks
+      for ( let track of this.brep.tracks.slice() ) if ( this.brep.tracks.includes(track) ) {
+        let shields = {};
+        shields.inner = this.analyzer.raiseShield(track.inner, level>=2);
+        shields.outer = this.analyzer.raiseShield(track.outer, level>=2);
+        let elements1 = Array.from(new Set(shields.inner.map(seg => seg.affiliation)));
+        let elements2 = Array.from(new Set(shields.outer.map(seg => seg.affiliation)));
 
-      let passwords = this.analyzer.decipher(track, shields);
-      if ( passwords.size != 0 )
-        continue;
+        let passwords = this.analyzer.decipher(track, shields);
+        if ( passwords.size == 0 ) {
+          this.mergeElements(...elements1);
+          this.mergeElements(...elements2);
 
-      this.mergeElements(...elements1);
-      this.mergeElements(...elements2);
+          let [segments, tracks] = this.analyzer.sealTrack(track);
+          for ( let track of tracks )
+            this.remove(track);
+        }
+      }
 
-      let [segments, tracks] = this.analyzer.sealTrack(track);
-      for ( let track of tracks )
-        this.remove(track);
-    }
+      // merge untwistable edges
+      for ( let group of this.analyzer.twistablePartOf(this.brep.elements, level>=2) )
+        if ( group.length > 1 )
+          this.mergeElements(...group);
 
-    // merge untwistable edges
-    for ( let group of this.analyzer.twistablePartOf(this.brep.elements) )
-      if ( group.length > 1 )
-        this.mergeElements(...group);
-
-    // merge sandglass tips
-    for ( let elem of this.brep.elements ) {
-      let tips = this.analyzer.findSandglassTips(elem.boundaries);
-      for ( let [seg1, seg2] of tips )
-        this.analyzer.swap(seg1, seg2, 2, 2);
+      // // merge sandglass tips
+      // for ( let elem of this.brep.elements ) {
+      //   let tips = this.analyzer.findSandglassTips(elem.boundaries);
+      //   for ( let [seg1, seg2] of tips )
+      //     this.analyzer.swap(seg1, seg2, 2, 2);
+      // }
     }
 
     // merge trivial edges
@@ -3670,12 +3677,12 @@ class SphPuzzle
 
     return track;
   }
-  decipher(track) {
+  decipher(track, level=1) {
     track.secret = {};
 
     var shields = {};
-    shields.inner = this.analyzer.raiseShield(track.inner);
-    shields.outer = this.analyzer.raiseShield(track.outer);
+    shields.inner = this.analyzer.raiseShield(track.inner, level>=2);
+    shields.outer = this.analyzer.raiseShield(track.outer, level>=2);
     track.secret.passwords = this.analyzer.decipher(track, shields);
     track.secret.passwords = new Map(Array.from(track.secret.passwords).sort((a,b) => a[0]-b[0]));
     track.secret.pseudokeys = this.analyzer.guessKeys(track);

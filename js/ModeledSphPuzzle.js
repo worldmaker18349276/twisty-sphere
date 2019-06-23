@@ -599,12 +599,10 @@ class ModeledSphBREPView
       if ( "orientation" in event.record )
         event.target.view.quaternion.set(...event.target.orientation);
       if ( "track" in event.record )
-        for ( let sub of event.target.view.children )
-          sub.material.color.set(event.target.track ? "red" : "black");
+        event.target.view.children[0].material.color.set(event.target.track ? "red" : "black");
     });
   }
   drawSegment(seg) {
-    var color = seg.track ? "red" : "black";
     var dq = 0.01;
 
     // make arc
@@ -619,7 +617,7 @@ class ModeledSphBREPView
                                 (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
       geo.vertices.push(v1);
 
-      let mat = new THREE.LineBasicMaterial({color});
+      let mat = new THREE.LineBasicMaterial({color: (seg.track ? "red" : "black")});
       var arc = new THREE.Line(geo, mat);
       arc.name = "arc";
     }
@@ -627,61 +625,25 @@ class ModeledSphBREPView
     // make dash
     {
       let geo = new THREE.Geometry();
-      let s = Math.sin((seg.radius-dq/2)*Q), c = Math.cos((seg.radius-dq/2)*Q);
+      let s = Math.sin((seg.radius-dq)*Q), c = Math.cos((seg.radius-dq)*Q);
       let da = dq*s;
       let v0_ = new THREE.Vector3(s, 0, c);
       let center = new THREE.Vector3(0,0,1);
-      let v0 = v0_.clone().applyAxisAngle(center, da*Q);
-      let v1 = v0_.clone().applyAxisAngle(center, (seg.arc-da)*Q);
-      geo.vertices = Array.from({length:Math.floor(seg.arc/da)-1},
+      let v0 = v0_.clone().applyAxisAngle(center, dq*Q);
+      let v1 = v0_.clone().applyAxisAngle(center, (seg.arc-dq)*Q);
+      geo.vertices = Array.from({length:Math.floor((seg.arc-2*dq)/da)+1},
                                 (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
       geo.vertices.push(v1);
 
-      let mat = new THREE.LineDashedMaterial({color, dashSize: dq*Q/2, gapSize: dq*Q/2});
+      let mat = new THREE.LineDashedMaterial({color: "blue", dashSize: dq*Q/2, gapSize: dq*Q/2});
       var dash = new THREE.Line(geo, mat);
       dash.computeLineDistances();
       dash.name = "dash";
-    }
-
-    // make angle
-    {
-      let geo;
-      if ( fzy_cmp(seg.angle, 0) != 0 )
-        geo = new THREE.CircleGeometry(dq*Q, 10, Q, seg.angle*Q);
-      else
-        geo = new THREE.CircleGeometry(3*dq*Q, 3, (1-10*dq)*Q, 2*10*dq*Q);
-      geo.translate(0, 0, 1);
-      geo.rotateY(seg.radius*Q);
-
-      let mat = new THREE.MeshBasicMaterial({color});
-      var ang = new THREE.Mesh(geo, mat);
-      ang.name = "angle";
-    }
-
-    // make holder
-    {
-      let da = dq*Math.sin(seg.radius*Q);
-      let N = Math.floor(seg.arc/da)+1;
-      let geo = new THREE.SphereGeometry(1, N, 2, 2*Q, seg.arc*Q,
-                                         (seg.radius-2*dq)*Q, dq*2*Q);
-      geo.rotateX(Q);
-
-      let mat = new THREE.MeshBasicMaterial({color, transparent:true, opacity:0,
-                                             depthWrite:false});
-      var holder = new THREE.Mesh(geo, mat);
-      holder.name = "holder";
-
-      holder.userData.hoverable = true;
-      holder.addEventListener("mouseenter", event =>
-        this.selector.preselection = event.target.parent.userData.origin);
-      holder.addEventListener("mouseleave", event =>
-        this.selector.preselection = undefined);
-      holder.addEventListener("click", event =>
-        event.originalEvent.ctrlKey ? this.selector.toggle() : this.selector.select());
+      dash.visible = false;
     }
 
     var obj = new THREE.Object3D();
-    obj.add(arc, dash, ang, holder);
+    obj.add(arc, dash);
     obj.scale.set(this.origin.host.R, this.origin.host.R, this.origin.host.R);
     obj.quaternion.set(...seg.orientation);
 
@@ -705,10 +667,10 @@ class ModeledSphBREPView
     }
   }
   highlight(obj) {
-    obj.children[3].material.transparent = false;
+    obj.children[1].visible = true;
   }
   unhighlight(obj) {
-    obj.children[3].material.transparent = true;
+    obj.children[1].visible = false;
   }
   *hoverRoutine() {
     var selected_objs = [];
