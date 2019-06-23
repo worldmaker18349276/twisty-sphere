@@ -10,4 +10,4 @@ https://worldmaker18349276.github.io/twisty-sphere/museum/Eitan_tricube.html
 https://worldmaker18349276.github.io/twisty-sphere/museum/FF_Dave_diamond_puzzle.html  
 https://worldmaker18349276.github.io/twisty-sphere/museum/Chopasaurus.html  
 https://worldmaker18349276.github.io/twisty-sphere/museum/Chopasaurus_Jr.html  
-https://worldmaker18349276.github.io/twisty-sphere/museum/Greate_Icosahedron.html  
+https://worldmaker18349276.github.io/twisty-sphere/museum/Great_Icosahedron.html  
