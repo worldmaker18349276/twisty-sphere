@@ -306,6 +306,8 @@ class ModeledSimpleTwister
       this.angle = this.raw.host.analyzer.mod4(this.shifts0.find(ang => ang != 0));
     else
       this.angle = -this.raw.host.analyzer.mod4(-this.shifts0.slice().reverse().find(ang => ang != 0));
+    if ( this.angle === undefined || Number.isNaN(this.angle) )
+      return;
 
     var axis = new THREE.Vector3(...this.center);
     var routine = this.display.animatedRotateRoutine(this.targets, axis, this.angle*Q, 10);

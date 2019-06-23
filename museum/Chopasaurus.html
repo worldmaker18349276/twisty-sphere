@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>twisty sphere - Chopasaurus</title>
+  <meta charset="utf-8">
+  <script src="../js/three.min.js"></script>
+  <script src="../js/dat.gui.min.js"></script>
+  <script src="../js/SphAnalyzer.js"></script>
+  <script src="../js/SphPuzzle.js"></script>
+  <script src="../js/Geometer.js"></script>
+  <script src="../js/csg.js"></script>
+  <script src="../js/ModeledSphPuzzle.js"></script>
+</head>
+<body>
+
+<div id="display" style="width:600px;height:600px;"></div>
+
+<script>
+
+var phi = (Math.sqrt(5) + 1)/2;
+
+function fzy_add(set, elem) {
+  set.add(fzy_snap(elem, set));
+}
+function csort(arr0) {
+  var arr_min = arr0.slice();
+  var arr_ = arr0.slice();
+
+  for ( let i=0,len=arr0.length; i<len; i++ ) {
+    if ( fzy_cmp(arr_, arr_min) < 0 )
+      arr_min = arr_.slice();
+    arr_.push(arr_.shift());
+  }
+  return arr_min;
+}
+
+var radius = (phi + 1)/Math.sqrt(phi + 2);
+var offset = 0;
+var axes = new Set();
+axes.add([1,1,1]);
+for ( let v of axes ) {
+  fzy_add(axes, rotate(v, [1/2,1/2,1/2,1/2]));
+  fzy_add(axes, rotate(v, [1/2,0,1/phi/2,phi/2]));
+}
+
+
+var faces = new Set();
+var vertices = [[1,1,1]];
+for ( let i=0; i<4; i++ )
+  vertices.push(rotate(vertices[vertices.length-1], [1/2,0,1/phi/2,phi/2]));
+faces.add(csort(vertices));
+for ( let face of faces ) {
+  fzy_add(faces, csort(face.map(v => rotate(v, [1/2,1/2,1/2,1/2]))));
+  fzy_add(faces, csort(face.map(v => rotate(v, [1/2,0,1/phi/2,phi/2]))));
+}
+
+var polygons = [];
+for ( let face of faces ) {
+  let polygon = new CSG.Polygon(face.map(v => new CSG.Vertex(new CSG.Vector3D(...v))));
+  let {x, y, z} = polygon.plane.normal;
+  let [r, g, b] = [x, y, z].map(v => Math.sign(v) * Math.ceil(Math.abs(v) - 0.01)).map(v => (v+1)/2);
+  polygon.setColor(r, g, b);
+  polygons.push(polygon);
+}
+var dodeca = CSG.fromPolygons(polygons);
+
+var puzzle = new ModeledSphPuzzle(dodeca, radius);
+for ( let axis of axes )
+  puzzle.sliceByPlane(axis, offset);
+
+puzzle.clean(1);
+puzzle.prepare();
+
+var world = new ModeledSphPuzzleWorld(puzzle, "display");
+
+// jaap's sphere view: https://www.jaapsch.net/puzzles/sphere.htm?red=0&symred=6&angle=282,96,33
+</script>
+</body>
+</html>
