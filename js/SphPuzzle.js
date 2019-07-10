@@ -17,7 +17,7 @@ function css(strings, ...vars) {
   return style;
 }
 function animate(routine) {
-  var wrapped = () => (requestAnimationFrame(wrapped), routine.next());
+  var wrapped = () => !routine.next().done && requestAnimationFrame(wrapped);
   requestAnimationFrame(wrapped);
 }
 

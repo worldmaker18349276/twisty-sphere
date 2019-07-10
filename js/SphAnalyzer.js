@@ -958,6 +958,24 @@ class SphTransition
   }
 }
 
+class SphBasis
+{
+  constructor() {
+    this.units = [];
+    // unit = {radius, passwords}
+    // passwords = [shift_offset, center_offset] -> [[gap, arc, angle], ...]
+    this.coord = [];
+    // coord_i = [[pw_ind, shift_offset], ...]
+    this.intersections = intersections;
+    // intersection = [index1, index2]
+    // index = [unit_ind, latch_ind]
+    this.indices = [];
+    // index = [inner, outer, shift, center]
+    // inner/outer = [seg_ind, ...]
+
+    // partial_perm = unit_ind -> [shift, ...]
+  }
+}
 
 /**
  * Analyzer for spherical twisty puzzle.
@@ -1577,7 +1595,7 @@ class SphAnalyzer
    * and the third char, which should be one of "()[]", represent the side of
    * pre and post edge of meet point; the middle char, which should be one of
    * "|<>", represents the direction of segment.
-   * It is easier to undterstand by mapping:
+   * It is easier to understand by mapping:
    *    pre_side  : [+2, +1, -0, -1] => "[(])"
    *    post_side : [+1, +0, -1, -2] => "([)]"
    *    direction : [-1, 0, +1]      => "<|>"
@@ -3017,17 +3035,18 @@ class SphAnalyzer
     return perm;
   }
   /**
-   * Recognize configuration of this state.
+   * Standardize configuration of this state.
    * It will build adjacency table and symmetries of configuration and return
    * possible permutations.
    * The multiple permutations means geometric symmetry of this configuration.
    *
    * @param {SphModel} model - The model of puzzle to build.
    * @param {SphSeg[][]} param - The segments of puzzle to analyze.
-   * @param {SphConfig[]} [known=[]] - Sorted list of known sorted configurations.
-   * @returns {Array} Sorted configuration and possible permutations.
+   * @param {SphConfig[]} [known=[]] - Sorted list of known standardized
+   *   configurations.
+   * @returns {Array} Standardized configuration and possible permutations.
    */
-  recognize(model, param, known=[]) {
+  standardizeConfig(model, param, known=[]) {
     const shape = model.shapes[0];
 
     if ( shape.fold == 0 ) {
@@ -3165,6 +3184,192 @@ class SphAnalyzer
       if ( !knot )
         return joint;
     }
+  }
+
+  /**
+   * Standarize (in-place) transition between configuration and returns symmetries.
+   *
+   * @param {object[][]} perm
+   * @param {Array} sym_from
+   * @param {Array} sym_to
+   * @param {SphTransition[]} [known=[]] - Sorted list of known standarized
+   *   transitions.
+   * @returns {Array} Standardized transition and possible transformations.
+   * @returns {object[][]} The list of symmetries of this operation, with entries
+   *   `[perm_from, perm_to]`:
+   *   `perm_from` is permutation of symmetry of start configuration;
+   *   `perm_to` is permutation of symmetry of final configuration,
+   *   and they obey `perm == perm_from**-1 * perm * perm_to`.
+   */
+  standardizeTransition(perm, sym_from, sym_to, known=[]) {
+    var min_perm = [[[config_from.types[0].count]]];
+    var sym = [];
+
+    if ( config_from === config_to ) {
+      for ( perm_from of config_from.symmetries ) {
+        let _perm = config_from.followedBy(config_from.inverse(perm_from), perm);
+        let _perm_ = config_to.followedBy(_perm, perm_from);
+        let sgn = this.cmp(_perm_, min_perm);
+
+        if ( sgn < 0 ) {
+          min_perm = _perm_;
+          sym = [[perm_from, perm_from]];
+        } else if ( sgn == 0 ) {
+          sym.push([perm_from, perm_from]);
+        }
+      }
+
+    } else {
+      for ( perm_from of config_from.symmetries ) {
+        let _perm = config_from.followedBy(config_from.inverse(perm_from), perm);
+        for ( perm_to of config_to.symmetries ) {
+          let _perm_ = config_to.followedBy(_perm, perm_to);
+          let sgn = this.cmp(_perm_, min_perm);
+
+          if ( sgn < 0 ) {
+            min_perm = _perm_;
+            sym = [[perm_from, perm_to]];
+          } else if ( sgn == 0 ) {
+            sym.push([perm_from, perm_to]);
+          }
+        }
+      }
+
+    }
+
+    for ( let i=0; i<perm.length; i++ )
+      for ( let j=0; j<perm[i].length; j++ )
+        perm[i][j] = min_perm[i][j];
+
+    return sym;
+  }
+
+  sortPasswords(passwords) {
+    passwords = Array.from(passwords);
+
+    // sort latches
+    for ( let match of passwords ) {
+      let latches = match[1];
+      latches = latches.map(e => e.angle ? [e.center, e.arc, e.angle] : [e.center, e.arc]);
+
+      // center => gap
+      latches.sort(this.cmp.bind(this));
+      let centers = latches.map(e => e[0]);
+      for ( let i=0; i<latches.length; i++ )
+        latches[i][0] = (i+1<latches.length ? centers[i+1] : center[0]+4) - centers[i];
+
+      // cyclic sort latches
+      let latches0 = latches.slice();
+      let centers0 = [];
+      for ( let i=0; i<latches.length; i++ ) {
+        let sgn = this.cmp(latches, latches0);
+        if ( sgn == 0 )
+          centers0.push(centers[i]);
+        if ( sgn == -1 )
+          [latches0, centers0] = [latches.slice(), [centers[i]]];
+
+        latches.push(latches.shift());
+      }
+
+      match[1] = latches0;
+      match.push(centers0);
+    }
+
+    // sort matches
+    // shift => shift_offset
+    passwords.sort((m1, m2) => m1[0]-m2[0]);
+    var shifts = passwords.map(e => e[0]);
+    for ( let i=0; i<passwords.length; i++ )
+      passwords[i][0] = (i+1<passwords.length ? shifts[i+1] : shift[0]+4) - shifts[i];
+
+    // center => center_offset
+
+    // cyclic sort matches
+    var passwords0 = passwords.slice();
+    var shifts0 = [];
+    for ( let i=0; i<passwords.length; i++ ) {
+      let sgn = this.cmp(passwords, passwords0);
+      if ( sgn == 0 )
+        shifts0.push(shifts[i]);
+      if ( sgn == -1 )
+        [passwords0, shifts0] = [passwords.slice(), [shifts[i]]];
+
+      passwords.push(passwords.shift());
+    }
+
+    return passwords;
+
+    this.units = [];
+    // unit = {radius, passwords}
+    // passwords = [shift_offset, center_offset] -> [[gap, arc, angle], ...]
+    this.coord = [];
+    // coord_i = [[pw_ind, shift_offset], ...]
+    this.intersections = intersections;
+    // intersection = [index1, index2]
+    // index = [unit_ind, latch_ind]
+    this.indices = [];
+    // index = [inner, outer, shift, center]
+    // inner/outer = [seg_ind, ...]
+    
+    // partial_perm = unit_ind -> [shift, ...]
+  }
+  basisOf(loops) {
+    // build tracks
+    var tracks = [];
+    for ( let loop of loops ) for ( let seg of loop )
+      if ( seg.track && !tracks.includes(seg.track) ) {
+        let track = {};
+        track.inner = seg.track.inner.map(seg => seg.index);
+        track.outer = seg.track.outer.map(seg => seg.index);
+        track.shift = seg.track.shift;
+
+        track.passwords = [];
+        for ( let [ang, matches] of seg.track.passwords )
+          track.passwords.push([ang, matches.map(([seg, arc]) => [seg.index, arc])]);
+
+        tracks.push(track);
+      }
+  }
+  subtypeOf(config, perm, subtypes) {
+    const gcd = (a,b) => (!b)?a:gcd(b,a%b);
+
+    if ( !subtypes ) {
+      subtypes = [];
+      for ( let i=0; i<config.types.length; i++ ) {
+        subtypes[i] = [];
+        for ( let j=0; j<config.types[i].count; j++ )
+          subtypes[i][j] = {dk:config.types[i].fold, indices:[[j, 0]]};
+      }
+    }
+
+    for ( let i=0; i<config.types.length; i++ ) {
+      let type = config.types[i];
+      for ( let j=0; j<config.types[i].count; j++ ) {
+        let [j_, dk] = perm[i][j];
+        let subtype1 = subtypes[i][j];
+        let subtype2 = subtypes[i][j_];
+
+        if ( subtype1 === subtype2 ) {
+          subtype1.dk = gcd(subtype1.dk, dk);
+
+        } else {
+          subtype1.dk = gcd(subtype1.dk, subtype2.dk);
+          let [, k1] = subtype1.indices.find(([j1,k1]) => j1==j);
+          let [, k2] = subtype2.indices.find(([j2,k2]) => j2==j_);
+          let dk_ = k1+dk-k2;
+          let indices_ = subtype2.indices.map(([j2,k2]) => [j2, k2+dk_]);
+          subtype1.indices.push(...indices_);
+          for ( let [j2, k2] of subtype2.indices )
+            subtypes[i][j2] = subtype1;
+        }
+      }
+
+      for ( let {dk, indices} of new Set(subtypes[i]) )
+        for ( let index of indices )
+          index[1] = (index[1] % dk + dk) % dk;
+    }
+
+    return subtypes;
   }
 }
 
@@ -3746,7 +3951,7 @@ class SphPuzzle
       this.rule.clear();
     for ( let knot of this.network.knots ) {
       let configs = this.rule.configurations.get(knot) || [];
-      let [config, perms] = this.analyzer.recognize(knot.model, knot.segments, configs);
+      let [config, perms] = this.analyzer.standardizeConfig(knot.model, knot.segments, configs);
       if ( make_trans && configs.includes(knot.configuration) )
         this.rule.add(knot, new SphTransition({from:knot.configuration, to:config, permutation:perms[0]}));
       this.network.transit(knot, perms[0], config);
