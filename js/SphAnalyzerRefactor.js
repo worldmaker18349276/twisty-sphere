@@ -731,11 +731,13 @@ class SphAnalyzer
    * @param {SphCircle} circle - The circle to meet with.
    * @param {SphSeg} segment - The segment to meet.
    * @returns {object[]} The array of meets, which has entries
-   *   `{segment, offset, prefer, side, angle, type}`:
+   *   `{segment, offset, prefer, circle, theta, side, angle, type}`:
    *   `segment` is the segment that meets with given circle;
    *   `offset` is offset of meet point along `segment`, in the range of
    *   [0, `segment.arc`];
    *   `prefer` is direction of meet point along `segment`;
+   *   `circle` is the circle to meet with;
+   *   `theta` is offset of meet point along `circle`, in the range of [0, 4);
    *   `side` is side of meet point relative to `circle`;
    *   `angle` is angle from `circle` to direction of meet point (angle between
    *   two directed tangent vectors), in the range of [-2, 2];
@@ -747,15 +749,23 @@ class SphAnalyzer
 
     // meet with given segment
     let [angle,, arc, type] = this.relationToCircle(circle, segment);
-    let offset;
+    let theta, offset;
     if ( type === null ) {
       if ( angle == 0 ) {
-        meets.push({segment, offset:0,           prefer:+1, side:+1, angle:+0, type});
-        meets.push({segment, offset:segment.arc, prefer:-1, side:+1, angle:+2, type});
+        offset = 0;
+        theta = this.mod4(circle.thetaOf(segment.vectorAt(offset)));
+        meets.push({segment, offset, prefer:+1, circle, theta, side:+1, angle:+0, type});
+        offset = segment.arc;
+        theta = this.mod4(circle.thetaOf(segment.vectorAt(offset)));
+        meets.push({segment, offset, prefer:-1, circle, theta, side:+1, angle:+2, type});
 
       } else if ( angle == 2 ) {
-        meets.push({segment, offset:0,           prefer:+1, side:-1, angle:-2, type});
-        meets.push({segment, offset:segment.arc, prefer:-1, side:-1, angle:-0, type});
+        offset = 0;
+        theta = this.mod4(circle.thetaOf(segment.vectorAt(offset)));
+        meets.push({segment, offset, prefer:+1, circle, theta, side:-1, angle:-2, type});
+        offset = segment.arc;
+        theta = this.mod4(circle.thetaOf(segment.vectorAt(offset)));
+        meets.push({segment, offset, prefer:-1, circle, theta, side:-1, angle:-0, type});
       }
 
     } else if ( type == 0 ) {
@@ -763,24 +773,27 @@ class SphAnalyzer
 
     } else if ( type == 1 ) {
       offset = this.mod4(segment.thetaOf(circle.center)-arc/2);
+      theta = this.mod4(circle.thetaOf(segment.vectorAt(offset)));
 
       if ( arc == 4 ) {
-        meets.push({segment, offset, prefer:+1, side:+1, angle:+angle, type});
-        meets.push({segment, offset, prefer:-1, side:+1, angle:+(2-angle), type});
+        meets.push({segment, offset, prefer:+1, circle, theta, side:+1, angle:+angle, type});
+        meets.push({segment, offset, prefer:-1, circle, theta, side:+1, angle:+(2-angle), type});
 
       } else if ( arc == 0 ) {
-        meets.push({segment, offset, prefer:+1, side:-1, angle:-angle, type});
-        meets.push({segment, offset, prefer:-1, side:-1, angle:-(2-angle), type});
+        meets.push({segment, offset, prefer:+1, circle, theta, side:-1, angle:-angle, type});
+        meets.push({segment, offset, prefer:-1, circle, theta, side:-1, angle:-(2-angle), type});
       }
 
     } else if ( type == 2 ) {
       offset = this.mod4(segment.thetaOf(circle.center)-arc/2);
-      meets.push({segment, offset, prefer:+1, side:+1, angle:angle, type});
-      meets.push({segment, offset, prefer:-1, side:-1, angle:angle-2, type});
+      theta = this.mod4(circle.thetaOf(segment.vectorAt(offset)));
+      meets.push({segment, offset, prefer:+1, circle, theta, side:+1, angle:angle, type});
+      meets.push({segment, offset, prefer:-1, circle, theta, side:-1, angle:angle-2, type});
 
       offset = this.mod4(segment.thetaOf(circle.center)+arc/2);
-      meets.push({segment, offset, prefer:+1, side:-1, angle:-angle, type});
-      meets.push({segment, offset, prefer:-1, side:+1, angle:-angle+2, type});
+      theta = this.mod4(circle.thetaOf(segment.vectorAt(offset)));
+      meets.push({segment, offset, prefer:+1, circle, theta, side:-1, angle:-angle, type});
+      meets.push({segment, offset, prefer:-1, circle, theta, side:+1, angle:-angle+2, type});
     }
 
     // snap and sort positions of meets
@@ -800,7 +813,7 @@ class SphAnalyzer
    *
    * @param {SphCircle} circle - The meeted circle.
    * @param {object[]} meets - The meets to snap.
-   * @param {object[]} snaps - The points to snap, should have entries
+   * @param {object[]} [snaps] - The points to snap, should have entries
    *   `[segment, offset, prefer]`.
    * @returns {object[]} The snapped meets.
    */
@@ -832,8 +845,7 @@ class SphAnalyzer
    * It will check consistency of snapping to endpoints of segment, and snap
    * (also check consistency) to adjacent point of segment if needed.
    * It will also group the meets by points and classify the type of meet, and
-   * add additional properties to meets: `theta`, `prev`, `next`, `forward`,
-   * `backward`: ...
+   * add additional properties to meets: `prev`, `next`, `forward`, `backward`.
    *
    * @param {SphCircle} circle - The circle to meet with.
    * @param {SphSeg[]} boundaries - The segments of boundaries to meet.
@@ -873,7 +885,7 @@ class SphAnalyzer
     for ( let meet of meets ) if ( meet.offset === 0 ) unprocessed.add(meet);
     for ( let meet of meets ) if ( meet.offset !== 0 ) unprocessed.add(meet);
 
-    for ( let {segment, offset, prefer, angle, type} of unprocessed ) if ( prefer > 0 ) {
+    for ( let {segment, offset, prefer, theta, angle, type} of unprocessed ) if ( prefer > 0 ) {
       let inner1 = [], inner2 = [], inner = [];
       let outer1 = [], outer2 = [], outer = [];
 
@@ -888,11 +900,11 @@ class SphAnalyzer
           if ( p > 0 ) {
             let pre_meet, post_meet;
             if ( angle + ang < 1 ) {
-              pre_meet  = {segment:seg, offset:th, prefer:-1, side:+1, angle:+2, type:null};
-              post_meet = {segment:seg, offset:th, prefer:+1, side:+1, angle:+0, type:null};
+              pre_meet  = {segment:seg, offset:th, prefer:-1, circle, theta, side:+1, angle:+2, type:null};
+              post_meet = {segment:seg, offset:th, prefer:+1, circle, theta, side:+1, angle:+0, type:null};
             } else {
-              pre_meet  = {segment:seg, offset:th, prefer:-1, side:-1, angle:-0, type:null};
-              post_meet = {segment:seg, offset:th, prefer:+1, side:-1, angle:-2, type:null};
+              pre_meet  = {segment:seg, offset:th, prefer:-1, circle, theta, side:-1, angle:-0, type:null};
+              post_meet = {segment:seg, offset:th, prefer:+1, circle, theta, side:-1, angle:-2, type:null};
             }
             pre_meet.next = post_meet;
             post_meet.prev = pre_meet;
@@ -934,7 +946,6 @@ class SphAnalyzer
       }
 
       // wrap up as flower
-      let theta = this.mod4(circle.thetaOf(segment.vectorAt(offset)));
       for ( let meets of [inner1, inner2, outer1, outer2] )
         for ( let meet of meets )
           meet.theta = theta;
@@ -947,35 +958,77 @@ class SphAnalyzer
    * Find directed meet segments between circle and given disjoint regions.
    *
    * @param {SphCircle} circle - The circle to meet with.
-   * @param {...SphSeg[]} elements - The elements to meet.
-   * @returns {object[]} The array of dashes, which has entries
-   *   `{circle, arc, direction, start, end, affiliation}`:
-   *   `circle` is the circle of dash;
-   *   `arc` is arc length of dash, in the range of (0, 4];
-   *   `direction` is direction of dash;
-   *   `start`/`end` is starting/ending meet of dash, or empty if absence;
-   *   `affiliation` is the element containing this dash.
+   * @param {SphSeg[]} elements - The elements to meet.
+   * @returns {SphSeg[][]} Two arrays of inner/outer dashes in terms of `SphSeg`,
+   *   in which all pointers are one-direction, and epscially `prev` and `next`
+   *   point to `[segment, offset]` or itself.
    */
-  meetWithRegions(circle, ...elements) {
+  meetWithRegions(circle, elements) {
+    elements = Array.from(elements);
     let boundaries = elements.map(elem => Array.from(elem));
     let flowers = this.meetWithBoundaries(circle, boundaries.flat());
-    flowers = new Map(Array.from(flowers.keys()).sort()
-                           .map(theta => [theta, flowers.get(theta)]));
-
-    let inner_crosses = Array.from(flowers.values())
-                             .flatMap(({inner}) => inner.filter(meet => meet.segment));
-    let outer_crosses = Array.from(flowers.values()).reverse()
-                             .flatMap(({outer}) => outer.filter(meet => meet.segment));
-    console.assert(inner_crosses.length % 2 == 0);
-    console.assert(outer_crosses.length % 2 == 0);
 
     // draw dashes
     let inner_dashes = [], outer_dashes = [];
     if ( flowers.size > 0 ) {
-      // determine dashes by meets with the boundaries
+      // let flowers_ = Array.from(flowers.keys()).sort()
+      //                     .map(theta => flowers.get(theta));
+      // let inner_crosses = flowers_.flatMap(({inner}) => inner.filter(meet => meet.segment));
+      // let outer_crosses = flowers_.slice().reverse()
+      //                             .flatMap(({outer}) => outer.filter(meet => meet.segment));
+      // console.assert(inner_crosses.length % 2 == 0);
+      // console.assert(outer_crosses.length % 2 == 0);
 
-      for ( let [crosses, dashes, dir] of [[inner_crosses, inner_dashes, +1],
-                                           [outer_crosses, outer_dashes, -1]] ) {
+      let keys = Array.from(flowers.keys()).sort();
+      let zipper = keys.map((, i) => i+1 < keys.length
+                                     ? [keys[i], keys[i+1], keys[i+1]-keys[i]]
+                                     : [keys[i], keys[0], keys[0]-keys[i]+4])
+                       .map(([k1, k2, arc]) => ({inner:[k1, k2, arc], outer:[k2, k1, arc], offset:arc}));
+
+      // determine dashes by meets with the boundaries
+      if ( zipper.some(c => c[0][0] || c[0][1] || c[1][0] || c[1][1]) ) {
+
+        // merge inner segments
+        let i0 = keys.findIndex(key => flowers.get(key).inner[2]);
+        for ( let i=0,len=zipper.length; i<len; i++ ) {
+          let contact1 = zipper[(i0-1+i+len)%len];
+          let contact2 = zipper[(i0  +i+len)%len];
+          let flower = flowers.get(keys[(i0+i+len)%len]);
+
+          if ( flower.inner[0] === undefined && flower.inner[2] === undefined ) {
+            let [start1, end1, arc1] = contact1.inner;
+            let [start2, end2, arc2] = contact2.inner;
+            contact2.inner = contact1.inner;
+            contact1.inner[0] = start1;
+            contact1.inner[1] = end2;
+            contact1.inner[2] = arc1+arc2;
+            contact2.offset += arc1;
+          }
+        }
+
+        // merge outer segments
+        i0 = keys.findIndex(key => flowers.get(key).outer[2]);
+        for ( let i=0,len=zipper.length; i<len; i++ ) {
+          let contact1 = zipper[(i0  -i+len)%len];
+          let contact2 = zipper[(i0-1-i+len)%len];
+          let flower = flowers.get(keys[(i0-i+len)%len]);
+
+          if ( flower.outer[0] === undefined && flower.outer[2] === undefined ) {
+            let [start1, end1, arc1] = contact1.outer;
+            let [start2, end2, arc2] = contact2.outer;
+            contact2.outer = contact1.outer;
+            contact1.outer[0] = start1;
+            contact1.outer[1] = end2;
+            contact1.outer[2] = arc1+arc2;
+            contact2.offset += arc1;
+          }
+        }
+
+      } else {
+
+      }
+
+      for ( let [zipper_, index] of [[zipper.slice(), 0], [zipper.slice().reverse(), 1]] ) {
         if ( crosses.length > 0 ) {
           for ( let i=(crosses[0].next?0:1); i<crosses.length; i+=2 ) {
             let start = crosses[i];
@@ -983,38 +1036,77 @@ class SphAnalyzer
             console.assert(start.next !== undefined);
             console.assert(end.prev !== undefined);
 
-            let arc = dir*(end.theta - start.theta);
-            if ( i+1 >= crosses.length )
-              arc += 4;
+            let elem  = elements[boundaries.findIndex(bd => bd.includes(start.segment))];
+            let elem_ = elements[boundaries.findIndex(bd => bd.includes(end.segment))];
+            console.assert(elem === elem_);
 
-            let ind_aff1 = boundaries.findIndex(bd => bd.includes(start.segment));
-            let ind_aff2 = boundaries.findIndex(bd => bd.includes(end.segment));
-            console.assert(ind_aff1 === ind_aff2);
-            dashes.push({circle, arc, direction:dir, start, end, affiliation:elements[ind_aff1]});
+            let arc = i+1 < crosses.length
+                    ? dir*(end.theta - start.theta)
+                    : dir*(end.theta - start.theta) + 4;
+            let angle = dir > 0 ? start.angle : start.angle + 2;
+            let {radius, orientation} = dir > 0
+                                      ? new SphCircle(circle).shift(start.theta)
+                                      : new SphCircle(circle).shift(start.theta).complement();
+            let dash = new SphSeg({arc, angle, radius, orientation});
+
+            dash.prev = start;
+            dash.next = end;
+            dash.affiliation = elem;
+
+            dashes.push(dash);
           }
 
-        } else if ( inner_crosses.length !== 0 || outer_crosses.length !== 0 ) {
-          let segment = (inner_crosses[0] || outer_crosses[0]).segment;
-          let ind_aff = boundaries.findIndex(bd => bd.includes(segment));
-          dashes.push({circle, arc:4, direction:dir, affiliation:elements[ind_aff]});
+        } else if ( inner_crosses.length > 0 || outer_crosses.length > 0 ) {
+          let neighbor = inner_crosses[0] || outer_crosses[0];
+          let elem = elements[boundaries.findIndex(bd => bd.includes(neighbor.segment))];
+
+          let {radius, orientation} = dir > 0
+                                    ? new SphCircle(circle).shift(neighbor.theta)
+                                    : new SphCircle(circle).shift(neighbor.theta).complement();
+          let dash = new SphSeg({arc:4, angle:2, radius, orientation});
+
+          dash.prev = dash;
+          dash.next = dash;
+          dash.affiliation = elem;
+          dash.align(dash);
+
+          dashes.push(dash);
 
         } else {
           // no dash
         }
       }
 
+      // align, adjacent
+      ...;
+
     } else {
       // no meet with the boundaries => determine dashes by different way
-
       let [elem] = this.grab(circle.vectorAt(0), ...elements);
       if ( elem ) {
-        inner_dashes.push({circle, arc:4, direction:+1, affiliation:elem});
-        outer_dashes.push({circle, arc:4, direction:-1, affiliation:elem});
+        let {radius, orientation} = circle;
+        let inner_dash = new SphSeg({arc:4, angle:2, radius, orientation});
+        inner_dash.prev = inner_dash;
+        inner_dash.next = inner_dash;
+        inner_dash.affiliation = elem;
+        inner_dash.align(inner_dash);
+        inner_dashes.push(inner_dash);
+
+        {radius, orientation} = new SphCircle(circle).complement();
+        let outer_dash = new SphSeg({arc:4, angle:2, radius, orientation});
+        outer_dash.prev = outer_dash;
+        outer_dash.next = outer_dash;
+        outer_dash.affiliation = elem;
+        outer_dash.align(outer_dash);
+        outer_dashes.push(outer_dash);
+
+        inner_dash.adjacent(4, outer_dash);
       }
     }
 
     return [inner_dashes, outer_dashes];
   }
+  snapDashes(circle, dashes, snaps=[]) {}
   /**
    * Find the elements contain given point.
    *
@@ -1055,7 +1147,7 @@ class SphAnalyzer
   meetWithBoundariesADV(circle, boundaries, flowers=new Map(), inner, outer) {}
   // classify side of `segment.vertex`
   // jumping shortcut, especially for full partition elements
-  meetWithRegionsADV(circle, ...elements, inner, outer) {}
+  meetWithRegionsADV(circle, elements, inner, outer) {}
   // jumping shortcut, especially for full partition elements
   grabADV(point, ...elements) {
     let boundaries = elements.map(elem => Array.from(elem));
