@@ -2781,3 +2781,46 @@ class SphPuzzleWorld
     }
   }
 }
+
+
+var _helpers = [];
+var _meets = [];
+function helper(circle, meets) {
+  _meets = meets;
+  if ( !world )
+    return;
+  for ( let helper of _helpers )
+    world.puzzle.view.display.remove(helper);
+  _helpers = [];
+
+  {
+    let geo = new THREE.Geometry();
+    let s = Math.sin(circle.radius*Q), c = Math.cos(circle.radius*Q);
+    let da = 0.01*s;
+    let v0 = new THREE.Vector3(s, 0, c);
+    let center = new THREE.Vector3(0,0,1);
+    let v1 = v0.clone().applyAxisAngle(center, 4*Q);
+    geo.vertices = Array.from({length:Math.floor(4/da)+1},
+                              (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
+    geo.vertices.push(v1);
+
+    let mat = new THREE.LineDashedMaterial({color:"gray", dashSize: 0.01*Q/2, gapSize: 0.01*Q/2});
+    let helper = new THREE.Line(geo, mat);
+    helper.quaternion.set(...circle.orientation);
+    _helpers.push(helper);
+  }
+
+  for ( let meet of meets ) {
+    let geo = new THREE.CircleGeometry(0.015*Q, 100, Q, 4*Q);
+    geo.translate(0, 0, 1);
+    let color = {"+0":"black", "-0":"gray", "++":"red", "-+":"pink", "+-":"purple", "--":"blue"}[meet.type];
+
+    let mat = new THREE.LineBasicMaterial({color, linewidth:3});
+    let helper = new THREE.Line(geo, mat);
+    helper.quaternion.set(...q_align(circle.vectorAt(meet.theta)));
+    _helpers.push(helper);
+  }
+
+  for ( let helper of _helpers )
+    world.puzzle.view.display.add(helper);
+}

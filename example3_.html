@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>twisty sphere - example</title>
+  <meta charset="utf-8">
+  <script src="js/three.min.js"></script>
+  <script src="js/dat.gui.min.js"></script>
+  <script src="js/SphAnalyzer.js"></script>
+  <script src="js/SphPuzzle.js"></script>
+  <script src="js/Geometer.js"></script>
+  <script src="js/MyModeledSphPuzzle.js"></script>
+</head>
+<body>
+
+<div id="display" style="width:600px;height:600px;"></div>
+
+<script>
+
+var texture = new THREE.TextureLoader().load("crate.gif");
+var geometry = new THREE.BoxGeometry(2,2,2);
+geometry.translate(1/17, 3/17, 5/17);
+for ( let face of geometry.faces )
+  face.materialIndex = 1;
+var material0 = new THREE.MeshBasicMaterial();
+var material = new THREE.MeshLambertMaterial({map:texture});
+var shape = new THREE.Mesh(geometry, [material0, material]);
+var puzzle = new ModeledSphPuzzle(shape);
+
+puzzle.slice([ 1, 0, 0], Math.atan(3)/Q);
+puzzle.slice([ 0, 1, 0], Math.atan(3)/Q);
+puzzle.slice([ 0, 0, 1], Math.atan(3)/Q);
+puzzle.slice([-1, 0, 0], Math.atan(3)/Q);
+puzzle.slice([ 0,-1, 0], Math.atan(3)/Q);
+puzzle.slice([ 0, 0,-1], Math.atan(3)/Q);
+
+// var s2 = 1/Math.sqrt(2);
+// puzzle.slice([  0, s2, s2], 1/2);
+// puzzle.slice([  0,-s2, s2], 1/2);
+// puzzle.slice([  0, s2,-s2], 1/2);
+// puzzle.slice([  0,-s2,-s2], 1/2);
+// puzzle.slice([ s2,  0, s2], 1/2);
+// puzzle.slice([-s2,  0, s2], 1/2);
+// puzzle.slice([ s2,  0,-s2], 1/2);
+// puzzle.slice([-s2,  0,-s2], 1/2);
+// puzzle.slice([ s2, s2,  0], 1/2);
+// puzzle.slice([-s2, s2,  0], 1/2);
+// puzzle.slice([ s2,-s2,  0], 1/2);
+// puzzle.slice([-s2,-s2,  0], 1/2);
+
+puzzle.clean();
+
+var world = new ModeledSphPuzzleWorld(puzzle, "display");
+
+</script>
+</body>
+</html>

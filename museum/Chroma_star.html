@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>twisty sphere - Chroma star</title>
+  <meta charset="utf-8">
+  <script src="../js/three.min.js"></script>
+  <script src="../js/dat.gui.min.js"></script>
+  <script src="../js/SphAnalyzer.js"></script>
+  <script src="../js/SphPuzzle.js"></script>
+  <script src="../js/Geometer.js"></script>
+  <script src="../js/csg.js"></script>
+  <script src="../js/ModeledSphPuzzle.js"></script>
+</head>
+<body>
+
+<div id="display" style="width:600px;height:600px;"></div>
+
+<script>
+
+var phi = (Math.sqrt(5) + 1)/2;
+
+function fzy_add(set, elem) {
+  set.add(fzy_snap(elem, set));
+}
+function csort(arr0) {
+  var arr_min = arr0.slice();
+  var arr_ = arr0.slice();
+
+  for ( let i=0,len=arr0.length; i<len; i++ ) {
+    if ( fzy_cmp(arr_, arr_min) < 0 )
+      arr_min = arr_.slice();
+    arr_.push(arr_.shift());
+  }
+  return arr_min;
+}
+
+
+var radius = Math.sqrt(3 - phi)/2;
+var axes = new Set();
+axes.add([phi,0,1]);
+for ( let v of axes ) {
+  fzy_add(axes, rotate(v, [1/2,1/2,1/2,1/2]));
+  fzy_add(axes, rotate(v, [1/2,0,1/phi/2,phi/2]));
+}
+
+var v1 = [1/2,0,1/phi/2], v2 = [1/phi/2,1/2,0], v3 = [0,1/phi/2,1/2];
+function plus(v1, v2) { return v1.map((x, i) => v1[i]+v2[i]); }
+var faces = new Set();
+faces.add([v1, plus(v1, v2), plus(plus(v1, v2), v3), plus(v1, v3)]);
+for ( let face of faces ) {
+  fzy_add(faces, face.map(v => rotate(v, [1/2,1/2,1/2,1/2])));
+  fzy_add(faces, face.map(v => rotate(v, [1/2,0,1/phi/2,phi/2])));
+}
+
+var face0 = faces.values().next().value;
+var center0 = face0.reduce(plus, [0,0,0]);
+var q = q_mul([1/Math.sqrt(2),0,0,-1/Math.sqrt(2)], q_inv(q_align(center0, face0[0])));
+
+var polygons = [];
+for ( let face of faces ) {
+  let polygon = new CSG.Polygon(face.map(v => new CSG.Vertex(new CSG.Vector3D(...v))));
+  [x,y,z] = rotate(face.reduce(plus, [0,0,0]), q);
+  let {phi, theta} = new THREE.Spherical().setFromVector3({x,y,z});
+  let {r, g, b} = new THREE.Color().setHSL(theta/2/Math.PI, 1, (Math.PI-phi)/Math.PI);
+  polygon.setColor(r, g, b);
+  polygons.push(polygon);
+}
+var rhombic_hexeconta = CSG.fromPolygons(polygons);
+
+var puzzle = new ModeledSphPuzzle(rhombic_hexeconta, radius);
+// for ( let axis of axes )
+//   puzzle.sliceByPlane(axis, offset);
+// 
+// puzzle.clean(1);
+// puzzle.prepare();
+
+var world = new ModeledSphPuzzleWorld(puzzle, "display");
+
+// ref: http://twistypuzzles.com/cgi-bin/puzzle.cgi?pkey=7123
+</script>
+</body>
+</html>

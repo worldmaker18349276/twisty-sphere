@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>twisty sphere - Greate Icosahedron</title>
+  <meta charset="utf-8">
+  <script src="../js/three.min.js"></script>
+  <script src="../js/dat.gui.min.js"></script>
+  <script src="../js/SphAnalyzer.js"></script>
+  <script src="../js/SphPuzzle.js"></script>
+  <script src="../js/Geometer.js"></script>
+  <script src="../js/csg.js"></script>
+  <script src="../js/ModeledSphPuzzle.js"></script>
+</head>
+<body>
+
+<div id="display" style="width:600px;height:600px;"></div>
+
+<script>
+
+// var faces = [];
+// const s = 2;
+// for ( let face of CSG.sphere({resolution:64}).toPolygons() ) {
+//   let poly = face.vertices.map(v => v.pos);
+//   poly = poly.map(({x,y,z}) => [s*y*z, s*x*z, s*x*y])
+//              .map(([x,y,z]) => new CSG.Vertex(new CSG.Vector3D(x,y,z)));
+//   faces.push(new CSG.Polygon(poly));
+// }
+// var roman = CSG.fromPolygons(faces);
+
+var faces = [];
+const s = 2;
+for ( let face of CSG.sphere({resolution:64}).toTriangles() ) {
+  let poly = face.vertices.map(v => v.pos);
+  if ( poly.some(({x,y,z}) => x < -1e-5 || y < -1e-5 || z < -1e-5) )
+    continue;
+  poly = poly.map(({x,y,z}) => [s*Math.abs(y*z), s*Math.abs(x*z), s*Math.abs(x*y)])
+             .map(([x,y,z]) => new CSG.Vertex(new CSG.Vector3D(x,y,z)));
+  faces.push(new CSG.Polygon(poly));
+}
+var lobe1 = CSG.fromPolygons(faces);
+var lobe2 = lobe1.rotateX(180);
+var lobe3 = lobe1.rotateY(180);
+var lobe4 = lobe1.rotateZ(180);
+var roman = lobe1.union(lobe2).union(lobe3).union(lobe4);
+
+var puzzle = new ModeledSphPuzzle(roman);
+// puzzle.sliceByPlane([ 1, 0, 0], 0);
+// puzzle.sliceByPlane([ 0, 1, 0], 0);
+// puzzle.sliceByPlane([ 0, 0, 1], 0);
+
+// puzzle.clean();
+// puzzle.prepare();
+
+var world = new ModeledSphPuzzleWorld(puzzle, "display");
+</script>
+</body>
+</html>
