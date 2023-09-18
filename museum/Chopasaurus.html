@@ -3,7 +3,7 @@
 <head>
   <title>twisty sphere - Chopasaurus</title>
   <meta charset="utf-8">
-  <script src="../js/three.min.js"></script>
+  <script src="../js/three.js"></script>
   <script src="../js/dat.gui.min.js"></script>
   <script src="../js/SphAnalyzer.js"></script>
   <script src="../js/SphPuzzle.js"></script>
@@ -11,9 +11,9 @@
   <script src="../js/csg.js"></script>
   <script src="../js/ModeledSphPuzzle.js"></script>
 </head>
-<body>
+<body style="margin:0;">
 
-<div id="display" style="width:600px;height:600px;"></div>
+<div id="display" style="width:100vw;height:100vh;"></div>
 
 <script>
 
@@ -72,6 +72,7 @@ puzzle.clean(1);
 puzzle.prepare();
 
 var world = new ModeledSphPuzzleWorld(puzzle, "display");
+world.display.camera.position.z = 8;
 
 // jaap's sphere view: https://www.jaapsch.net/puzzles/sphere.htm?red=0&symred=6&angle=282,96,33
 </script>

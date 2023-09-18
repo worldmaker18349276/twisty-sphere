@@ -3,7 +3,7 @@
 <head>
   <title>twisty sphere - fully functional Dave's diamond puzzle</title>
   <meta charset="utf-8">
-  <script src="../js/three.min.js"></script>
+  <script src="../js/three.js"></script>
   <script src="../js/dat.gui.min.js"></script>
   <script src="../js/SphAnalyzer.js"></script>
   <script src="../js/SphPuzzle.js"></script>
@@ -11,9 +11,9 @@
   <script src="../js/csg.js"></script>
   <script src="../js/ModeledSphPuzzle.js"></script>
 </head>
-<body>
+<body style="margin:0;">
 
-<div id="display" style="width:600px;height:600px;"></div>
+<div id="display" style="width:100vw;height:100vh;"></div>
 
 <script>
 
@@ -53,6 +53,7 @@ puzzle.clean();
 puzzle.prepare();
 
 var world = new ModeledSphPuzzleWorld(puzzle, "display");
+world.display.camera.position.z = 8;
 
 </script>
 </body>

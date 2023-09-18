@@ -2,26 +2,30 @@
 
 const {CSG} = require("@jscad/csg");
 
-function fromGeometry(geometry) {
-  if ( geometry instanceof THREE.BufferGeometry )
-    geometry = new THREE.Geometry().fromBufferGeometry(geometry);
-  var polygons = [];
-  for ( let face of geometry.faces ) {
-    let vertices = ["a", "b", "c"].map(a => geometry.vertices[face[a]])
-                                  .map(v => new CSG.Vertex(new CSG.Vector3D(v)));
-    polygons.push(new CSG.Polygon(vertices));
-  }
-  return CSG.fromPolygons(polygons);
-}
 function toGeometry(csg) {
-  var geometry = new THREE.Geometry();
+  var index = 0;
+  var vertices = [];
+  var indices = [];
+  var colors = [];
+
   for ( let polygon of csg.toTriangles() ) {
-    let vs = polygon.vertices.map(v => geometry.vertices.push(new THREE.Vector3().copy(v.pos))-1);
-    let face = new THREE.Face3(...vs, new THREE.Vector3().copy(polygon.plane.normal));
-    if ( polygon.shared.color )
-      face.color = new THREE.Color(...polygon.shared.color);
-    geometry.faces.push(face);
+    // console.log(polygon);
+    for ( let vertex of polygon.vertices ) {
+      vertices.push(vertex.pos.x, vertex.pos.y, vertex.pos.z);
+      if ( polygon.shared.color )
+        colors.push(polygon.shared.color[0], polygon.shared.color[1], polygon.shared.color[2], polygon.shared.color[3] ?? 1);
+      else
+        colors.push(1, 1, 1, 1);
+      indices.push(index);
+      index += 1;
+    }
   }
+
+  var geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 4));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
   return geometry;
 }
 function rotateCSG(csg, q) {
@@ -437,12 +441,11 @@ class ModeledSphPuzzleView
   }
   drawElement(element) {
     var geo = toGeometry(element.shape);
-    var mat = new THREE.MeshLambertMaterial({color:0xFFFFFF, vertexColors:THREE.FaceColors,
-                                             transparent:false, opacity:0.4});
+    var mat = new THREE.MeshLambertMaterial({color:0xFFFFFF, vertexColors:true, transparent:false, opacity:0.4});
+    mat.emissive.set("hsl(60, 100%, 0%)");
+    mat.emissiveIntensity = 0.0;
     element.model_view = new THREE.Mesh(geo, mat);
     element.model_view.userData.raw = element;
-    element.model_view.material.emissive.set("hsl(60, 100%, 0%)");
-    element.model_view.material.emissiveIntensity = 0;
 
     element.model_view.quaternion.set(...element.orientation);
     element.model_view.userData.hoverable = true;
@@ -609,16 +612,17 @@ class ModeledSphBREPView
 
     // make arc
     {
-      let geo = new THREE.Geometry();
       let s = Math.sin(seg.radius*Q), c = Math.cos(seg.radius*Q);
       let da = dq*s;
       let v0 = new THREE.Vector3(s, 0, c);
       let center = new THREE.Vector3(0,0,1);
       let v1 = v0.clone().applyAxisAngle(center, seg.arc*Q);
-      geo.vertices = Array.from({length:Math.floor(seg.arc/da)+1},
-                                (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
-      geo.vertices.push(v1);
+      let points = Array.from(
+        {length:Math.floor(seg.arc/da)+1},
+        (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
+      points.push(v1);
 
+      let geo = new THREE.BufferGeometry().setFromPoints(points);
       let mat = new THREE.LineBasicMaterial({color: (seg.track ? "red" : "black")});
       var arc = new THREE.Line(geo, mat);
       arc.name = "arc";
@@ -626,17 +630,18 @@ class ModeledSphBREPView
 
     // make dash
     {
-      let geo = new THREE.Geometry();
       let s = Math.sin((seg.radius-dq)*Q), c = Math.cos((seg.radius-dq)*Q);
       let da = dq*s;
       let v0_ = new THREE.Vector3(s, 0, c);
       let center = new THREE.Vector3(0,0,1);
       let v0 = v0_.clone().applyAxisAngle(center, dq*Q);
       let v1 = v0_.clone().applyAxisAngle(center, (seg.arc-dq)*Q);
-      geo.vertices = Array.from({length:Math.floor((seg.arc-2*dq)/da)+1},
-                                (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
-      geo.vertices.push(v1);
+      let points = Array.from(
+        {length:Math.floor((seg.arc-2*dq)/da)+1},
+        (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
+      points.push(v1);
 
+      let geo = new THREE.BufferGeometry().setFromPoints(points);
       let mat = new THREE.LineDashedMaterial({color: "blue", dashSize: dq*Q/2, gapSize: dq*Q/2});
       var dash = new THREE.Line(geo, mat);
       dash.computeLineDistances();

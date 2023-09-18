@@ -3,7 +3,7 @@
 <head>
   <title>twisty sphere - hide & seek & pretend</title>
   <meta charset="utf-8">
-  <script src="../js/three.min.js"></script>
+  <script src="../js/three.js"></script>
   <script src="../js/dat.gui.min.js"></script>
   <script src="../js/SphAnalyzer.js"></script>
   <script src="../js/SphPuzzle.js"></script>
@@ -11,9 +11,9 @@
   <script src="../js/csg.js"></script>
   <script src="../js/ModeledSphPuzzle.js"></script>
 </head>
-<body>
+<body style="margin:0;">
 
-<div id="display" style="width:600px;height:600px;"></div>
+<div id="display" style="width:100vw;height:100vh;"></div>
 
 <script>
 
@@ -37,42 +37,63 @@ puzzle.clean();
 puzzle.prepare();
 
 var world = new ModeledSphPuzzleWorld(puzzle, "display");
+world.display.camera.position.z = 8;
 
 function hideNseekNpretend(elem) {
   var q0 = q_inv(world.model_view.display.trackball.quaternion.toArray());
 
-  for ( let face of elem.model_view.geometry.faces ) {
+  if (!elem.model_view)
+    return;
+
+  let colors = elem.model_view.geometry.getAttribute("color");
+  // console.assert(colors.count == elem.model_view.faces.length*3);
+  for ( let i=0; i < elem.model_view.faces.length; i++ ) {
+    let face = elem.model_view.faces[i];
     let q1 = elem.model_view.quaternion.toArray();
     let q = q_mul(q1, q_mul(face.quaternion, q0));
     let t = Math.abs(Math.atan2(norm(q), q[3])/Math.PI); // [-1, 1]
     let {h, s, l} = face.original_color;
-    face.color.setHSL((h+Math.round(t)/2)%1, s, l*(Math.cos(2*Math.PI*t) + 1)/2);
+    let color = new THREE.Color();
+    color.setHSL((h+Math.round(t)/2)%1, s, l*(Math.cos(2*Math.PI*t) + 1)/2);
+    let {r, g, b} = color.getRGB({});
+    colors.setXYZ(i*3 + 0, r, g, b);
+    colors.setXYZ(i*3 + 1, r, g, b);
+    colors.setXYZ(i*3 + 2, r, g, b);
   }
-  elem.model_view.geometry.colorsNeedUpdate = true;
+  colors.needsUpdate = true;
 }
-world.model_view.display.trackball.quaternion.onChange(() => {
+world.model_view.display.trackball.quaternion._onChange(() => {
   for ( let elem of puzzle.brep.elements )
     hideNseekNpretend(elem);
 });
 puzzle.brep.initialize(() => {
   world.display.scene.add(new THREE.AmbientLight(0x404040));
   for ( let elem of puzzle.brep.elements ) {
-    for ( let face of elem.model_view.geometry.faces ) {
-      face.original_color = face.color.getHSL();
-      if ( face.normal.x == 0 && face.normal.y == 0 && face.normal.z == 0 )
-        elem.model_view.geometry.computeFaceNormals();
-      let v_z = face.normal.toArray();
-      face.quaternion = q_align(v_z, [1,1,1]);
-    }
+    let length = Math.round(elem.model_view.geometry.getAttribute("position").count / 3);
+    let colors = elem.model_view.geometry.getAttribute("color");
+    // console.assert(colors.count == length*3);
+    let normals = elem.model_view.geometry.getAttribute("normal");
+    elem.model_view.faces = Array.from({length},
+      (_, i) => {
+        let r = colors.getX(i * 3);
+        let g = colors.getY(i * 3);
+        let b = colors.getZ(i * 3);
+        let original_color = new THREE.Color(r, g, b).getHSL({});
+        let x = normals.getX(i * 3);
+        let y = normals.getY(i * 3);
+        let z = normals.getZ(i * 3);
+        let quaternion = q_align([x, y, z], [1,1,1]);
+        return {original_color, quaternion};
+      });
 
     hideNseekNpretend(elem);
-    elem.model_view.quaternion.onChange(() => hideNseekNpretend(elem));
+    elem.model_view.quaternion._onChange(() => hideNseekNpretend(elem));
   }
 
   puzzle.brep.on("added", SphElem, event => {
     var elem = event.target;
-    hideNseekNpretend([elem]);
-    elem.model_view.quaternion.onChange(() => hideNseekNpretend(elem));
+    hideNseekNpretend(elem);
+    elem.model_view.quaternion._onChange(() => hideNseekNpretend(elem));
   });
 });
 

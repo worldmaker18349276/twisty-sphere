@@ -36,18 +36,20 @@ class Display
     this.scene = new THREE.Scene();
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.3));
     // this.scene.add(new THREE.AxesHelper(20));
-    this.scene.add(this.buildBackground());
+    this.scene.add(this.buildBackground(15));
 
     // navigation control
     this.rotateSpeed = Math.PI/500;
     this.zoomSpeed = 1/100;
-    this.distanceRange = [2, 8];
+    this.distanceRange = [2, 12];
     this.trackball_lock = new Set();
 
     this.trackball = new THREE.Group();
     this.camera = new THREE.PerspectiveCamera(40, this.width/this.height, 1, 1000);
-    this.camera.add(new THREE.PointLight(0xffffff, 0.7));
     this.trackball.add(this.camera);
+    let light = new THREE.DirectionalLight(0xffffff, 0.7);
+    light.position.set(1, 2, 3);
+    this.trackball.add(light);
     this.scene.add(this.trackball);
     this.setCamera(1,2,3);
 
@@ -265,12 +267,15 @@ class Display
     this.scene.traverse(e => { if ( e.userData.hoverable ) this.hoverable.push(e); });
   }
 
-  buildBackground() {
-    var background_geometry = new THREE.IcosahedronGeometry(10, 0);
+  buildBackground(radius) {
+    var background_geometry = new THREE.IcosahedronGeometry(radius, 0);
     var background_uv = [new THREE.Vector2(0,0), new THREE.Vector2(0,1), new THREE.Vector2(Math.sqrt(3)/2,0)];
-    for ( let i in background_geometry.faceVertexUvs[0] )
-      background_geometry.faceVertexUvs[0][i] = background_uv.slice(0);
-    var background_material = new THREE.MeshBasicMaterial({color:0xffffff});
+    var uv = [];
+    for (let i = 0; i < 20; i++)
+      for (let tp of background_uv)
+        uv.push(tp.x, tp.y);
+    background_geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+    var background_material = new THREE.MeshBasicMaterial({color:0x909090});
     background_material.side = THREE.DoubleSide;
     // broken noise, made by http://bg.siteorigin.com/
     var background_texture = new THREE.TextureLoader().load("https://worldmaker18349276.github.io/twisty-sphere/background.png");
@@ -1252,16 +1257,17 @@ class SphBREPView
 
     // make arc
     {
-      let geo = new THREE.Geometry();
       let s = Math.sin(seg.radius*Q), c = Math.cos(seg.radius*Q);
       let da = dq*s;
       let v0 = new THREE.Vector3(s, 0, c);
       let center = new THREE.Vector3(0,0,1);
       let v1 = v0.clone().applyAxisAngle(center, seg.arc*Q);
-      geo.vertices = Array.from({length:Math.floor(seg.arc/da)+1},
-                                (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
-      geo.vertices.push(v1);
+      let points = Array.from(
+        {length:Math.floor(seg.arc/da)+1},
+        (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
+      points.push(v1);
 
+      let geo = new THREE.BufferGeometry().setFromPoints(points);
       let mat = new THREE.LineBasicMaterial({color});
       var arc = new THREE.Line(geo, mat);
       arc.name = "arc";
@@ -1269,17 +1275,18 @@ class SphBREPView
 
     // make dash
     {
-      let geo = new THREE.Geometry();
       let s = Math.sin((seg.radius-dq/2)*Q), c = Math.cos((seg.radius-dq/2)*Q);
       let da = dq*s;
       let v0_ = new THREE.Vector3(s, 0, c);
       let center = new THREE.Vector3(0,0,1);
       let v0 = v0_.clone().applyAxisAngle(center, da*Q);
       let v1 = v0_.clone().applyAxisAngle(center, (seg.arc-da)*Q);
-      geo.vertices = Array.from({length:Math.floor(seg.arc/da)-1},
-                                (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
-      geo.vertices.push(v1);
+      let points = Array.from(
+        {length:Math.floor(seg.arc/da)-1},
+        (_, i) => v0.clone().applyAxisAngle(center, i*da*Q));
+      points.push(v1);
 
+      let geo = new THREE.BufferGeometry().setFromPoints(points);
       let mat = new THREE.LineDashedMaterial({color, dashSize: dq*Q/2, gapSize: dq*Q/2});
       var dash = new THREE.Line(geo, mat);
       dash.computeLineDistances();
