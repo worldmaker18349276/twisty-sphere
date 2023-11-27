@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>twisty sphere - helicopter</title>
+  <meta charset="utf-8">
+  <script src="../js/three.js"></script>
+  <script src="../js/dat.gui.js"></script>
+  <script src="../js/SphAnalyzer.js"></script>
+  <script src="../js/SphPuzzle.js"></script>
+  <script src="../js/csg.js"></script>
+  <script src="../js/ModeledSphPuzzle.js"></script>
+</head>
+<body style="margin:0;">
+
+<div id="display" style="width:100vw;height:100vh;"></div>
+
+<script>
+
+cube = CSG.cube({center: [0, 0, 0], radius: [1.1, 1.1, 1.1]})
+  .intersect(CSG.cube({center: [ 0,-1, 0], radius: [2, 2, 2]}).setColor(1,1,1))
+  .intersect(CSG.cube({center: [ 0, 1, 0], radius: [2, 2, 2]}).setColor(1,1,0))
+  .intersect(CSG.cube({center: [-1, 0, 0], radius: [2, 2, 2]}).setColor(0,0,1))
+  .intersect(CSG.cube({center: [ 1, 0, 0], radius: [2, 2, 2]}).setColor(0,1,0))
+  .intersect(CSG.cube({center: [ 0, 0,-1], radius: [2, 2, 2]}).setColor(1,0,0))
+  .intersect(CSG.cube({center: [ 0, 0, 1], radius: [2, 2, 2]}).setColor(1,0,1));
+// cube = CSG.cube({center: [0, 0, 0], radius: [1, 1, 1]});
+var puzzle = new ModeledSphPuzzle(cube);
+
+const a = Math.acos(1/3)/Q;
+const UL = [-1, 1, 0];
+const UR = [ 1, 1, 0];
+const UF = [ 0, 1, 1];
+const UB = [ 0, 1,-1];
+const DL = [-1,-1, 0];
+const DR = [ 1,-1, 0];
+const DF = [ 0,-1, 1];
+const DB = [ 0,-1,-1];
+const FR = [ 1, 0, 1];
+const FL = [-1, 0, 1];
+const BR = [ 1, 0,-1];
+const BL = [-1, 0,-1];
+
+var dis = Math.sqrt(2)/2;
+puzzle.sliceByPlane(UL, dis);
+puzzle.sliceByPlane(UR, dis);
+puzzle.sliceByPlane(UF, dis);
+puzzle.sliceByPlane(UB, dis);
+puzzle.sliceByPlane(DL, dis);
+puzzle.sliceByPlane(DR, dis);
+puzzle.sliceByPlane(DF, dis);
+puzzle.sliceByPlane(DB, dis);
+puzzle.sliceByPlane(FR, dis);
+puzzle.sliceByPlane(FL, dis);
+puzzle.sliceByPlane(BR, dis);
+puzzle.sliceByPlane(BL, dis);
+
+puzzle.clean();
+puzzle.prepare();
+
+// var world = new SphPuzzleWorld(puzzle, "display", "network", "state");
+var world = new ModeledSphPuzzleWorld(puzzle, "display");
+world.display.camera.position.z = 8;
+
+// auto twist
+
+const CIC = [
+  [UF, 2],
+  [FR, -2],
+  [UF, -a],
+  [FR, 2],
+  [UF, -(2-a)],
+
+  [DL, 2],
+  [BL, -2],
+  [DL, -a],
+  [BL, 2],
+  [DL, -(2-a)],
+
+  [UB, 2],
+
+  [BL, 2],
+  [DB, -2],
+  [BL, -a],
+  [DB, 2],
+  [BL, -(2-a)],
+
+  [UB, a-2],
+  [FL, a],
+  [DR, a],
+  [DF, -a],
+  [BR, -a],
+  [UL, -a],
+];
+
+reverse = (a) => a.map(([axis, ang]) => [axis, -ang]).reverse();
+repeat = (a, n) => n == 0 ? [] : [...a, ...repeat(a, n - 1)];
+commutator = (a, b) => [...a, ...b, ...reverse(a), ...reverse(b)];
+setup = (a, b) => [...a, ...b, ...reverse(a)];
+
+trans = (a, dict) => a.map(([axis, ang]) => [dict[axis], ang]);
+comp = (...dicts) => {
+  var dict0 = Object.assign({}, I);
+  for (let dict of dicts)
+    for (let k in dict0)
+      dict0[k] = dict[dict0[k]];
+  return dict0;
+};
+I = {
+  [UL]: UL,
+  [UR]: UR,
+  [UF]: UF,
+  [UB]: UB,
+  [DL]: DL,
+  [DR]: DR,
+  [DF]: DF,
+  [DB]: DB,
+  [FR]: FR,
+  [FL]: FL,
+  [BR]: BR,
+  [BL]: BL,
+};
+U = {
+  [UL]: UF,
+  [UR]: UB,
+  [UF]: UR,
+  [UB]: UL,
+  [DL]: DF,
+  [DR]: DB,
+  [DF]: DR,
+  [DB]: DL,
+  [FR]: BR,
+  [FL]: FR,
+  [BR]: BL,
+  [BL]: FL,
+};
+F = {
+  [UL]: DL,
+  [UR]: UL,
+  [UF]: FL,
+  [UB]: BL,
+  [DL]: DR,
+  [DR]: UR,
+  [DF]: FR,
+  [DB]: BR,
+  [FR]: UF,
+  [FL]: DF,
+  [BR]: UB,
+  [BL]: DB,
+};
+
+FP = [
+  ...setup(
+    [[UL, a], [FR, a]],
+    [[UF, 2]],
+  ),
+  ...setup(
+    [[FL, -a], [UR, -a]],
+    [[UF, -2]],
+  ),
+];
+
+CO = repeat([
+  [UL, 2],
+  [UR, 2],
+  [UB, 2],
+  [UL, 2],
+  [UR, 2],
+  [UF, 2],
+], 2);
+
+const algo = [
+  // corner orientations
+  ...trans(CO, comp(U, F)),
+  ...trans(CO, comp(F, F, F, U)),
+  ...trans(CO, comp(U, F, F, F, U, U, U)),
+
+  // face positions
+  // goal:
+  //   G_WR, G_YR, P_WG -> R
+  //   P_WB, Y_PB, G_WP -> W
+  //   P_YB, Y_BR, R_GW -> B
+  //   W_GR, W_GP, B_YR -> G
+  //   R_YG, R_YB       -> Y
+  //   B_PY, B_PW, W_PB -> P
+
+  // R_GW <-> G_RY, R_YB <-> P_WG
+  ...trans(
+    setup(
+      [
+        [UB, a],
+        [FL, a],
+        [UL, 2],
+        [UB, 2],
+        [UL, -2],
+        [FL, -a],
+        [UB, -a],
+        [DF, 2-a],
+        [BR, -a],
+        [DR, 2],
+        [BR, a],
+        [DF, -(2-a)],
+        [BR, 2],
+        [UR, 2],
+      ],
+      FP,
+    ),
+    comp(F, F, F, U, U, U),
+  ),
+
+  // R_YG, R_YB -> W_PG, W_PB
+  ...trans(
+    setup(
+      [
+        [UF, 2],
+        [BL, 2],
+        [UL, 2],
+        [BR, -2],
+        [UR, -2],
+        [UF, -2],
+      ],
+      FP,
+    ),
+    comp(U, F, F, F, U, U, U),
+  ),
+
+  // R_GW, R_GY <-> B_YR, B_YP
+  ...trans(
+    setup(
+      [
+        [FL, 2],
+        [DL, -(2-a)],
+        [UF, -(2-a)],
+        [FL, 2],
+        [UF, 2-a],
+        [DL, 2-a],
+      ],
+      FP,
+    ),
+    comp(U, F, F, F),
+  ),
+  
+  // W_GP, W_GR <-> G_WR, G_WP
+  ...trans(
+    FP,
+    comp(U, U, U),
+  ),
+
+  // B_PY, B_PW <-> P_BW, P_BY
+  ...trans(
+    FP,
+    comp(F, F, F, U),
+  ),
+
+  // R_YG, R_YB <-> Y_BR, Y_BP
+  ...trans(
+    setup(
+      [
+        [FL, -(2-a)],
+        [DF, 2-a],
+        [FL, 2-a],
+        [DF, a],
+        [DL, 2],
+        [DR, 2],
+      ],
+      FP,
+    ),
+    comp(U, F, F, F, U, U, U),
+  ),
+  
+  // cube-in-cube shape
+  ...CIC,
+  [FL, 2],
+  [DF, 2],
+  [DR, 2],
+  [BR, 2],
+  [UB, 2],
+];
+
+setTimeout(async () => {
+  for (const [axis, ang] of algo) {
+    await world.twistAnimated(axis, ang);
+  }
+  await world.rotateAnimated([1,1,1], 2/3);
+}, 1000);
+
+</script>
+</body>
+</html>

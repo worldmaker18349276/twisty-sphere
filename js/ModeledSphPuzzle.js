@@ -277,6 +277,13 @@ class ModeledSimpleTwister
       });
     });
   }
+  async twistAnimated(angle) {
+    this.angle = angle;
+    var axis = new THREE.Vector3(...this.center);
+    var routine = this.display.animatedRotateRoutine(this.targets, axis, this.angle*Q, 10);
+    await this.display.animate(routine);
+    await this.twist(this.angle);
+  }
 
   dragstart(event) {
     this.circle.shift(this.circle.thetaOf(event.point.toArray()));
@@ -726,5 +733,61 @@ class ModeledSphPuzzleWorld
         }
       }
     });
+  }
+
+  async twistAnimated(axis, angle, snap = true) {
+    var dis0 = 0.05;
+    var selected_twister = undefined;
+    for ( let twister of this.model_view.twisters ) {
+      var dis = angleTo(twister.center, axis);
+      if ( dis < dis0 ) {
+        dis0 = dis;
+        selected_twister = twister;
+      }
+    }
+    if ( selected_twister === undefined ) {
+      throw new Error(`fail to twist axis=[${axis}]`);
+    }
+    if ( snap ) {
+      // snap but preserving turn
+      let turn = angle / 4;
+      angle = angle - turn * 4;
+      if ( angle < 0 ) {
+        turn -= 1;
+        angle += 4;
+      }
+      angle = selected_twister.snap(angle, angle, false);
+      if ( !selected_twister.shifts0.includes(angle) && !selected_twister.shifts.includes(angle) ) {
+        throw new Error(`fail to twist axis=[${axis}] with angle ${angle}`);
+      }
+      angle += turn * 4;
+    }
+    await selected_twister.twistAnimated(angle);
+  }
+
+  async rotateAnimated(axis, angle) {
+    function *rotateTrackball(trackball, axis, angle, speed) {
+      axis = new THREE.Vector3(...axis).normalize();
+      var prev_angle = 0;
+      var curr_angle = 0;
+      var t0, t;
+      if ( angle < 0 ) {
+        angle = -angle;
+        axis = axis.clone().negate();
+      }
+
+      t0 = yield;
+      while ( curr_angle < angle ) {
+        let t = yield;
+        curr_angle = Math.min(curr_angle + speed*(t-t0)/1000, angle);
+        t0 = t;
+
+        trackball.rotateOnAxis(axis, -(curr_angle - prev_angle));
+        prev_angle = curr_angle;
+      }
+    }
+    axis = rotate(axis, q_inv(this.display.trackball.quaternion.toArray()));
+    var routine = rotateTrackball(this.display.trackball, axis, angle*Q, 10);
+    await this.display.animate(routine);
   }
 }

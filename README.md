@@ -11,3 +11,4 @@ https://worldmaker18349276.github.io/twisty-sphere/museum/FF_Dave_diamond_puzzle
 https://worldmaker18349276.github.io/twisty-sphere/museum/Chopasaurus.html  
 https://worldmaker18349276.github.io/twisty-sphere/museum/Chopasaurus_Jr.html  
 https://worldmaker18349276.github.io/twisty-sphere/museum/Great_Icosahedron.html  
+https://worldmaker18349276.github.io/twisty-sphere/museum/Helicopter_cube_in_cube.html  
