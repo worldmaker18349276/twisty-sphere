@@ -448,7 +448,7 @@ class ModeledSphPuzzleView
   }
   drawElement(element) {
     var geo = toGeometry(element.shape);
-    var mat = new THREE.MeshLambertMaterial({color:0xFFFFFF, vertexColors:true, transparent:false, opacity:0.4});
+    var mat = new THREE.MeshLambertMaterial({color:0xFFFFFF, vertexColors:true, transparent:true, opacity:1.0});
     mat.emissive.set("hsl(60, 100%, 0%)");
     mat.emissiveIntensity = 0.0;
     element.model_view = new THREE.Mesh(geo, mat);
@@ -722,13 +722,13 @@ class ModeledSphPuzzleWorld
       if ( event.key == " " ) {
         if ( this.brep_view.root.visible ) {
           this.brep_view.root.visible = false;
-          for ( let elem of puzzle.brep.elements )
-            elem.model_view.material.transparent = false;
+          for ( let elem of this.puzzle.brep.elements )
+            elem.model_view.material.opacity = 1.0;
 
         } else {
           this.brep_view.root.visible = true;
-          for ( let elem of puzzle.brep.elements )
-            elem.model_view.material.transparent = true;
+          for ( let elem of this.puzzle.brep.elements )
+            elem.model_view.material.opacity = 0.4;
 
         }
       }
